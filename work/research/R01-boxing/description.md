@@ -17,6 +17,10 @@ Technical research for building RedisBox — an in-memory Redis emulator for bro
 
 **Path C (Hybrid)** — RESP proxy over real Redis binary for Node.js (100% coverage immediately), pure JS engine for browser (incremental coverage). Parity verified via Redis TCL test suite.
 
+## Readiness Audit
+
+All five pre-planning gaps (G1–G5) independently verified and closed. See [closure matrix](../../../rnd/boxing/research-gaps.md#closure-matrix) for status, confidence, and evidence file refs.
+
 ## Research Materials
 
 Full research documents: [rnd/boxing](../../../rnd/boxing/README.md)

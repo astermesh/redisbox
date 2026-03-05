@@ -10,6 +10,7 @@ Technical research for building an in-memory Redis emulator.
 - [Redis internals](redis-internals.md) — expiration, eviction, pub/sub, transactions, scripting
 - [Architecture](architecture.md) — dual-mode design (proxy + JS engine, hooks, RedisSim)
 - [Full coverage strategy](full-coverage-strategy.md) — analysis of paths to 100% Redis command coverage
+- [Research gaps](research-gaps.md) — pre-planning audit: unresolved prerequisites for implementation
 
 ---
 
