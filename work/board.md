@@ -2,7 +2,7 @@
 
 ## In Progress
 
-_(empty)_
+- [R02-engine](research/R02-engine/README.md) — engine architecture research
 
 ---
 
