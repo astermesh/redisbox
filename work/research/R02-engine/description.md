@@ -1,5 +1,7 @@
 # R02: Engine
 
+**Status:** done
+
 Research on the RedisBox JS/TS engine architecture — subsystem decomposition, data structures, interfaces, and implementation strategy.
 
 ## Scope
