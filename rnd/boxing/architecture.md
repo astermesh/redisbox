@@ -281,7 +281,7 @@ Use command metadata from `@ioredis/commands` package for automatic validation (
 
 Shared between proxy and engine modes.
 
-### IBI Hooks (Inbound Boundary Interface)
+### IBI Hooks (Inbound Box Interface)
 
 Generic hook on every command:
 
@@ -321,7 +321,7 @@ Per-command-family hooks for targeted Sim behavior:
 | `redis:server` | INFO, CONFIG, DBSIZE, FLUSHDB, etc. |
 | `redis:connection` | AUTH, HELLO, CLIENT, SELECT, PING |
 
-### OBI Hooks (Outbound Boundary Interface)
+### OBI Hooks (Outbound Box Interface)
 
 ```typescript
 hooks.time = new Hook<TimeCtx, number>(bus, 'redis:time')
