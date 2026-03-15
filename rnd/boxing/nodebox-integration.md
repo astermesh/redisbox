@@ -1,37 +1,30 @@
-# NodeBox Integration: Simplifying RedisBox Architecture
+# NodeBox Integration: Single-Runtime Architecture
 
-## Idea
+## Decision
 
-Instead of dual-mode architecture (browser JS engine + Node.js proxy/server), RedisBox can be built as a **standard Node.js application** that relies on NodeBox (SimBox ecosystem's Node.js runtime emulator) for browser execution.
+RedisBox is built as a **standard Node.js application**. It uses Node.js APIs (TCP server via `net`, Buffer, etc.) and speaks RESP protocol. Browser execution is provided by NodeBox — SimBox ecosystem's Node.js runtime emulator.
 
-## What This Changes
+This eliminates the need for dual-mode architecture, browser-specific code paths, or any special browser adapters.
 
-Current architecture assumes RedisBox must handle two environments itself:
+## What This Means
 
-| Concern | Current (dual-mode) | With NodeBox |
-|---------|---------------------|--------------|
-| Browser support | Custom Direct API, no RESP | NodeBox handles it |
-| Node.js support | TCP server + RESP | TCP server + RESP (same) |
-| Connection model | 4 approaches (Connector, TCP, Direct API, Proxy) | TCP server only |
-| RESP protocol | Optional (not in browser) | Always (single path) |
-| Code paths | Two (engine + browser adapter) | One |
+| Concern | Approach |
+|---------|----------|
+| Node.js support | Native — standard Node.js TCP server |
+| Browser support | NodeBox provides the runtime (net, Buffer, etc.) |
+| Connection model | TCP server + RESP — single path |
+| RESP protocol | Always used — the only interface |
+| Code paths | One |
 
-## What Becomes Unnecessary
+## What Is NOT Needed
 
 - **Dual-mode switching** (`mode: 'proxy' | 'engine' | 'auto'`)
 - **Direct API** (`box.call('SET', ...)` without RESP)
 - **Browser-specific adapters** and bundling concerns
 - **Connection strategy matrix** (different transports per environment)
+- **Proxy over real Redis binary** — RedisBox IS the Redis
 
-## What Stays the Same
-
-- Full JS engine with all Redis commands
-- RESP2/RESP3 protocol (now the only interface)
-- Hook surface (IBI/OBI)
-- RedisSim
-- Testing strategy (differential testing, Redis TCL suite)
-
-## Architecture With NodeBox
+## Architecture
 
 ```
 RedisBox = Node.js TCP server + RESP + In-Memory Engine + Hooks
@@ -43,9 +36,13 @@ One codebase, one interface, one code path.
 
 Clients (ioredis, node-redis, redis-cli) connect via standard TCP/RESP — whether the underlying runtime is real Node.js or NodeBox.
 
-## Status
+## What Stays the Same
 
-Idea noted. Depends on NodeBox readiness. Revisit when NodeBox is available.
+- Full JS engine with all Redis commands
+- RESP2/RESP3 protocol (the only interface)
+- Hook surface (IBI/OBI)
+- RedisSim
+- Testing strategy (differential testing, Redis TCL suite)
 
 ---
 

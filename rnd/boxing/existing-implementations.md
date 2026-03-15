@@ -134,7 +134,7 @@ Capabilities:
 - Automatic cleanup on process exit
 - Configurable Redis version
 
-**RedisBox relevance**: HIGH for proxy approach. Proves the "embedded real Redis" pattern. RedisBox's proxy mode would work similarly — manage a Redis subprocess, proxy RESP traffic through hook layer.
+**RedisBox relevance**: LOW. RedisBox is a full JS reimplementation, not a wrapper over a real Redis binary. This package is an alternative approach (embedded binary) that we explicitly chose not to follow.
 
 ### testcontainers (Redis)
 
@@ -152,7 +152,7 @@ Docker-based approach: spin up a real Redis container for tests. Popular in Java
 | `resp3` (tinovyatkin) | RESP3 | Pure streaming, ~300 LOC | Minimal, no dependencies |
 | `@ioredis/commands` | N/A | Command metadata | Flags, arity, key positions for every command |
 
-**Recommendation**: For the proxy layer, use `redis-parser` (proven in production by ioredis). For serialization, write our own — it's <100 lines. For command metadata (validation, routing), use `@ioredis/commands`.
+**Recommendation**: For RESP parsing, `redis-parser` is proven in production (used by ioredis and node-redis). For serialization, write our own — it's <100 lines. For command metadata (validation, routing), use `@ioredis/commands`.
 
 ## Data Structure Libraries
 
@@ -242,7 +242,7 @@ Key challenges for compiling Redis to WASM:
 - No production-ready artifact exists
 - Maintaining C patches across Redis versions is expensive
 - Hook integration at WASM boundary is much harder than in JS
-- The proxy approach gives 100% compatibility with zero C work
+- A proxy over real Redis would give compatibility but isn't the approach we're taking
 
 ## Summary Table
 
@@ -253,7 +253,7 @@ Key challenges for compiling Redis to WASM:
 | redis-js | JS | No | ~200 | Yes | No | Reference |
 | Redjs | JS | Yes | ~60 | No | Limited | Architecture ref |
 | CorvoStore | JS | Yes | ~50 | No | Limited | Reference |
-| redis-memory-server | JS | N/A | 100% (real) | No | Yes | Proxy pattern |
+| redis-memory-server | JS | N/A | 100% (real) | No | Yes | Different approach |
 | KeyDB | C++ | Yes | 100% (fork) | No | Yes | Benchmark |
 | DragonflyDB | C++ | Yes | ~240 | No | Yes | Benchmark |
 | Kvrocks | C++ | Yes | ~308 | No | Yes | Benchmark |

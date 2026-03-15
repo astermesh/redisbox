@@ -242,9 +242,9 @@ First line: imperative mood, lowercase start, no trailing period:
 For larger commits, add brief description after a blank line (standard git convention):
 
 ```
-add RESP proxy with command interception
+add RESP parser with streaming support
 
-intercept and hook Redis commands at the wire protocol level
+parse Redis wire protocol commands from TCP stream
 ```
 
 Do NOT add "Generated with Claude Code" or "Co-Authored-By: Claude" to commit messages.

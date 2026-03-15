@@ -10,12 +10,12 @@ Technical research for building RedisBox — an in-memory Redis emulator for bro
 - Redis command surface analysis (~460+ core, ~650+ with modules)
 - RESP2/RESP3 wire protocol analysis
 - Redis internals: expiration, eviction, pub/sub, transactions, scripting
-- Architecture design for dual-mode operation (proxy + JS engine)
+- Architecture design for pure JS engine
 - Coverage strategy: paths to 100% Redis command parity
 
 ## Key Decision
 
-**Path C (Hybrid)** — RESP proxy over real Redis binary for Node.js (100% coverage immediately), pure JS engine for browser (incremental coverage). Parity verified via Redis TCL test suite.
+**Pure JS Engine** — full reimplementation of Redis in TypeScript. No wrappers over real Redis binaries. Single code path for Node.js and browser (via NodeBox). Parity verified via differential testing and Redis TCL test suite.
 
 ## Research Materials
 

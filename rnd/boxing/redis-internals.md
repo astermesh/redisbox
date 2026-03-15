@@ -34,7 +34,7 @@ Redis uses different internal encodings for the same logical type based on size:
 
 **Why this matters**: The `OBJECT ENCODING` command must return the correct encoding name. Some applications check encoding for debugging. More importantly, encoding affects performance characteristics — `listpack` operations are O(N), `hashtable` is O(1).
 
-**For 100% coverage**: Must either track encoding state and transition thresholds, or (in proxy mode) let real Redis handle this.
+**For 100% coverage**: Must track encoding state and transition thresholds. The `OBJECT ENCODING` command must return correct encoding names, and encoding transitions must happen at the same thresholds as real Redis.
 
 ### Type System
 
@@ -128,7 +128,7 @@ Uses a Morris counter (logarithmic probabilistic counter) stored in the same 24 
 
 Frequency decays over time (configurable via `lfu-decay-time`).
 
-**Implications**: For proxy mode, real Redis handles eviction. For JS engine, `noeviction` is simplest. RedisSim can inject eviction behavior at the hook level.
+**Implications**: `noeviction` is the simplest starting policy. Implement approximated LRU/LFU incrementally. RedisSim can inject eviction behavior at the hook level.
 
 ## Sorted Sets (Skip List + Hash Table)
 
@@ -248,7 +248,7 @@ Replacement for EVAL with named, persistent functions:
 - **fengari** — Lua 5.3 VM in pure JavaScript (no binary deps)
 - **wasmoon** — Lua 5.4 compiled to WASM (faster, but WASM dependency)
 
-In proxy mode, real Redis handles scripting natively.
+See [Lua research](../../rnd/engine/lua.md) for VM options and integration approach.
 
 ## Blocking Commands
 
@@ -312,7 +312,7 @@ Access Control Lists for user authentication and authorization:
 - `ACL SETUSER username ...` — create/modify users
 - `ACL LIST` — show all users and rules
 
-**Implications**: For testing environments, ACL emulation is usually unnecessary. But the commands themselves must exist for 100% coverage. In proxy mode, real Redis handles ACL.
+**Implications**: For testing environments, ACL emulation is usually unnecessary. But the commands themselves must exist for 100% coverage.
 
 ---
 

@@ -1,7 +1,7 @@
 # Research
 
 - [Boxing](boxing/README.md) — Redis emulation strategy, architecture, and coverage analysis
-- [Engine](engine/README.md) — engine architecture, Lua scripting, RESP proxy, testing strategy
+- [Engine](engine/README.md) — engine architecture, Lua scripting, testing strategy
 
 ---
 

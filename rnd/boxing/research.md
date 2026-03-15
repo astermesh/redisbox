@@ -37,55 +37,7 @@ Fluence Labs (2019) ported Redis to WASM via Clang/WASI — research project, no
 | ioredis-mock | JS | 385/568 (68%) | API mock, no RESP |
 | memory-cache | JS | 224/267 (85%) | Pure JS, no RESP |
 
-**Key insight**: DragonflyDB and Kvrocks are the best analogies — they reimplemented Redis from scratch in C++ and achieved high (but not 100%) coverage. Only forks of actual Redis source (KeyDB) achieve true 100%.
-
-### Three Paths to 100% Coverage
-
-#### Path A: Pure JS Reimplementation (all commands)
-
-Reimplement all ~500 core commands in TypeScript.
-
-| Pro | Con |
-|-----|-----|
-| Full Sim hook integration | Massive implementation effort (~500 commands) |
-| Virtual time is trivial | Edge case parity is hard to guarantee |
-| Browser support native | Must track Redis changes across versions |
-| Deterministic replay easy | No existing project covers >85% |
-
-Effort: HIGH. Even DragonflyDB (well-funded C++ team) has ~240 commands.
-
-#### Path B: RESP Proxy over Embedded Redis Binary
-
-Run a real Redis binary as a subprocess and proxy RESP traffic through RedisBox for hook injection.
-
-```
-Application → ioredis → [RedisBox RESP Proxy] → [Real Redis subprocess]
-                              ↑
-                         Hook layer here
-```
-
-| Pro | Con |
-|-----|-----|
-| 100% compatibility automatically | Requires Redis binary (no browser) |
-| Zero command implementation | Node.js only |
-| Always up-to-date with Redis | Virtual time requires external patching |
-| Proven pattern (redis-memory-server) | Deterministic replay limited |
-
-The `redis-memory-server` npm package already demonstrates this pattern — it downloads and manages a real Redis binary programmatically.
-
-#### Path C: Hybrid — Embedded Binary + JS Fallback
-
-```
-Node.js:   RESP Proxy → Real Redis subprocess (100% fidelity)
-Browser:   JS Engine → In-memory (best-effort coverage, growing over time)
-Testing:   Verify JS engine parity against real Redis using Redis TCL test suite
-```
-
-| Pro | Con |
-|-----|-----|
-| 100% in Node.js immediately | Browser coverage grows incrementally |
-| JS engine catches up over time | Two implementations to maintain |
-| Best of both worlds | More complex architecture |
+**Key insight**: DragonflyDB and Kvrocks are the best analogies — they reimplemented Redis from scratch and achieved high (but not 100%) coverage. RedisBox follows the same path in TypeScript.
 
 ### Redis Test Suite for Verification
 
@@ -101,102 +53,145 @@ This can verify our implementation against real Redis behavior. Categories: unit
 
 **Strategy**: Run Redis TCL test suite against our JS engine in external mode. Track pass rate as the coverage metric. Target: matching real Redis behavior for every passing test.
 
-## Decision: Path C (Hybrid)
+## Decision: Pure JS Engine
 
-For 100% command coverage, **Path C** is the recommended approach:
-
-1. **Node.js**: RESP proxy over embedded Redis binary. This gives 100% compatibility immediately. The proxy layer is where hooks attach — intercept/modify/delay/fail commands at the RESP level. For virtual time: use Redis `DEBUG SET-ACTIVE-EXPIRE 0` to disable active expiration, and control TTLs via proxy-level time manipulation.
-
-2. **Browser**: Pure JS engine with incremental command coverage. Start with Tier 1+2 (~100 commands), grow toward full coverage. Each command verified against Redis TCL tests.
-
-3. **Parity verification**: Run Redis TCL test suite against JS engine. Track coverage percentage. Goal: 100% pass rate on applicable tests.
-
-### Why This Beats Pure JS Alone
-
-- 500+ commands is 6-12 months of careful implementation and testing
-- Edge cases (OBJECT ENCODING behavior, type coercion, error messages) are extremely hard to match perfectly
-- DragonflyDB (a well-funded startup) still has ~240 commands after years of development
-- The proxy approach gives users 100% Redis on day one
-
-### Why This Beats WASM
-
-- No WASM Redis exists to use
-- Building one requires maintaining C patches across Redis versions
-- WASM hook integration is much harder than RESP proxy interception
-- WASM can't run in browser without heavy Emscripten scaffolding
+RedisBox is a **full reimplementation of Redis in TypeScript**. No wrappers over real Redis binaries, no proxy, no subprocess management.
 
 ### Architecture
 
 ```
-┌── Node.js Mode ─────────────────────────────────┐
-│                                                   │
-│  App → ioredis → [Custom Connector]               │
-│                        ↓                          │
-│              ┌─────────────────┐                  │
-│              │  RESP Proxy     │ ← hooks          │
-│              │  (Sim hooks     │                   │
-│              │   attach here)  │                   │
-│              └────────┬────────┘                   │
-│                       ↓                            │
-│              ┌─────────────────┐                   │
-│              │  Redis Binary   │ (subprocess)      │
-│              │  (real Redis)   │                   │
-│              └─────────────────┘                   │
-└───────────────────────────────────────────────────┘
+RedisBox = TCP Server + RESP Protocol + In-Memory Engine + Hooks
 
-┌── Browser Mode ─────────────────────────────────┐
-│                                                   │
-│  App → RedisBox API → [JS Engine]                 │
-│                          ↓                        │
-│              ┌─────────────────┐                  │
-│              │  Hook Layer     │ ← hooks          │
-│              └────────┬────────┘                  │
-│                       ↓                           │
-│              ┌─────────────────┐                  │
-│              │  In-Memory      │                  │
-│              │  Data Structures│                  │
-│              └────────┬────────┘                  │
-│                       ↓                           │
-│              ┌─────────────────┐                  │
-│              │  OBI Hooks      │ (time, random)   │
-│              └─────────────────┘                  │
-└───────────────────────────────────────────────────┘
+Runs natively on Node.js.
+Runs in browser via NodeBox (SimBox ecosystem).
+One codebase, one interface, one code path.
 ```
+
+```
+┌─────────────────────────────────────────────────┐
+│                                                   │
+│  Client → TCP / RESP → [Command Dispatcher]       │
+│                               ↓                   │
+│                 ┌──────────────────────┐           │
+│                 │  IBI Hooks           │←── Sim    │
+│                 └──────────┬───────────┘           │
+│                            ↓                       │
+│                 ┌──────────────────────┐           │
+│                 │  In-Memory Engine    │           │
+│                 │  ┌────────────────┐  │           │
+│                 │  │ String Store   │  │           │
+│                 │  │ Hash Store     │  │           │
+│                 │  │ List Store     │  │           │
+│                 │  │ Set Store      │  │           │
+│                 │  │ SortedSet Store│  │           │
+│                 │  │ Stream Store   │  │           │
+│                 │  │ PubSub Engine  │  │           │
+│                 │  │ Script Engine  │  │           │
+│                 │  └────────────────┘  │           │
+│                 └──────────┬───────────┘           │
+│                            ↓                       │
+│                 ┌──────────────────────┐           │
+│                 │  OBI Hooks           │           │
+│                 │  (time, random,      │←── Sim    │
+│                 │   persist)           │           │
+│                 └──────────────────────┘           │
+└─────────────────────────────────────────────────────┘
+```
+
+### Why Pure JS Engine
+
+- **Full control**: every command passes through our code — hooks, virtual time, deterministic replay all work naturally
+- **No external dependencies**: no Redis binary, no subprocess, no platform-specific binaries
+- **Single code path**: same engine runs on Node.js and in browser (via NodeBox)
+- **SimBox integration**: IBI/OBI hooks attach directly to the engine, not to a wire protocol proxy
+- **Virtual time is trivial**: engine controls its own clock, no need to hack Redis internals
+- **Deterministic replay**: all randomness and time controlled at the engine level
+
+### Scale of Implementation
+
+The effort is significant (~460 core commands) but feasible:
+
+| Tier | Commands | Est. effort |
+|------|----------|-------------|
+| Strings + Keys | ~65 | 1-2 weeks |
+| Hashes + Lists + Sets | ~67 | 1-2 weeks |
+| Sorted Sets | 46 | 2-3 weeks |
+| Streams | 27 | 2-3 weeks |
+| Pub/Sub | 12 | 1 week |
+| Transactions | 4 | 3-5 days |
+| Scripting | 12 | 2-3 weeks |
+| Blocking cmds | ~10 | 1-2 weeks |
+| Server/Connection | ~50 | 1-2 weeks |
+| Cluster (stubs) | 32 | 1 week |
+| Bitmap/HLL/Geo | 21 | 1-2 weeks |
+| ACL | 11 | 1 week |
+| **Core total** | ~460 | **~3-4 months** |
+| Modules | ~190 | ~3-4 months |
+| **Grand total** | ~650 | **~6-8 months** |
+
+### Parity Verification
+
+Every command is verified against real Redis via differential testing:
+1. Write test cases based on Redis docs
+2. Run tests against real Redis — capture expected results
+3. Run tests against JS engine — compare
+4. Fix discrepancies
+
+Additionally, adapt Redis TCL test suite for external mode testing against our engine.
 
 ## Implementation Priority
 
-### Phase 1: Node.js 100% Coverage (proxy approach)
+### Phase 1: Engine Foundation
 
-1. RESP2 parser/serializer (needed for proxy)
-2. Embedded Redis binary manager (download/start/stop)
-3. RESP proxy with command interception hooks
-4. ioredis Custom Connector adapter
-5. Basic RedisSim (latency, errors, command interception)
-6. Virtual time control via proxy (disable active expiry, TTL manipulation)
+1. RESP2 parser/serializer
+2. TCP server (accepts Redis client connections)
+3. Command dispatcher with metadata from `@ioredis/commands`
+4. In-memory keyspace (databases, entries, TTL)
+5. String commands (Tier 1)
+6. Key/generic commands (DEL, EXISTS, EXPIRE, TTL, KEYS, SCAN, etc.)
+7. Connection commands (PING, ECHO, SELECT, AUTH, HELLO, CLIENT, etc.)
 
-### Phase 2: Browser JS Engine (incremental)
+### Phase 2: Core Data Structures
 
-7. In-memory engine: Tier 1 commands (strings, keys, connection)
-8. Tier 2 commands (hashes, lists, sets, sorted sets)
-9. Tier 3 commands (pub/sub, transactions, streams)
-10. Tier 4 commands (blocking, bitmap, geo, HyperLogLog, scripting)
-11. Module commands (JSON, Search, TimeSeries) — as needed
+8. Hash commands
+9. List commands
+10. Set commands
+11. Sorted set commands
+12. Expiration system (lazy + active deletion)
 
-### Phase 3: Parity Verification
+### Phase 3: Advanced Features
 
-12. Adapt Redis TCL test suite for external mode testing
-13. CI pipeline: run TCL tests against JS engine, track pass rate
-14. Close gaps between JS engine and real Redis behavior
+13. Pub/Sub
+14. Transactions (MULTI/EXEC/WATCH)
+15. Streams + consumer groups
+16. Blocking commands (BLPOP, BRPOP, XREAD BLOCK, etc.)
+17. Bitmap, HyperLogLog, Geo
+
+### Phase 4: Scripting & Specialized
+
+18. Lua scripting (EVAL/EVALSHA via wasmoon-lua5.1 or fengari)
+19. Redis Functions (FUNCTION LOAD, FCALL)
+20. ACL system
+21. Cluster command stubs
+22. Server commands (INFO, CONFIG, DBSIZE, etc.)
+
+### Phase 5: Modules & Parity
+
+23. JSON module commands
+24. Probabilistic data structures (Bloom, Cuckoo, CMS, T-Digest, Top-K)
+25. TimeSeries, Search, Vector Set — as needed
+26. Redis TCL test suite integration
+27. CI pipeline for parity verification
 
 ## Established Facts
 
 1. Redis 8.0 has ~650+ commands including modules, ~460+ core commands
 2. No production-ready Redis-WASM exists
 3. Only Redis forks (KeyDB) achieve true 100% compatibility; reimplementations (DragonflyDB ~240, Kvrocks ~308) achieve partial
-4. RESP proxy over real Redis binary gives 100% coverage immediately (Node.js)
-5. Redis TCL test suite supports external server mode for compatibility verification
-6. Browser mode requires pure JS engine with incremental coverage
-7. Virtual time: proxy can disable active expiry + manipulate TTLs; JS engine uses OBI time hook
+4. Redis TCL test suite supports external server mode for compatibility verification
+5. Pure JS engine gives full control over time, randomness, and deterministic replay
+6. NodeBox provides browser runtime — RedisBox doesn't need browser-specific code paths
+7. Virtual time: engine controls its own clock via OBI hooks
 
 ## Detailed Research
 
@@ -205,6 +200,7 @@ For 100% command coverage, **Path C** is the recommended approach:
 - [Redis internals](redis-internals.md) — expiration, eviction, pub/sub, transactions
 - [Architecture](architecture.md) — RedisBox design
 - [Full coverage strategy](full-coverage-strategy.md) — analysis of paths to 100% command coverage
+- [NodeBox integration](nodebox-integration.md) — single-runtime architecture via NodeBox
 
 ---
 
