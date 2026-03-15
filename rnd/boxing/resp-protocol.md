@@ -210,7 +210,7 @@ Since Redis 7.0, sub-commands are first-class entities — `COMMAND DOCS` return
 2. **RESP3 support later** — needed for client tracking, richer types, but not blocking
 3. **Both multibulk and inline parsing** — inline needed for redis-cli and testing
 4. **Streaming parser is mandatory** — cannot assume one command per buffer
-5. **For proxy mode**: parser runs on both sides (client→proxy and proxy→Redis) to intercept and modify at command level
+5. **For the engine**: parser runs on the server side (client→engine) to decode commands for execution
 6. **Error message matching**: must replicate exact Redis error strings for full compatibility
 
 ---

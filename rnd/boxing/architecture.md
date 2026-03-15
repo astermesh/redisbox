@@ -1,115 +1,76 @@
 # RedisBox Architecture
 
-Design for the Redis emulator. **Target: 100% Redis command coverage.**
+Full Redis reimplementation in TypeScript. **Target: 100% Redis command coverage.**
 
-## Dual-Mode Architecture
+## Single-Mode Architecture
 
-RedisBox operates in two modes with a shared hook layer:
+RedisBox is a standard Node.js TCP server that speaks RESP. One codebase, one code path. Browser support is provided by NodeBox (SimBox ecosystem's Node.js runtime emulator).
 
 ```
-┌── Node.js: Proxy Mode ──────────────────────────┐
-│                                                   │
-│  Application → ioredis → [Custom Connector]       │
-│                               ↓                   │
-│                 ┌──────────────────────┐           │
-│                 │  RESP Proxy          │           │
-│                 │  ┌────────────────┐  │           │
-│                 │  │ Parser (in)    │  │           │
-│                 │  └───────┬────────┘  │           │
-│                 │          ↓           │           │
-│                 │  ┌────────────────┐  │           │
-│                 │  │ IBI Hooks      │←─── Sim      │
-│                 │  └───────┬────────┘  │           │
-│                 │          ↓           │           │
-│                 │  ┌────────────────┐  │           │
-│                 │  │ Forward to     │  │           │
-│                 │  │ Redis binary   │  │           │
-│                 │  └───────┬────────┘  │           │
-│                 │          ↓           │           │
-│                 │  ┌────────────────┐  │           │
-│                 │  │ Post Hooks     │←─── Sim      │
-│                 │  └───────┬────────┘  │           │
-│                 │          ↓           │           │
-│                 │  ┌────────────────┐  │           │
-│                 │  │ Serializer     │  │           │
-│                 │  └────────────────┘  │           │
-│                 └──────────────────────┘           │
-│                               ↓                    │
-│                 ┌──────────────────────┐           │
-│                 │  Redis Subprocess    │           │
-│                 │  (real Redis binary) │           │
-│                 └──────────────────────┘           │
-└───────────────────────────────────────────────────┘
-
-┌── Browser: JS Engine Mode ──────────────────────┐
-│                                                   │
-│  Application → RedisBox API                       │
-│                        ↓                          │
-│              ┌──────────────────────┐             │
-│              │  Command Dispatcher  │             │
-│              └──────────┬───────────┘             │
-│                         ↓                         │
-│              ┌──────────────────────┐             │
-│              │  IBI Hooks           │←── Sim      │
-│              └──────────┬───────────┘             │
-│                         ↓                         │
-│              ┌──────────────────────┐             │
-│              │  In-Memory Engine    │             │
-│              │  ┌────────────────┐  │             │
-│              │  │ String Store   │  │             │
-│              │  │ Hash Store     │  │             │
-│              │  │ List Store     │  │             │
-│              │  │ Set Store      │  │             │
-│              │  │ SortedSet Store│  │             │
-│              │  │ Stream Store   │  │             │
-│              │  │ PubSub Engine  │  │             │
-│              │  │ Script Engine  │  │             │
-│              │  └────────────────┘  │             │
-│              └──────────┬───────────┘             │
-│                         ↓                         │
-│              ┌──────────────────────┐             │
-│              │  OBI Hooks           │             │
-│              │  (time, random,      │←── Sim      │
-│              │   persist)           │             │
-│              └──────────────────────┘             │
-└───────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│                                                       │
+│  Client (ioredis / node-redis / redis-cli)            │
+│                        ↓                              │
+│              ┌──────────────────────┐                 │
+│              │  TCP Server          │                 │
+│              │  (RESP2/RESP3)       │                 │
+│              └──────────┬───────────┘                 │
+│                         ↓                             │
+│              ┌──────────────────────┐                 │
+│              │  Command Dispatcher  │                 │
+│              └──────────┬───────────┘                 │
+│                         ↓                             │
+│              ┌──────────────────────┐                 │
+│              │  IBI Hooks           │←── Sim          │
+│              └──────────┬───────────┘                 │
+│                         ↓                             │
+│              ┌──────────────────────┐                 │
+│              │  In-Memory Engine    │                 │
+│              │  ┌────────────────┐  │                 │
+│              │  │ String Store   │  │                 │
+│              │  │ Hash Store     │  │                 │
+│              │  │ List Store     │  │                 │
+│              │  │ Set Store      │  │                 │
+│              │  │ SortedSet Store│  │                 │
+│              │  │ Stream Store   │  │                 │
+│              │  │ PubSub Engine  │  │                 │
+│              │  │ Script Engine  │  │                 │
+│              │  └────────────────┘  │                 │
+│              └──────────┬───────────┘                 │
+│                         ↓                             │
+│              ┌──────────────────────┐                 │
+│              │  OBI Hooks           │                 │
+│              │  (time, random,      │←── Sim          │
+│              │   persist)           │                 │
+│              └──────────────────────┘                 │
+└─────────────────────────────────────────────────────────┘
 ```
 
-### Mode Selection
+## Connection Model
 
-```typescript
-// Proxy mode (Node.js) — 100% coverage
-const redis = createRedisBox({ mode: 'proxy' })
+RedisBox listens on a TCP port (or Unix socket) and speaks standard RESP. Any Redis client connects normally.
 
-// JS engine mode (browser or Node.js) — incremental coverage
-const redis = createRedisBox({ mode: 'engine' })
+### Transport Options
 
-// Auto: proxy if Node.js + Redis binary available, else engine
-const redis = createRedisBox({ mode: 'auto' })
-```
+| Environment | Transport | Notes |
+|-------------|-----------|-------|
+| Node.js + ioredis | TCP or Custom Connector | Connector uses DuplexPair for zero-TCP overhead |
+| Node.js + node-redis | TCP or Unix socket | node-redis has no custom connector API |
+| Browser (via NodeBox) | TCP (emulated by NodeBox) | Same code, NodeBox provides `net` module |
+| Testing / redis-cli | TCP | Standard connection |
 
-## Connection Approaches
+### ioredis Custom Connector (optional optimization)
 
-### Approach A: Client-Side API Replacement
-
-Replace ioredis import with mock. No wire protocol.
-
-Pros: Simplest. Works in browser and Node.js.
-Cons: Locked to one client library. No protocol-level hooks. Not true RESP.
-
-### Approach B: Custom ioredis Connector (recommended for both modes)
-
-ioredis supports a `Connector` option returning a custom `NetStream`. Return an in-memory Duplex stream pair.
+ioredis supports a `Connector` option returning a custom `NetStream`. Return an in-memory Duplex stream pair to eliminate TCP overhead for same-process usage:
 
 ```typescript
 import { AbstractConnector } from 'ioredis/built/connectors'
-import { createDuplexPair } from 'duplexpair'
 
 class RedisBoxConnector extends AbstractConnector {
   constructor(private box: RedisBox) { super() }
 
   async connect(): Promise<NetStream> {
-    const { client, server } = createDuplexPair()
+    const [client, server] = duplexPair()
     this.box.handleConnection(server)
     return client
   }
@@ -121,101 +82,11 @@ const redis = new Redis({
 })
 ```
 
-Pros: Real ioredis client, application code unchanged. RESP flows through real encoding. Duplex stream is a natural hook point.
-Cons: Node.js only (Duplex streams). Requires RESP parser.
+This is an optimization, not a requirement. The default is a standard TCP server.
 
-Note: `node-redis` does NOT expose a custom connector. For node-redis users, use Approach C.
+## In-Memory Engine
 
-### Approach C: In-Process TCP Server
-
-Start TCP server on localhost with random port. Works with any Redis client in any language.
-
-Pros: Works with any Redis client. redis-cli compatible.
-Cons: Node.js only. Port allocation complexity.
-
-### Approach D: Direct API (Browser)
-
-No networking. Direct function calls with RESP-like command arrays.
-
-```typescript
-const box = createRedisBox({ mode: 'engine' })
-await box.call('SET', 'mykey', 'hello', 'EX', '60')
-const value = await box.call('GET', 'mykey')
-```
-
-### Recommended Transport Strategy
-
-| Environment | Primary | Fallback |
-|-------------|---------|----------|
-| Node.js + ioredis | Custom Connector (B) | TCP server (C) |
-| Node.js + node-redis | TCP server (C) | — |
-| Browser | Direct API (D) | — |
-| Testing / redis-cli | TCP server (C) | — |
-
-## Proxy Mode: Detail Design
-
-### RESP Proxy Core
-
-```typescript
-class RespProxy {
-  private upstream: net.Socket
-  private clientParser: RedisParser
-  private serverParser: RedisParser
-
-  handleClientData(data: Buffer): void {
-    // 1. Parse RESP command(s) from client
-    // 2. For each command: run pre-hooks
-    // 3. Forward (possibly modified) command to Redis
-    // 4. Parse Redis response
-    // 5. Run post-hooks
-    // 6. Send (possibly modified) response to client
-  }
-}
-```
-
-### Pipelining in Proxy
-
-Client may send multiple commands in one buffer. The proxy must:
-1. Parse all complete commands from buffer
-2. Run pre-hooks for each, in order
-3. Forward each to Redis (or short-circuit)
-4. Match responses to commands (maintain FIFO queue)
-5. Run post-hooks for each response
-6. Send all responses to client in order
-
-### Redis Binary Manager
-
-```typescript
-class RedisBinaryManager {
-  async ensureBinary(version?: string): Promise<string>
-  async start(options?: RedisStartOptions): Promise<RedisProcess>
-  async stop(process: RedisProcess): Promise<void>
-}
-
-interface RedisStartOptions {
-  port?: number          // 0 = random
-  maxmemory?: string     // e.g., '100mb'
-  additionalConfig?: Record<string, string>
-}
-```
-
-Config for subprocess: `redis-server --port 0 --save "" --appendonly no --loglevel warning --protected-mode no --bind 127.0.0.1`
-
-### Virtual Time in Proxy Mode
-
-Real Redis uses real time. Workarounds:
-
-1. **Disable active expiration**: `DEBUG SET-ACTIVE-EXPIRE 0`
-2. **Intercept TIME command**: Proxy returns virtual time
-3. **TTL rewriting**: Convert relative TTL to absolute timestamp based on virtual time
-4. **Lazy expiration override**: On GET, proxy checks virtual TTL. If virtually expired, intercept response
-5. **Force expiration**: Advance virtual time → proxy scans keys with TTL < new virtual time → sends DEL
-
-Limitation: Not perfect for all edge cases, but sufficient for testing scenarios.
-
-## JS Engine Mode: Detail Design
-
-### In-Memory Data Store
+### Data Store
 
 ```typescript
 class RedisEngine {
@@ -278,8 +149,6 @@ const getHandler: CommandHandler = async (args, db) => {
 Use command metadata from `@ioredis/commands` package for automatic validation (argument count, key extraction, read/write classification).
 
 ## Hook Surface
-
-Shared between proxy and engine modes.
 
 ### IBI Hooks (Inbound Box Interface)
 
@@ -371,50 +240,49 @@ class RedisSim {
 
 ## Implementation Priority
 
-### Phase 1: Proxy Mode (5-7 weeks)
+### Phase 1: Foundation
 
 1. RESP2 parser/serializer
-2. Redis binary manager (download, start, stop)
-3. RESP proxy with command interception
-4. ioredis Custom Connector adapter
-5. TCP server adapter (for node-redis / redis-cli)
-6. Hook layer (IBI + OBI)
-7. Basic RedisSim (latency, errors, command interception)
-8. Virtual time via proxy
+2. TCP server (net.createServer, accepts Redis clients)
+3. Command dispatcher with `@ioredis/commands` metadata
+4. In-memory keyspace (databases, entries, TTL)
+5. String commands (25)
+6. Key/generic commands (40+)
+7. Connection commands (19)
 
-### Phase 2: JS Engine Core (8-12 weeks)
+### Phase 2: Core Data Structures
 
-9. In-memory engine scaffold
-10. String commands (25)
-11. Hash commands (28)
-12. List commands (22)
-13. Set commands (17)
-14. Sorted Set commands (46)
-15. Key/Generic commands (40+)
-16. Connection/Server commands (49)
+8. Hash commands (28)
+9. List commands (22)
+10. Set commands (17)
+11. Sorted set commands (46)
+12. Expiration system (lazy + active deletion)
 
-### Phase 3: JS Engine Advanced (6-8 weeks)
+### Phase 3: Advanced Features
 
-17. Pub/Sub (12)
-18. Transactions (4 + WATCH)
-19. Streams (27)
-20. Blocking commands (~10)
-21. Bitmap (6), HyperLogLog (5), Geo (10)
-22. Scripting with Lua embedding (12)
+13. Pub/Sub (12)
+14. Transactions (4 + WATCH)
+15. Streams + consumer groups (27)
+16. Blocking commands (~10)
+17. Bitmap (6), HyperLogLog (5), Geo (10)
 
-### Phase 4: JS Engine Specialized (6-8 weeks)
+### Phase 4: Scripting & Specialized
 
-23. ACL (11), Cluster stubs (32)
-24. JSON module (24)
-25. Probabilistic data structures (47)
-26. TimeSeries (24), Search (27), Vector Set (12)
+18. Lua scripting with wasmoon-lua5.1 or fengari (12)
+19. Redis Functions (FUNCTION LOAD, FCALL)
+20. ACL system (11)
+21. Cluster command stubs (32)
+22. Server commands (INFO, CONFIG, etc.)
 
-### Phase 5: Parity & Polish
+### Phase 5: Modules & Parity
 
-27. Redis TCL test suite integration
-28. CI pipeline for cross-verification
-29. Performance benchmarks
-30. Browser adapter / bundling
+23. Hook layer (IBI + OBI)
+24. RedisSim
+25. JSON module (24)
+26. Probabilistic data structures (47)
+27. TimeSeries, Search, Vector Set — as needed
+28. Redis TCL test suite integration
+29. CI pipeline for parity verification
 
 ---
 

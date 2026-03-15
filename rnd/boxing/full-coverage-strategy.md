@@ -42,11 +42,13 @@ Redis 8.0 has ~460 core commands and ~650+ including modules.
 | Top-K | 7 | Frequent items |
 | Vector Set | 12 | Vector similarity search |
 
-## Path A: Pure JS Reimplementation
+## Paths Considered
+
+### Path A: Pure JS Reimplementation (chosen)
 
 Build all commands in TypeScript from scratch.
 
-### Effort Estimate
+#### Effort Estimate
 
 | Tier | Commands | Est. effort | Notes |
 |------|----------|-------------|-------|
@@ -66,111 +68,69 @@ Build all commands in TypeScript from scratch.
 | Modules total | ~190 | ~3-4 months | JSON, Search, TS, probabilistic |
 | **Grand total** | ~650 | **~6-8 months** | |
 
-### Risks
+#### Risks
 
 1. Edge case parity: Redis's exact behavior on edge cases is documented by behavior, not spec
 2. Error message matching: Clients may parse error strings. Must replicate exact Redis error messages
 3. OBJECT ENCODING: Applications may check internal encoding. Must track encoding transitions
 4. Version drift: Redis adds ~10-20 new commands per major release
 
-### Advantages
+#### Advantages
 
 - Full Sim hook integration on every command
 - Virtual time trivial
 - Deterministic replay trivial
-- Browser support
+- Browser support (via NodeBox)
 - No external binary dependency
+- Single code path for all environments
 
-## Path B: RESP Proxy over Embedded Redis Binary
+### Path B: RESP Proxy over Embedded Redis Binary (rejected)
 
-Run a real Redis subprocess and intercept RESP traffic.
+Run a real Redis binary as a subprocess and proxy RESP traffic.
 
-### Effort Estimate
+**Rejected because:**
+- Requires platform-specific Redis binary — no browser, heavy distribution
+- Not a real implementation — just a wrapper, doesn't achieve project goals
+- Virtual time is imperfect (can't control Redis internal clock)
+- Deterministic replay is limited
+- Two separate systems to manage and debug
+- Contradicts SimBox philosophy of self-contained boxes
 
-| Component | Est. effort | Notes |
-|-----------|-------------|-------|
-| RESP parser (for proxy) | 3-5 days | Can use existing `redis-parser` |
-| RESP serializer | 1-2 days | Trivial |
-| Proxy core (forward/intercept) | 1-2 weeks | Command parsing, hook dispatch |
-| Redis binary manager | 1 week | Download, start, stop, port allocation |
-| ioredis Custom Connector | 3-5 days | Duplex stream pair |
-| Hook layer (IBI + OBI) | 1 week | |
-| Virtual time via proxy | 1 week | Active-expire disable, TTL rewriting |
-| Basic RedisSim | 1 week | Latency, errors, eviction injection |
-| **Total** | **~5-7 weeks** | |
+### Path C: Hybrid (rejected)
 
-### Risks
+Combine proxy (Node.js) and JS engine (browser).
 
-1. No browser support: Requires Redis binary, Node.js only
-2. Virtual time is imperfect: Can't fully control Redis's internal clock
-3. Deterministic replay limited
-4. Binary distribution: Platform-specific, download required
+**Rejected because:**
+- Same problems as Path B for Node.js mode
+- Two implementations to maintain
+- Architectural complexity without clear benefit
+- The proxy is a crutch that delays building the real engine
 
-### Advantages
+## Decision
 
-- 100% command coverage immediately
-- Zero command implementation effort
-- Always matches Redis behavior exactly
-- Modules work out of the box
-- Can use any Redis version
+**Path A: Pure JS Engine.** Full reimplementation of Redis in TypeScript.
 
-## Path C: Hybrid (Recommended)
-
-Combine proxy (Node.js) and JS engine (browser). Converge over time.
-
-### Phase 1: Proxy-First
-
-Build the proxy layer first. This gives:
-- 100% command coverage in Node.js on day one
-- Hook layer working and proven
-- ioredis integration working
-- RedisSim working
-
-### Phase 2: JS Engine (incremental)
-
-Build the JS engine in parallel:
-- Each command verified against real Redis via cross-testing
-- Browser support grows incrementally
-- Node.js users can optionally use JS engine for lighter weight
-
-### Phase 3: Parity Verification
-
-Use Redis TCL test suite (external mode) to verify JS engine:
-- Track pass rate as coverage metric
-- Target: 100% pass rate on applicable tests
+The effort is significant (~3-4 months for core commands) but the result is a proper, self-contained Redis emulator with:
+- Full hook integration at every level
+- Perfect virtual time and deterministic replay
+- No external dependencies
+- Single code path across Node.js and browser (via NodeBox)
 
 ### Testing Strategy
+
+Differential testing is the primary parity verification technique:
 
 ```
 For each command:
   1. Write test cases based on Redis docs
   2. Run tests against real Redis → capture expected results
   3. Run tests against JS engine → compare
-  4. Run tests against proxy → compare
-  5. Fix discrepancies
+  4. Fix discrepancies
 ```
 
-## Comparison of Paths
+Additionally, adapt Redis TCL test suite for external mode testing. Track pass rate as the coverage metric. Target: 100% pass rate on applicable tests.
 
-| Factor | Path A: Pure JS | Path B: Proxy | Path C: Hybrid |
-|--------|----------------|---------------|----------------|
-| Time to 100% (Node.js) | 6-8 months | 5-7 weeks | 5-7 weeks |
-| Time to 100% (Browser) | 6-8 months | Never | 6-8 months |
-| Sim hook quality | Excellent | Good | Excellent (JS) / Good (proxy) |
-| Virtual time | Perfect | Imperfect | Perfect (JS) / Imperfect (proxy) |
-| Deterministic replay | Full | Limited | Full (JS) / Limited (proxy) |
-| Browser support | Yes | No | Yes (JS engine) |
-
-## Decision
-
-**Path C (Hybrid)** is the recommended approach:
-
-1. Proxy gives 100% coverage immediately for Node.js users
-2. JS engine grows incrementally for browser and deterministic replay
-3. Cross-verification ensures JS engine converges toward real Redis behavior
-4. Users can choose mode: proxy (100% compat) vs JS (lighter, deterministic)
-
-Long-term vision: JS engine reaches near-100% core commands. Proxy remains for module commands (JSON, Search) which are too complex to reimplement. Users get full Redis in both environments.
+Reference: **fakeredis-py** runs every test against both fake and real Redis — same test, two backends, compare results. This is the model to follow.
 
 ---
 
