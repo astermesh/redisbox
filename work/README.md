@@ -2,7 +2,6 @@
 
 - [Board](board.md)
 - [Epics](epics/README.md)
-- [Research](research/README.md)
 
 ---
 
