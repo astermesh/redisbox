@@ -19,9 +19,7 @@ Set up the TypeScript project with build system, testing framework, and code qua
 
 ## Tasks
 
-1. T01 — TypeScript and build configuration
-2. T02 — Testing framework setup
-3. T03 — Code quality tooling and CI
+1. T01 — Project setup (TypeScript, build, testing, code quality, CI)
 
 ---
 

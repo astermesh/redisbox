@@ -1,4 +1,4 @@
-# T02: Testing Framework Setup
+# T01: Project Setup
 
 - [Task description](description.md)
 
