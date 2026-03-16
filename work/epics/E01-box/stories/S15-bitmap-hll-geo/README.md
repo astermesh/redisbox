@@ -1,4 +1,4 @@
-# S15: Bitmap, HyperLogLog, and Geo Commands
+# S15: Bitmap Commands
 
 - [Story description](description.md)
 - [Tasks](tasks/README.md)

@@ -8,7 +8,7 @@ Implement the stream data type — append-only logs with consumer group support.
 - T02: Stream read commands
 - T03: Consumer groups
 - T04: XREADGROUP, XACK, XPENDING
-- T05: XCLAIM, XAUTOCLAIM, XDEL, XTRIM, XINFO
+- T05: XCLAIM, XAUTOCLAIM, XDEL, XTRIM, XINFO, XSETID
 
 ---
 

@@ -16,9 +16,11 @@ Full implementation of an in-memory Redis emulator in TypeScript. RedisBox is a 
 - Memory eviction (LRU/LFU/random/TTL policies)
 - Keyspace notifications
 - Config system, ACL, server/client management commands
+- LATENCY and MEMORY introspection commands
 - Cluster command stubs (single-node emulator)
 - Hook architecture (IBI/OBI) for SimBox integration
 - RedisSim API for simulation control
+- Differential testing infrastructure for parity verification
 
 ## Out of Scope
 
@@ -53,33 +55,64 @@ Client (ioredis / node-redis / redis-cli)
 
 ## Stories
 
-25 stories covering the full implementation, ordered by dependency:
+29 stories covering the full implementation, organized by category:
 
-1. S01 — RESP2 parser and serializer
-2. S02 — TCP server
-3. S03 — Key store and database layer
-4. S04 — String type engine
-5. S05 — Command dispatcher
-6. S06 — Connection and server commands
-7. S07 — Hash type engine
-8. S08 — List type engine
-9. S09 — Set type engine
-10. S10 — Sorted set type engine
-11. S11 — Expiration manager
-12. S12 — Pub/Sub system
-13. S13 — Transaction manager
-14. S14 — Blocking commands
-15. S15 — Bitmap, HyperLogLog, and Geo commands
-16. S16 — Streams and consumer groups
-17. S17 — Lua scripting engine
-18. S18 — Memory eviction manager
-19. S19 — Keyspace notifications
-20. S20 — Config system
-21. S21 — Server, client, and info commands
-22. S22 — ACL system
-23. S23 — Cluster and replication stubs
-24. S24 — Hook architecture (IBI/OBI)
-25. S25 — RedisSim API
+### Foundation (implement first, in order)
+
+0. **S00** — Project setup (TypeScript, build, testing framework, CI)
+1. **S01** — RESP2 parser and serializer
+2. **S02** — TCP server
+3. **S03** — Key store and database layer
+4. **S04** — String type engine
+5. **S05** — Command dispatcher
+6. **S06** — Connection and server commands
+7. **S20** — Config system (needed before data structure stories for encoding thresholds)
+
+### Core Data Structures
+
+8. **S07** — Hash type engine
+9. **S08** — List type engine
+10. **S09** — Set type engine
+11. **S10** — Sorted set type engine
+
+### Infrastructure
+
+12. **S11** — Expiration manager (active expiration cycle)
+
+### Advanced Features
+
+13. **S12** — Pub/Sub system
+14. **S13** — Transaction manager
+15. **S14** — Blocking commands
+16. **S15** — Bitmap commands
+17. **S26** — HyperLogLog commands
+18. **S27** — Geo commands
+19. **S16** — Streams and consumer groups
+20. **S17** — Lua scripting engine
+21. **S18** — Memory eviction manager
+22. **S19** — Keyspace notifications
+
+### Server Management
+
+23. **S21** — Server, client, info, LATENCY, and MEMORY commands
+24. **S22** — ACL system
+25. **S23** — Cluster and replication stubs
+
+### SimBox Integration
+
+26. **S24** — Hook architecture (IBI/OBI)
+27. **S25** — RedisSim API
+
+### Testing
+
+28. **S28** — Testing infrastructure (differential testing, TCL suite, CI parity pipeline)
+
+## Dependency Notes
+
+- **S00 must be first** — project scaffolding is prerequisite for all code
+- **S03 (Key Store) defines handler functions** that S05 (Command Dispatcher) wires up. S03 tasks T04-T07 implement command handler logic; S05 provides the dispatch layer that routes parsed commands to those handlers. Both are needed for an end-to-end flow.
+- **S20 (Config) moved to Foundation** — encoding transition thresholds (listpack→hashtable, etc.) depend on config values. Type engine stories (S07-S10) should read thresholds from config.
+- **S28 (Testing Infrastructure)** can start after S00-S05 provide a minimal working engine, but should be set up early to catch parity issues from the start.
 
 ---
 

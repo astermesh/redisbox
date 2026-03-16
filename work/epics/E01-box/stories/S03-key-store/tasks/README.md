@@ -6,6 +6,7 @@
 - [T04: Generic key commands](T04-generic-key-commands/README.md)
 - [T05: TTL commands](T05-ttl-commands/README.md)
 - [T06: KEYS and SCAN](T06-keys-and-scan/README.md)
+- [T07: SORT and SORT_RO](T07-sort/README.md)
 
 ---
 

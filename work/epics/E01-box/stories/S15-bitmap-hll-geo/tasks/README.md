@@ -1,8 +1,8 @@
 # S15 Tasks
 
 - [T01: Bitmap commands](T01-bitmap-commands/README.md)
-- [T02: HyperLogLog commands](T02-hyperloglog-commands/README.md)
-- [T03: Geo commands](T03-geo-commands/README.md)
+
+Note: HyperLogLog → [S26](../../S26-hyperloglog/README.md), Geo → [S27](../../S27-geo/README.md)
 
 ---
 
