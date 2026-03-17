@@ -1,5 +1,7 @@
 # S00: Project Setup
 
+**Status:** done
+
 Set up the TypeScript project with build system, testing framework, and code quality tooling. This must be completed before any implementation work begins.
 
 ## Scope
