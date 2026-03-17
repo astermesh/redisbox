@@ -1,5 +1,7 @@
 # T02: Inline Command Parser
 
+**Status:** done
+
 Parse inline commands (plain text without RESP framing) for redis-cli and telnet compatibility. Detect inline vs multibulk by checking first byte (not `*` = inline). Max inline length 1KB (64KB since Redis 7.2).
 
 ## Parsing Rules
