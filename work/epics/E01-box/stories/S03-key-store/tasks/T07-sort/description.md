@@ -1,5 +1,7 @@
 # T07: SORT and SORT_RO
 
+**Status:** done
+
 SORT is one of the most complex Redis commands. It works on lists, sets, and sorted sets, supporting external key lookups, hash field access, and result storage.
 
 ## Syntax
