@@ -204,6 +204,16 @@ describe('SORT', () => {
       expect(stored?.value).toEqual(['1', '2', '3']);
     });
 
+    it('clears TTL of destination key', () => {
+      const db = createDb();
+      db.set('mylist', 'list', 'quicklist', ['3', '1', '2']);
+      db.set('result', 'string', 'raw', 'old');
+      db.setExpiry('result', 5000);
+      const reply = sort(db, ['mylist', 'STORE', 'result']);
+      expect(reply).toEqual({ kind: 'integer', value: 3 });
+      expect(db.getExpiry('result')).toBeUndefined();
+    });
+
     it('deletes destination on empty result', () => {
       const db = createDb();
       db.set('result', 'string', 'raw', 'old');

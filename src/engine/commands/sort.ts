@@ -269,5 +269,6 @@ function storeResults(db: Database, destKey: string, items: Reply[]): Reply {
     item.kind === 'bulk' ? (item.value ?? '') : ''
   );
   db.set(destKey, 'list', 'quicklist', values);
+  db.removeExpiry(destKey);
   return integerReply(items.length);
 }
