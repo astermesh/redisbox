@@ -182,7 +182,7 @@ function buildDefaults(): Map<string, ConfigParam> {
   add('tls-key-file', '');
   add('tls-ca-cert-file', '');
   add('tls-ca-cert-dir', '');
-  add('tls-auth-clients', 'yes');
+  add('tls-auth-clients', 'yes', isOneOf('yes', 'no', 'optional'));
   add('tls-replication', 'no', isYesNo);
   add('tls-cluster', 'no', isYesNo);
 
@@ -332,7 +332,6 @@ function buildDefaults(): Map<string, ConfigParam> {
   add('active-defrag-cycle-max', '25', isNonNegInt);
   add('active-defrag-max-scan-fields', '1000', isNonNegInt);
   add('jemalloc-bg-thread', 'yes', isYesNo);
-  add('rdbchecksum', 'yes', isYesNo);
   add('crash-log-enabled', 'yes', isYesNo);
   add('use-exit-on-panic', 'no', isYesNo);
   add('disable-thp', 'no', isYesNo);
@@ -340,19 +339,14 @@ function buildDefaults(): Map<string, ConfigParam> {
   add('cluster-config-file', 'nodes.conf');
   add('cluster-node-timeout', '15000', isNonNegInt);
   add('cluster-allow-reads-when-down', 'no', isYesNo);
-  add('close-on-oom', 'no', isYesNo);
   add('lua-time-limit', '5000', isNonNegInt);
   add('busy-reply-threshold', '5000', isNonNegInt);
-  add('close-files-after-invoked-defer', 'no', isYesNo);
   add('latency-tracking', 'yes', isYesNo);
   add('latency-tracking-info-percentiles', '50 99 99.9');
   add('proto-max-bulk-len', '536870912', isNonNegInt);
   add('tracking-table-max-keys', '0', isNonNegInt);
   add('lfu-log-factor', '10', isNonNegInt);
   add('lfu-decay-time', '1', isNonNegInt);
-  add('list-max-special-size', '-2', isInt);
-  add('set-max-special-entries', '128', isNonNegInt);
-
   return m;
 }
 
