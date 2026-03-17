@@ -354,9 +354,14 @@ function buildDefaults(): Map<string, ConfigParam> {
 // ConfigStore
 // ---------------------------------------------------------------------------
 
+export type ConfigChangeListener = (
+  changes: readonly { key: string; value: string; oldValue: string }[]
+) => void;
+
 export class ConfigStore {
   private readonly params: Map<string, ConfigParam>;
   private readonly values: Map<string, string>;
+  private readonly listeners: ConfigChangeListener[] = [];
 
   constructor() {
     this.params = buildDefaults();
@@ -364,6 +369,26 @@ export class ConfigStore {
     // Initialize values from defaults
     for (const [key, param] of this.params) {
       this.values.set(key, param.defaultValue);
+    }
+  }
+
+  /**
+   * Register a listener that is called after CONFIG SET succeeds.
+   * Returns an unsubscribe function.
+   */
+  onChange(listener: ConfigChangeListener): () => void {
+    this.listeners.push(listener);
+    return () => {
+      const idx = this.listeners.indexOf(listener);
+      if (idx >= 0) this.listeners.splice(idx, 1);
+    };
+  }
+
+  private notify(
+    changes: { key: string; value: string; oldValue: string }[]
+  ): void {
+    for (const listener of this.listeners) {
+      listener(changes);
     }
   }
 
@@ -420,7 +445,11 @@ export class ConfigStore {
       return `ERR Invalid argument '${value}' for CONFIG SET '${lowerKey}'`;
     }
 
+    const oldValue = this.values.get(lowerKey) ?? '';
     this.values.set(lowerKey, value);
+    if (oldValue !== value) {
+      this.notify([{ key: lowerKey, value, oldValue }]);
+    }
     return null;
   }
 
@@ -444,11 +473,20 @@ export class ConfigStore {
       }
     }
 
-    // Apply all
+    // Apply all and collect changes
+    const changes: { key: string; value: string; oldValue: string }[] = [];
     for (const [key, value] of pairs) {
-      this.values.set(key.toLowerCase(), value);
+      const lowerKey = key.toLowerCase();
+      const oldValue = this.values.get(lowerKey) ?? '';
+      this.values.set(lowerKey, value);
+      if (oldValue !== value) {
+        changes.push({ key: lowerKey, value, oldValue });
+      }
     }
 
+    if (changes.length > 0) {
+      this.notify(changes);
+    }
     return null;
   }
 

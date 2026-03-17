@@ -201,8 +201,11 @@ describe('CONFIG commands', () => {
   // -------------------------------------------------------------------------
 
   describe('CONFIG REWRITE', () => {
-    it('returns OK (no-op)', () => {
-      expectOk(exec('REWRITE'));
+    it('returns error because no config file exists', () => {
+      expectError(
+        exec('REWRITE'),
+        'The server is running without a config file'
+      );
     });
 
     it('returns error with extra arguments', () => {
@@ -210,7 +213,7 @@ describe('CONFIG commands', () => {
     });
 
     it('is case-insensitive', () => {
-      expectOk(exec('rewrite'));
+      expectError(exec('rewrite'), 'running without a config file');
     });
   });
 });

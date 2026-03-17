@@ -182,7 +182,7 @@ export function pttl(db: Database, clock: () => number, args: string[]): Reply {
   if (!db.has(key)) return NO_KEY;
   const expiryMs = db.getExpiry(key);
   if (expiryMs === undefined) return NO_TTL;
-  return integerReply(expiryMs - clock());
+  return integerReply(Math.max(0, expiryMs - clock()));
 }
 
 export function expiretime(db: Database, args: string[]): Reply {

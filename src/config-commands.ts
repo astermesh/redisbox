@@ -122,7 +122,7 @@ function configRewrite(args: string[]): ConfigResponse {
     return error("ERR wrong number of arguments for 'config|rewrite' command");
   }
 
-  // RedisBox has no config file to rewrite — return OK like Redis does
-  // when config was successfully written
-  return OK;
+  return error(
+    'ERR The server is running without a config file'
+  );
 }
