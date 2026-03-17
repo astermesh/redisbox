@@ -51,6 +51,13 @@ describe('SORT', () => {
       const reply = sort(db, ['mylist', 'LIMIT', '1', '2']);
       expect(extractBulkValues(reply)).toEqual(['2', '3']);
     });
+
+    it('LIMIT with negative count returns all from offset', () => {
+      const db = createDb();
+      db.set('mylist', 'list', 'quicklist', ['5', '3', '1', '4', '2']);
+      const reply = sort(db, ['mylist', 'LIMIT', '1', '-1']);
+      expect(extractBulkValues(reply)).toEqual(['2', '3', '4', '5']);
+    });
   });
 
   describe('on sets', () => {

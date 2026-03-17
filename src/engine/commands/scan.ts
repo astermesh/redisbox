@@ -18,7 +18,7 @@ export function keys(db: Database, args: string[]): Reply {
 
 export function scan(db: Database, args: string[]): Reply {
   const cursor = parseInt(args[0] ?? '0', 10);
-  if (isNaN(cursor)) {
+  if (isNaN(cursor) || cursor < 0) {
     return { kind: 'error', prefix: 'ERR', message: 'invalid cursor' };
   }
 
@@ -45,6 +45,8 @@ export function scan(db: Database, args: string[]): Reply {
     } else if (flag === 'TYPE') {
       i++;
       typeFilter = (args[i] ?? '').toLowerCase();
+    } else {
+      return { kind: 'error', prefix: 'ERR', message: 'syntax error' };
     }
     i++;
   }

@@ -104,6 +104,46 @@ describe('EXPIRE', () => {
       'error'
     );
   });
+
+  it('GT+LT conflict returns error', () => {
+    const { db, clock } = createDb();
+    db.set('k', 'string', 'raw', 'v');
+    expect(ttlCmd.expire(db, clock, ['k', '10', 'GT', 'LT']).kind).toBe(
+      'error'
+    );
+  });
+
+  it('negative timeout deletes the key', () => {
+    const { db, clock } = createDb(1000);
+    db.set('k', 'string', 'raw', 'v');
+    const reply = ttlCmd.expire(db, clock, ['k', '-1']);
+    expect(reply).toEqual({ kind: 'integer', value: 1 });
+    expect(db.has('k')).toBe(false);
+  });
+
+  it('zero timeout deletes the key', () => {
+    const { db, clock } = createDb(1000);
+    db.set('k', 'string', 'raw', 'v');
+    const reply = ttlCmd.expire(db, clock, ['k', '0']);
+    expect(reply).toEqual({ kind: 'integer', value: 1 });
+    expect(db.has('k')).toBe(false);
+  });
+
+  it('GT on key without TTL returns 0 (infinite > any finite)', () => {
+    const { db, clock } = createDb(1000);
+    db.set('k', 'string', 'raw', 'v');
+    const reply = ttlCmd.expire(db, clock, ['k', '10', 'GT']);
+    expect(reply).toEqual({ kind: 'integer', value: 0 });
+    expect(db.getExpiry('k')).toBeUndefined();
+  });
+
+  it('LT on key without TTL sets expiry (infinite > any finite)', () => {
+    const { db, clock } = createDb(1000);
+    db.set('k', 'string', 'raw', 'v');
+    const reply = ttlCmd.expire(db, clock, ['k', '10', 'LT']);
+    expect(reply).toEqual({ kind: 'integer', value: 1 });
+    expect(db.getExpiry('k')).toBe(11000);
+  });
 });
 
 describe('PEXPIRE', () => {
