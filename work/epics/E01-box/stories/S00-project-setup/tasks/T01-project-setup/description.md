@@ -1,5 +1,7 @@
 # T01: Project Setup
 
+**Status:** done
+
 Set up TypeScript project with build system, testing framework, code quality tooling, and CI pipeline.
 
 ## Details
