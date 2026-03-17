@@ -212,8 +212,10 @@ function executeSortCommand(
         const sb = vb ?? '';
         cmp = sa < sb ? -1 : sa > sb ? 1 : 0;
       } else {
-        const na = va !== null ? parseFloat(va) : 0;
-        const nb = vb !== null ? parseFloat(vb) : 0;
+        const rawA = va !== null ? parseFloat(va) : 0;
+        const rawB = vb !== null ? parseFloat(vb) : 0;
+        const na = isNaN(rawA) ? 0 : rawA;
+        const nb = isNaN(rawB) ? 0 : rawB;
         cmp = na - nb;
       }
 

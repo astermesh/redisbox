@@ -131,6 +131,19 @@ describe('SORT', () => {
       const reply = sort(db, ['mylist', 'BY', 'weight_*']);
       expect(extractBulkValues(reply)).toEqual(['b', 'a']);
     });
+
+    it('BY with non-numeric external values treats them as 0', () => {
+      const db = createDb();
+      db.set('mylist', 'list', 'quicklist', ['a', 'b', 'c']);
+      db.set('weight_a', 'string', 'raw', 'abc'); // non-numeric -> 0
+      db.set('weight_b', 'string', 'raw', '5');
+      db.set('weight_c', 'string', 'raw', 'xyz'); // non-numeric -> 0
+      const reply = sort(db, ['mylist', 'BY', 'weight_*']);
+      const values = extractBulkValues(reply);
+      // a and c both sort as 0, b sorts as 5
+      // a and c relative order is stable (a before c in input)
+      expect(values[values.length - 1]).toBe('b'); // b is last (highest)
+    });
   });
 
   describe('GET pattern', () => {

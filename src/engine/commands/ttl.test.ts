@@ -144,6 +144,30 @@ describe('TTL', () => {
     });
   });
 
+  it('rounds to nearest second (Redis formula: (ttl+500)/1000)', () => {
+    const { db, clock, setTime } = createDb(1000);
+    db.set('k', 'string', 'raw', 'v');
+    db.setExpiry('k', 11000);
+    // 9501ms remaining -> rounds to 10
+    setTime(1499);
+    expect(ttlCmd.ttl(db, clock, ['k'])).toEqual({
+      kind: 'integer',
+      value: 10,
+    });
+    // 9499ms remaining -> rounds to 9
+    setTime(1501);
+    expect(ttlCmd.ttl(db, clock, ['k'])).toEqual({
+      kind: 'integer',
+      value: 9,
+    });
+    // 499ms remaining -> rounds to 0
+    setTime(10501);
+    expect(ttlCmd.ttl(db, clock, ['k'])).toEqual({
+      kind: 'integer',
+      value: 0,
+    });
+  });
+
   it('returns -1 for key without TTL', () => {
     const { db, clock } = createDb();
     db.set('k', 'string', 'raw', 'v');
@@ -196,6 +220,23 @@ describe('EXPIRETIME', () => {
     const { db } = createDb();
     db.set('k', 'string', 'raw', 'v');
     db.setExpiry('k', 100000);
+    expect(ttlCmd.expiretime(db, ['k'])).toEqual({
+      kind: 'integer',
+      value: 100,
+    });
+  });
+
+  it('rounds to nearest second (Redis formula: (ms+500)/1000)', () => {
+    const { db } = createDb();
+    db.set('k', 'string', 'raw', 'v');
+    // 100500ms -> rounds to 101
+    db.setExpiry('k', 100500);
+    expect(ttlCmd.expiretime(db, ['k'])).toEqual({
+      kind: 'integer',
+      value: 101,
+    });
+    // 100499ms -> rounds to 100
+    db.setExpiry('k', 100499);
     expect(ttlCmd.expiretime(db, ['k'])).toEqual({
       kind: 'integer',
       value: 100,

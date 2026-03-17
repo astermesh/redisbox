@@ -85,7 +85,7 @@ export function copy(
   args: string[]
 ): Reply {
   const src = args[0] ?? '';
-  let dst = args[1] ?? '';
+  const dst = args[1] ?? '';
   let destDb = srcDb;
   let replace = false;
 
@@ -101,9 +101,6 @@ export function copy(
       destDb = engine.db(dbIdx);
     } else if (flag === 'REPLACE') {
       replace = true;
-    } else if (flag === 'DESTINATION') {
-      i++;
-      dst = args[i] ?? '';
     }
     i++;
   }
@@ -117,6 +114,8 @@ export function copy(
   destDb.setEntry(dst, copiedEntry);
   if (srcExpiry !== undefined) {
     destDb.setExpiry(dst, srcExpiry);
+  } else {
+    destDb.removeExpiry(dst);
   }
   return ONE;
 }
@@ -133,14 +132,6 @@ export function objectRefcount(db: Database, args: string[]): Reply {
   const entry = db.get(key);
   if (!entry) return NIL;
   return integerReply(1);
-}
-
-export function objectIdletime(db: Database, args: string[]): Reply {
-  const key = args[0] ?? '';
-  const entry = db.getWithoutTouch(key);
-  if (!entry) return NIL;
-  const clock = Date.now();
-  return integerReply(Math.floor((clock - entry.lruClock) / 1000));
 }
 
 export function objectIdletimeWithClock(

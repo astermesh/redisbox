@@ -268,6 +268,16 @@ describe('COPY', () => {
     cmd.copy(engine, db, ['src', 'dst']);
     expect(db.getExpiry('dst')).toBe(5000);
   });
+
+  it('clears destination TTL when source has no TTL (REPLACE)', () => {
+    const { db, engine } = createDb();
+    db.set('src', 'string', 'raw', 'new');
+    db.set('dst', 'string', 'raw', 'old');
+    db.setExpiry('dst', 9000);
+    cmd.copy(engine, db, ['src', 'dst', 'REPLACE']);
+    expect(db.get('dst')?.value).toBe('new');
+    expect(db.getExpiry('dst')).toBeUndefined();
+  });
 });
 
 describe('OBJECT', () => {
