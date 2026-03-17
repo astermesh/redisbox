@@ -269,6 +269,26 @@ describe('COPY', () => {
     expect(db.getExpiry('dst')).toBe(5000);
   });
 
+  it('returns error for unknown flags', () => {
+    const { db, engine } = createDb();
+    db.set('src', 'string', 'raw', 'v');
+    const reply = cmd.copy(engine, db, ['src', 'dst', 'BADOPTION']);
+    expect(reply.kind).toBe('error');
+    if (reply.kind === 'error') {
+      expect(reply.message).toBe('syntax error');
+    }
+  });
+
+  it('returns error when src and dst are the same key', () => {
+    const { db, engine } = createDb();
+    db.set('k', 'string', 'raw', 'v');
+    const reply = cmd.copy(engine, db, ['k', 'k']);
+    expect(reply.kind).toBe('error');
+    if (reply.kind === 'error') {
+      expect(reply.message).toContain('same');
+    }
+  });
+
   it('clears destination TTL when source has no TTL (REPLACE)', () => {
     const { db, engine } = createDb();
     db.set('src', 'string', 'raw', 'new');

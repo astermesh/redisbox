@@ -146,6 +146,22 @@ describe('SCAN', () => {
     expect(new Set(allKeys).size).toBe(20);
   });
 
+  it('returns error for negative cursor', () => {
+    const db = createDb();
+    db.set('a', 'string', 'raw', 'v');
+    const reply = scanCmd.scan(db, ['-1']);
+    expect(reply.kind).toBe('error');
+  });
+
+  it('returns error for unknown option', () => {
+    const db = createDb();
+    const reply = scanCmd.scan(db, ['0', 'BADOPTION']);
+    expect(reply.kind).toBe('error');
+    if (reply.kind === 'error') {
+      expect(reply.message).toBe('syntax error');
+    }
+  });
+
   it('returns empty for empty db', () => {
     const db = createDb();
     const reply = scanCmd.scan(db, ['0']);

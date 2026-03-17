@@ -101,8 +101,17 @@ export function copy(
       destDb = engine.db(dbIdx);
     } else if (flag === 'REPLACE') {
       replace = true;
+    } else {
+      return errorReply('ERR', 'syntax error');
     }
     i++;
+  }
+
+  if (srcDb === destDb && src === dst) {
+    return errorReply(
+      'ERR',
+      'source and destination objects are the same'
+    );
   }
 
   const copiedEntry = srcDb.copyEntry(src);

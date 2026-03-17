@@ -52,6 +52,18 @@ function parseFlags(args: string[]): {
       ),
     };
   }
+  if (gt && lt) {
+    return {
+      nx,
+      xx,
+      gt,
+      lt,
+      error: errorReply(
+        'ERR',
+        'GT and LT options at the same time are not compatible'
+      ),
+    };
+  }
   return { nx, xx, gt, lt, error: null };
 }
 
@@ -67,11 +79,11 @@ function shouldSetExpiry(
   if (flags.nx && hasExpiry) return false;
   if (flags.xx && !hasExpiry) return false;
   if (flags.gt) {
-    if (!hasExpiry) return true;
+    if (!hasExpiry) return false; // no TTL = infinite, nothing is greater
     return newExpiryMs > currentExpiry;
   }
   if (flags.lt) {
-    if (!hasExpiry) return true;
+    if (!hasExpiry) return true; // no TTL = infinite, any finite is less
     return newExpiryMs < currentExpiry;
   }
   return true;
@@ -96,7 +108,11 @@ export function expire(
   const expiryMs = clock() + seconds * 1000;
   if (!shouldSetExpiry(db, key, expiryMs, flags)) return ZERO;
 
-  db.setExpiry(key, expiryMs);
+  if (expiryMs <= clock()) {
+    db.delete(key);
+  } else {
+    db.setExpiry(key, expiryMs);
+  }
   return ONE;
 }
 
@@ -119,13 +135,17 @@ export function pexpire(
   const expiryMs = clock() + ms;
   if (!shouldSetExpiry(db, key, expiryMs, flags)) return ZERO;
 
-  db.setExpiry(key, expiryMs);
+  if (expiryMs <= clock()) {
+    db.delete(key);
+  } else {
+    db.setExpiry(key, expiryMs);
+  }
   return ONE;
 }
 
 export function expireat(
   db: Database,
-  _clock: () => number,
+  clock: () => number,
   args: string[]
 ): Reply {
   const key = args[0] ?? '';
@@ -142,13 +162,17 @@ export function expireat(
   const expiryMs = timestamp * 1000;
   if (!shouldSetExpiry(db, key, expiryMs, flags)) return ZERO;
 
-  db.setExpiry(key, expiryMs);
+  if (expiryMs <= clock()) {
+    db.delete(key);
+  } else {
+    db.setExpiry(key, expiryMs);
+  }
   return ONE;
 }
 
 export function pexpireat(
   db: Database,
-  _clock: () => number,
+  clock: () => number,
   args: string[]
 ): Reply {
   const key = args[0] ?? '';
@@ -164,7 +188,11 @@ export function pexpireat(
 
   if (!shouldSetExpiry(db, key, timestampMs, flags)) return ZERO;
 
-  db.setExpiry(key, timestampMs);
+  if (timestampMs <= clock()) {
+    db.delete(key);
+  } else {
+    db.setExpiry(key, timestampMs);
+  }
   return ONE;
 }
 

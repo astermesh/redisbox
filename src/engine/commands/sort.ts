@@ -227,7 +227,10 @@ function executeSortCommand(
   let result = elements;
   if (options.limit !== null) {
     const { offset, count } = options.limit;
-    result = elements.slice(offset, offset + count);
+    result =
+      count < 0
+        ? elements.slice(offset)
+        : elements.slice(offset, offset + count);
   }
 
   // Apply GET patterns
