@@ -1,5 +1,7 @@
 # T03: Key Version Tracking
 
+**Status:** done
+
 Add per-key version counter (monotonically incrementing number). Increment on every mutation (set, delete, expire, rename). Used by WATCH for optimistic locking.
 
 ## Acceptance Criteria

@@ -1,5 +1,7 @@
 # T04: Generic Key Commands
 
+**Status:** done
+
 Implement DEL, EXISTS, TYPE, RENAME, RENAMENX, PERSIST, RANDOMKEY, TOUCH, UNLINK, COPY, OBJECT (ENCODING, REFCOUNT, IDLETIME, HELP, FREQ), WAIT (stub returning 0).
 
 Note: SORT and SORT_RO are complex commands extracted into T07.

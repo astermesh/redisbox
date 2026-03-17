@@ -1,5 +1,7 @@
 # T02: Lazy Expiration
 
+**Status:** done
+
 Implement expireIfNeeded check on every key access. If key has TTL and current time >= expiry time, delete key and return null. Expiry index: Map<string, number> mapping key to absolute expiry timestamp in ms.
 
 ## Acceptance Criteria

@@ -1,5 +1,7 @@
 # T06: KEYS and SCAN
 
+**Status:** done
+
 Implement KEYS pattern (glob matching), SCAN cursor [MATCH pattern] [COUNT hint] [TYPE type]. SCAN uses cursor-based iteration returning 0 when complete. KEYS supports glob patterns: *, ?, [abc], [^abc], \.
 
 ## Acceptance Criteria

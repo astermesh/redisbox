@@ -1,5 +1,7 @@
 # T01: Database and Entry Model
 
+**Status:** done
+
 Define RedisEntry interface with type, encoding, value, lruClock fields. Create Database class with Map-based store and expiry index. Create RedisEngine class holding 16 Database instances.
 
 ## Engine Dependencies (DI)
