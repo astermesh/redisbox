@@ -53,7 +53,8 @@ const patterns = {
     'src/**/*.api.test.ts',
   ],
   e2e: ['src/**/*.e2e.test.ts'],
-  serverOnly: ['src/**/*.io.test.ts'],
+  // Tests that rely on Node.js-only APIs (not provided by browser or NodeBox test env)
+  serverOnly: ['src/**/*.io.test.ts', 'src/build.test.ts'],
 };
 
 const include = (p: string[]): SearchConfig => ({ include: p });
@@ -89,6 +90,7 @@ type RunConfig = {
     instances: { browser: 'chromium' }[];
   };
   pool?: 'forks';
+  setupFiles?: string[];
 };
 
 const runConfig = {
@@ -99,6 +101,7 @@ const runConfig = {
       headless: true,
       instances: [{ browser: 'chromium' as const }],
     },
+    setupFiles: ['src/test-setup/browser.ts'],
   }),
   server: (): RunConfig => ({
     pool: 'forks',
