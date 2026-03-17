@@ -123,13 +123,16 @@ function splitArgs(line: string): Buffer[] {
                 bytes.push(0x78);
               }
               break;
-            default:
+            default: {
               bytes.push(0x5c);
-              bytes.push(line.charCodeAt(i));
+              const escaped = Buffer.from(line[i] as string, 'utf8');
+              for (const b of escaped) bytes.push(b);
               break;
+            }
           }
         } else {
-          bytes.push(line.charCodeAt(i));
+          const ch = Buffer.from(line[i] as string, 'utf8');
+          for (const b of ch) bytes.push(b);
         }
         i++;
       }
@@ -152,7 +155,8 @@ function splitArgs(line: string): Buffer[] {
             continue;
           }
         }
-        bytes.push(line.charCodeAt(i));
+        const ch = Buffer.from(line[i] as string, 'utf8');
+        for (const b of ch) bytes.push(b);
         i++;
       }
       if (i < line.length && line[i] === "'") {

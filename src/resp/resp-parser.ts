@@ -5,15 +5,8 @@
  * via a callback. Handles partial buffers across multiple data events.
  */
 
-/** Parsed RESP2 value types */
-export type RespValue =
-  | { type: 'simple'; value: string }
-  | { type: 'error'; value: string }
-  | { type: 'integer'; value: number }
-  | { type: 'bulk'; value: Buffer | null }
-  | { type: 'array'; value: RespValue[] | null };
-
-export type RespCallback = (value: RespValue) => void;
+import type { RespValue, RespCallback } from './types.ts';
+export type { RespValue, RespCallback };
 
 const PLUS = 0x2b; // +
 const MINUS = 0x2d; // -
@@ -23,16 +16,9 @@ const STAR = 0x2a; // *
 
 const MAX_BULK_LEN = 512 * 1024 * 1024; // 512 MB
 
-interface FrameState {
-  type: 'array';
-  expected: number;
-  items: RespValue[];
-}
-
 export class RespParser {
   private buffer: Buffer = Buffer.alloc(0);
   private offset = 0;
-  private stack: FrameState[] = [];
   private readonly callback: RespCallback;
 
   constructor(callback: RespCallback) {
@@ -59,7 +45,6 @@ export class RespParser {
   reset(): void {
     this.buffer = Buffer.alloc(0);
     this.offset = 0;
-    this.stack = [];
   }
 
   private parse(): void {
@@ -141,7 +126,11 @@ export class RespParser {
       this.offset = savedOffset;
       return undefined;
     }
-    return { type: 'integer', value: parseInt(line, 10) };
+    const value = parseInt(line, 10);
+    if (isNaN(value)) {
+      throw new Error(`Protocol error: invalid integer '${line}'`);
+    }
+    return { type: 'integer', value };
   }
 
   private readBulkString(): RespValue | undefined {
@@ -153,6 +142,10 @@ export class RespParser {
     }
 
     const len = parseInt(line, 10);
+
+    if (isNaN(len)) {
+      throw new Error(`Protocol error: invalid bulk length '${line}'`);
+    }
 
     // null bulk string
     if (len === -1) {
@@ -167,6 +160,13 @@ export class RespParser {
     if (this.offset + len + 2 > this.buffer.length) {
       this.offset = savedOffset;
       return undefined;
+    }
+
+    if (
+      this.buffer[this.offset + len] !== 0x0d ||
+      this.buffer[this.offset + len + 1] !== 0x0a
+    ) {
+      throw new Error('Protocol error: bulk string terminator is not CRLF');
     }
 
     const value = Buffer.alloc(len);
@@ -184,6 +184,10 @@ export class RespParser {
     }
 
     const count = parseInt(line, 10);
+
+    if (isNaN(count)) {
+      throw new Error(`Protocol error: invalid array length '${line}'`);
+    }
 
     // null array
     if (count === -1) {
@@ -213,18 +217,6 @@ export class RespParser {
   }
 
   private emit(value: RespValue): void {
-    if (this.stack.length === 0) {
-      this.callback(value);
-      return;
-    }
-
-    // length already checked above
-    const frame = this.stack[this.stack.length - 1] as FrameState;
-    frame.items.push(value);
-
-    if (frame.items.length === frame.expected) {
-      this.stack.pop();
-      this.emit({ type: 'array', value: frame.items });
-    }
+    this.callback(value);
   }
 }

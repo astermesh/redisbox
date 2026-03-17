@@ -5,7 +5,7 @@
  * byte-for-byte matching real Redis output.
  */
 
-import type { RespValue } from './resp-parser.ts';
+import type { RespValue } from './types.ts';
 
 const CRLF = Buffer.from('\r\n');
 
@@ -13,10 +13,10 @@ const CRLF = Buffer.from('\r\n');
 export function serialize(value: RespValue): Buffer {
   switch (value.type) {
     case 'simple':
-      return Buffer.from(`+${value.value}\r\n`);
+      return simpleString(value.value);
 
     case 'error':
-      return Buffer.from(`-${value.value}\r\n`);
+      return error(value.value);
 
     case 'integer':
       return Buffer.from(`:${value.value}\r\n`);
@@ -51,10 +51,16 @@ function serializeArray(value: RespValue[] | null): Buffer {
 // Convenience helpers for common response patterns
 
 export function simpleString(value: string): Buffer {
+  if (value.includes('\r') || value.includes('\n')) {
+    throw new Error('Simple string must not contain CR or LF');
+  }
   return Buffer.from(`+${value}\r\n`);
 }
 
 export function error(value: string): Buffer {
+  if (value.includes('\r') || value.includes('\n')) {
+    throw new Error('Error string must not contain CR or LF');
+  }
   return Buffer.from(`-${value}\r\n`);
 }
 

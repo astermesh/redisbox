@@ -154,6 +154,24 @@ describe('parseInlineCommand', () => {
     });
   });
 
+  describe('non-ASCII characters', () => {
+    it('preserves UTF-8 bytes for non-ASCII in double-quoted string', () => {
+      // é = U+00E9 = UTF-8: 0xC3 0xA9
+      const r = parse('SET "é" val\r\n');
+      expect(r.args[1]).toEqual(Buffer.from('é', 'utf8'));
+    });
+
+    it('preserves UTF-8 bytes for non-ASCII in single-quoted string', () => {
+      const r = parse("SET 'é' val\r\n");
+      expect(r.args[1]).toEqual(Buffer.from('é', 'utf8'));
+    });
+
+    it('preserves UTF-8 bytes for non-ASCII in unquoted argument', () => {
+      const r = parse('SET é val\r\n');
+      expect(r.args[1]).toEqual(Buffer.from('é', 'utf8'));
+    });
+  });
+
   describe('max inline length', () => {
     it('throws on too long inline request', () => {
       const longLine = 'A'.repeat(65537);

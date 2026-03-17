@@ -109,6 +109,18 @@ describe('convenience helpers', () => {
     expect(simpleString('OK')).toEqual(Buffer.from('+OK\r\n'));
   });
 
+  it('simpleString throws on embedded CR', () => {
+    expect(() => simpleString('bad\rvalue')).toThrow();
+  });
+
+  it('simpleString throws on embedded LF', () => {
+    expect(() => simpleString('bad\nvalue')).toThrow();
+  });
+
+  it('error throws on embedded CRLF', () => {
+    expect(() => error('ERR bad\r\nvalue')).toThrow();
+  });
+
   it('error', () => {
     expect(error('ERR test')).toEqual(Buffer.from('-ERR test\r\n'));
   });

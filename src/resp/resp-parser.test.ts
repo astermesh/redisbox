@@ -223,6 +223,30 @@ describe('RespParser', () => {
         parser.write(Buffer.from('!invalid\r\n'));
       }).toThrow('Protocol error');
     });
+
+    it('throws on NaN integer', () => {
+      expect(() => {
+        parser.write(Buffer.from(':abc\r\n'));
+      }).toThrow('Protocol error');
+    });
+
+    it('throws on NaN bulk string length', () => {
+      expect(() => {
+        parser.write(Buffer.from('$abc\r\nhello\r\n'));
+      }).toThrow('Protocol error');
+    });
+
+    it('throws on NaN array count', () => {
+      expect(() => {
+        parser.write(Buffer.from('*abc\r\n'));
+      }).toThrow('Protocol error');
+    });
+
+    it('throws on missing CRLF terminator after bulk string', () => {
+      expect(() => {
+        parser.write(Buffer.from('$3\r\nabcXX'));
+      }).toThrow('Protocol error');
+    });
   });
 
   describe('reset', () => {
