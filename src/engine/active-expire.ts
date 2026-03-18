@@ -85,10 +85,10 @@ function expireCycleCore(
         }
       }
 
-      // If expired ratio is at or below acceptable stale threshold, move to next db
-      // Redis: if (expired <= sampled / (100/acceptable_stale)) break
+      // If expired ratio is below acceptable stale threshold, move to next db
+      // Redis: if ((expired*100/sampled) < config_cycle_acceptable_stale) break
       const threshold = sampled.length * (configCycleAcceptableStale / 100);
-      if (expired <= threshold) break;
+      if (expired < threshold) break;
 
       // Also check if no more expiring keys remain
       if (db.expirySize === 0) break;
