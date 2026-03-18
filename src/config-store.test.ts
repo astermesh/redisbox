@@ -317,16 +317,14 @@ describe('ConfigStore', () => {
 
   describe('onChange', () => {
     it('calls listener on set', () => {
-      const changes: { key: string; value: string; oldValue: string }[] =
-        [];
+      const changes: { key: string; value: string; oldValue: string }[] = [];
       store.onChange((c) => changes.push(...c));
       store.set('hz', '50');
       expect(changes).toEqual([{ key: 'hz', value: '50', oldValue: '10' }]);
     });
 
     it('calls listener on setMulti', () => {
-      const changes: { key: string; value: string; oldValue: string }[] =
-        [];
+      const changes: { key: string; value: string; oldValue: string }[] = [];
       store.onChange((c) => changes.push(...c));
       store.setMulti([
         ['hz', '20'],
@@ -339,24 +337,21 @@ describe('ConfigStore', () => {
     });
 
     it('does not call listener when value unchanged', () => {
-      const changes: { key: string; value: string; oldValue: string }[] =
-        [];
+      const changes: { key: string; value: string; oldValue: string }[] = [];
       store.onChange((c) => changes.push(...c));
       store.set('hz', '10'); // same as default
       expect(changes).toEqual([]);
     });
 
     it('does not call listener on validation error', () => {
-      const changes: { key: string; value: string; oldValue: string }[] =
-        [];
+      const changes: { key: string; value: string; oldValue: string }[] = [];
       store.onChange((c) => changes.push(...c));
       store.set('hz', 'invalid');
       expect(changes).toEqual([]);
     });
 
     it('unsubscribe stops notifications', () => {
-      const changes: { key: string; value: string; oldValue: string }[] =
-        [];
+      const changes: { key: string; value: string; oldValue: string }[] = [];
       const unsub = store.onChange((c) => changes.push(...c));
       store.set('hz', '20');
       expect(changes).toHaveLength(1);
