@@ -1,11 +1,47 @@
 import type { Database } from '../database.ts';
 import type { RedisEncoding, Reply } from '../types.ts';
-import { bulkReply, errorReply, OK, NIL, wrongTypeError } from '../types.ts';
+import {
+  bulkReply,
+  integerReply,
+  arrayReply,
+  errorReply,
+  OK,
+  NIL,
+  ZERO,
+  ONE,
+  wrongTypeError,
+} from '../types.ts';
 
 const INT64_MAX = BigInt('9223372036854775807');
 const INT64_MIN = BigInt('-9223372036854775808');
 
 const INT_PATTERN = /^-?[1-9]\d*$|^0$/;
+
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
+function strToBytes(s: string): Uint8Array {
+  return textEncoder.encode(s);
+}
+
+function bytesToStr(b: Uint8Array): string {
+  return textDecoder.decode(b);
+}
+
+function strByteLength(s: string): number {
+  return textEncoder.encode(s).length;
+}
+
+function parseIntArg(s: string): { value: number; error: Reply | null } {
+  const val = parseInt(s, 10);
+  if (isNaN(val) || String(val) !== s) {
+    return {
+      value: 0,
+      error: errorReply('ERR', 'value is not an integer or out of range'),
+    };
+  }
+  return { value: val, error: null };
+}
 
 export function determineStringEncoding(value: string): RedisEncoding {
   if (INT_PATTERN.test(value)) {
@@ -19,8 +55,7 @@ export function determineStringEncoding(value: string): RedisEncoding {
     }
   }
 
-  const byteLength = new TextEncoder().encode(value).length;
-  return byteLength <= 44 ? 'embstr' : 'raw';
+  return strByteLength(value) <= 44 ? 'embstr' : 'raw';
 }
 
 export function get(db: Database, args: string[]): Reply {
@@ -223,4 +258,452 @@ export function set(db: Database, clock: () => number, args: string[]): Reply {
     return bulkReply(oldValue);
   }
   return OK;
+}
+
+// --- MGET ---
+
+export function mget(db: Database, args: string[]): Reply {
+  const results: Reply[] = [];
+  for (const key of args) {
+    const entry = db.get(key);
+    if (!entry || entry.type !== 'string') {
+      results.push(NIL);
+    } else {
+      results.push(bulkReply(entry.value as string));
+    }
+  }
+  return arrayReply(results);
+}
+
+// --- MSET ---
+
+export function mset(db: Database, args: string[]): Reply {
+  if (args.length % 2 !== 0) {
+    return errorReply('ERR', "wrong number of arguments for 'mset' command");
+  }
+  for (let i = 0; i < args.length; i += 2) {
+    const key = args[i] ?? '';
+    const value = args[i + 1] ?? '';
+    const encoding = determineStringEncoding(value);
+    db.set(key, 'string', encoding, value);
+    db.removeExpiry(key);
+  }
+  return OK;
+}
+
+// --- MSETNX ---
+
+export function msetnx(db: Database, args: string[]): Reply {
+  if (args.length % 2 !== 0) {
+    return errorReply('ERR', "wrong number of arguments for 'msetnx' command");
+  }
+  // Check if any key exists
+  for (let i = 0; i < args.length; i += 2) {
+    if (db.has(args[i] ?? '')) return ZERO;
+  }
+  // Set all keys
+  for (let i = 0; i < args.length; i += 2) {
+    const key = args[i] ?? '';
+    const value = args[i + 1] ?? '';
+    const encoding = determineStringEncoding(value);
+    db.set(key, 'string', encoding, value);
+  }
+  return ONE;
+}
+
+// --- APPEND ---
+
+export function append(db: Database, args: string[]): Reply {
+  const key = args[0] ?? '';
+  const appendValue = args[1] ?? '';
+
+  const entry = db.get(key);
+  if (entry && entry.type !== 'string') return wrongTypeError();
+
+  if (!entry) {
+    // Key doesn't exist: create with determined encoding
+    const encoding = determineStringEncoding(appendValue);
+    db.set(key, 'string', encoding, appendValue);
+    return integerReply(strByteLength(appendValue));
+  }
+
+  // Key exists: append and always use raw encoding
+  const existingValue = entry.value as string;
+  const newValue = existingValue + appendValue;
+  db.set(key, 'string', 'raw', newValue);
+
+  return integerReply(strByteLength(newValue));
+}
+
+// --- STRLEN ---
+
+export function strlen(db: Database, args: string[]): Reply {
+  const key = args[0] ?? '';
+  const entry = db.get(key);
+  if (!entry) return ZERO;
+  if (entry.type !== 'string') return wrongTypeError();
+  return integerReply(strByteLength(entry.value as string));
+}
+
+// --- SETRANGE ---
+
+export function setrange(db: Database, args: string[]): Reply {
+  const key = args[0] ?? '';
+  const { value: offset, error } = parseIntArg(args[1] ?? '');
+  if (error) return error;
+  if (offset < 0) return errorReply('ERR', 'offset is out of range');
+
+  const newValueBytes = strToBytes(args[2] ?? '');
+
+  // Empty value special case
+  if (newValueBytes.length === 0) {
+    const entry = db.get(key);
+    if (!entry) return ZERO;
+    if (entry.type !== 'string') return wrongTypeError();
+    return integerReply(strByteLength(entry.value as string));
+  }
+
+  const entry = db.get(key);
+  if (entry && entry.type !== 'string') return wrongTypeError();
+
+  const existingBytes = entry
+    ? strToBytes(entry.value as string)
+    : new Uint8Array(0);
+  const requiredLen = Math.max(
+    existingBytes.length,
+    offset + newValueBytes.length
+  );
+
+  if (requiredLen > 512 * 1024 * 1024) {
+    return errorReply('ERR', 'string exceeds maximum allowed size (512MB)');
+  }
+
+  const result = new Uint8Array(requiredLen);
+  result.set(existingBytes);
+  result.set(newValueBytes, offset);
+
+  db.set(key, 'string', 'raw', bytesToStr(result));
+
+  return integerReply(requiredLen);
+}
+
+// --- GETRANGE / SUBSTR ---
+
+export function getrange(db: Database, args: string[]): Reply {
+  const key = args[0] ?? '';
+  const { value: start, error: startErr } = parseIntArg(args[1] ?? '');
+  if (startErr) return startErr;
+  const { value: end, error: endErr } = parseIntArg(args[2] ?? '');
+  if (endErr) return endErr;
+
+  const entry = db.get(key);
+  if (!entry) return bulkReply('');
+  if (entry.type !== 'string') return wrongTypeError();
+
+  const bytes = strToBytes(entry.value as string);
+  const len = bytes.length;
+  if (len === 0) return bulkReply('');
+
+  const s = start < 0 ? Math.max(len + start, 0) : start;
+  let e = end < 0 ? Math.max(len + end, 0) : end;
+  if (e >= len) e = len - 1;
+  if (s > e) return bulkReply('');
+
+  return bulkReply(bytesToStr(bytes.slice(s, e + 1)));
+}
+
+// --- GETEX ---
+
+export function getex(
+  db: Database,
+  clock: () => number,
+  args: string[]
+): Reply {
+  const key = args[0] ?? '';
+
+  // Parse options first (validate before executing)
+  let mode: 'none' | 'ex' | 'px' | 'exat' | 'pxat' | 'persist' = 'none';
+  let ttlValue = 0;
+
+  let i = 1;
+  while (i < args.length) {
+    const opt = (args[i] ?? '').toUpperCase();
+    switch (opt) {
+      case 'EX':
+      case 'PX':
+      case 'EXAT':
+      case 'PXAT': {
+        if (mode !== 'none') return SYNTAX_ERR;
+        mode = opt.toLowerCase() as 'ex' | 'px' | 'exat' | 'pxat';
+        i++;
+        if (i >= args.length) return SYNTAX_ERR;
+        const { value: val, error: parseErr } = parseIntArg(args[i] ?? '');
+        if (parseErr) return parseErr;
+        if (val <= 0)
+          return errorReply('ERR', "invalid expire time in 'getex' command");
+        ttlValue = val;
+        break;
+      }
+      case 'PERSIST':
+        if (mode !== 'none') return SYNTAX_ERR;
+        mode = 'persist';
+        break;
+      default:
+        return SYNTAX_ERR;
+    }
+    i++;
+  }
+
+  // Get the value
+  const entry = db.get(key);
+  if (!entry) return NIL;
+  if (entry.type !== 'string') return wrongTypeError();
+
+  // Apply TTL changes
+  switch (mode) {
+    case 'ex':
+      db.setExpiry(key, clock() + ttlValue * 1000);
+      break;
+    case 'px':
+      db.setExpiry(key, clock() + ttlValue);
+      break;
+    case 'exat':
+      db.setExpiry(key, ttlValue * 1000);
+      break;
+    case 'pxat':
+      db.setExpiry(key, ttlValue);
+      break;
+    case 'persist':
+      db.removeExpiry(key);
+      break;
+  }
+
+  return bulkReply(entry.value as string);
+}
+
+// --- GETDEL ---
+
+export function getdel(db: Database, args: string[]): Reply {
+  const key = args[0] ?? '';
+  const entry = db.get(key);
+  if (!entry) return NIL;
+  if (entry.type !== 'string') return wrongTypeError();
+  const value = entry.value as string;
+  db.delete(key);
+  return bulkReply(value);
+}
+
+// --- GETSET ---
+
+export function getset(db: Database, args: string[]): Reply {
+  const key = args[0] ?? '';
+  const newValue = args[1] ?? '';
+
+  const entry = db.get(key);
+  if (entry && entry.type !== 'string') return wrongTypeError();
+
+  const oldValue = entry ? (entry.value as string) : null;
+
+  const encoding = determineStringEncoding(newValue);
+  db.set(key, 'string', encoding, newValue);
+  db.removeExpiry(key);
+
+  return bulkReply(oldValue);
+}
+
+// --- SETNX ---
+
+export function setnx(db: Database, args: string[]): Reply {
+  const key = args[0] ?? '';
+  const value = args[1] ?? '';
+
+  if (db.has(key)) return ZERO;
+
+  const encoding = determineStringEncoding(value);
+  db.set(key, 'string', encoding, value);
+  return ONE;
+}
+
+// --- SETEX ---
+
+export function setex(
+  db: Database,
+  clock: () => number,
+  args: string[]
+): Reply {
+  const key = args[0] ?? '';
+  const { value: seconds, error } = parseIntArg(args[1] ?? '');
+  if (error) return error;
+  if (seconds <= 0)
+    return errorReply('ERR', "invalid expire time in 'setex' command");
+  const value = args[2] ?? '';
+
+  const encoding = determineStringEncoding(value);
+  db.set(key, 'string', encoding, value);
+  db.setExpiry(key, clock() + seconds * 1000);
+
+  return OK;
+}
+
+// --- PSETEX ---
+
+export function psetex(
+  db: Database,
+  clock: () => number,
+  args: string[]
+): Reply {
+  const key = args[0] ?? '';
+  const { value: ms, error } = parseIntArg(args[1] ?? '');
+  if (error) return error;
+  if (ms <= 0)
+    return errorReply('ERR', "invalid expire time in 'psetex' command");
+  const value = args[2] ?? '';
+
+  const encoding = determineStringEncoding(value);
+  db.set(key, 'string', encoding, value);
+  db.setExpiry(key, clock() + ms);
+
+  return OK;
+}
+
+// --- LCS ---
+
+export function lcs(db: Database, args: string[]): Reply {
+  const key1 = args[0] ?? '';
+  const key2 = args[1] ?? '';
+
+  const entry1 = db.get(key1);
+  const entry2 = db.get(key2);
+
+  if (entry1 && entry1.type !== 'string') return wrongTypeError();
+  if (entry2 && entry2.type !== 'string') return wrongTypeError();
+
+  const s1 = entry1 ? (entry1.value as string) : '';
+  const s2 = entry2 ? (entry2.value as string) : '';
+
+  // Parse options
+  let wantLen = false;
+  let wantIdx = false;
+  let minMatchLen = 0;
+  let withMatchLen = false;
+
+  let i = 2;
+  while (i < args.length) {
+    const opt = (args[i] ?? '').toUpperCase();
+    switch (opt) {
+      case 'LEN':
+        wantLen = true;
+        break;
+      case 'IDX':
+        wantIdx = true;
+        break;
+      case 'MINMATCHLEN': {
+        i++;
+        if (i >= args.length) return SYNTAX_ERR;
+        const { value: val, error: parseErr } = parseIntArg(args[i] ?? '');
+        if (parseErr) return parseErr;
+        minMatchLen = Math.max(val, 0);
+        break;
+      }
+      case 'WITHMATCHLEN':
+        withMatchLen = true;
+        break;
+      default:
+        return SYNTAX_ERR;
+    }
+    i++;
+  }
+
+  // Compute LCS using DP — use flat array for efficient access
+  const m = s1.length;
+  const n = s2.length;
+  const w = n + 1;
+
+  const dp = new Int32Array((m + 1) * w);
+  const at = (r: number, c: number): number => dp[r * w + c] ?? 0;
+
+  for (let r = 1; r <= m; r++) {
+    for (let c = 1; c <= n; c++) {
+      if (s1[r - 1] === s2[c - 1]) {
+        dp[r * w + c] = at(r - 1, c - 1) + 1;
+      } else {
+        dp[r * w + c] = Math.max(at(r - 1, c), at(r, c - 1));
+      }
+    }
+  }
+
+  const lcsLen = at(m, n);
+
+  // If only length requested (and not IDX)
+  if (wantLen && !wantIdx) {
+    return integerReply(lcsLen);
+  }
+
+  // Backtrack to find the LCS positions
+  const positions: [number, number][] = [];
+  {
+    let r = m,
+      c = n;
+    while (r > 0 && c > 0) {
+      if (s1[r - 1] === s2[c - 1]) {
+        positions.push([r - 1, c - 1]);
+        r--;
+        c--;
+      } else if (at(r - 1, c) >= at(r, c - 1)) {
+        r--;
+      } else {
+        c--;
+      }
+    }
+    positions.reverse();
+  }
+
+  if (!wantIdx) {
+    // Build LCS string
+    const lcsStr = positions.map(([a]) => s1[a]).join('');
+    return bulkReply(lcsStr);
+  }
+
+  // Build IDX output — group consecutive matching positions into ranges
+  interface Match {
+    aStart: number;
+    aEnd: number;
+    bStart: number;
+    bEnd: number;
+  }
+
+  const rawMatches: Match[] = [];
+  for (const [a, b] of positions) {
+    const last = rawMatches[rawMatches.length - 1];
+    if (last && a === last.aEnd + 1 && b === last.bEnd + 1) {
+      last.aEnd = a;
+      last.bEnd = b;
+    } else {
+      rawMatches.push({ aStart: a, aEnd: a, bStart: b, bEnd: b });
+    }
+  }
+
+  // Filter by MINMATCHLEN
+  const filteredMatches = rawMatches.filter(
+    (match) => match.aEnd - match.aStart + 1 >= minMatchLen
+  );
+
+  // Build array reply — matches are in reverse order in Redis
+  const matchReplies: Reply[] = filteredMatches.reverse().map((match) => {
+    const parts: Reply[] = [
+      arrayReply([integerReply(match.aStart), integerReply(match.aEnd)]),
+      arrayReply([integerReply(match.bStart), integerReply(match.bEnd)]),
+    ];
+    if (withMatchLen) {
+      parts.push(integerReply(match.aEnd - match.aStart + 1));
+    }
+    return arrayReply(parts);
+  });
+
+  return arrayReply([
+    bulkReply('matches'),
+    arrayReply(matchReplies),
+    bulkReply('len'),
+    integerReply(lcsLen),
+  ]);
 }
