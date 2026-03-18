@@ -254,8 +254,12 @@ describe('TcpServer', () => {
       const client = await connect(server.port);
       await delay(50);
 
-      // force an error by resetting the connection
-      client.resetAndDestroy();
+      // force an error by destroying with a RST (or just destroy on platforms without resetAndDestroy)
+      if (typeof client.resetAndDestroy === 'function') {
+        client.resetAndDestroy();
+      } else {
+        client.destroy(new Error('forced'));
+      }
       await delay(100);
 
       expect(server.listening).toBe(true);
