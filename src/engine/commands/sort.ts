@@ -6,8 +6,11 @@ import {
   integerReply,
   errorReply,
   EMPTY_ARRAY,
-  wrongTypeError,
+  WRONGTYPE_ERR,
+  SYNTAX_ERR,
+  NOT_INTEGER_ERR,
   NIL,
+  wrongArityError,
 } from '../types.ts';
 
 interface SortOptions {
@@ -36,21 +39,21 @@ function parseSortArgs(args: string[]): SortOptions | Reply {
       case 'BY':
         i++;
         if (i >= args.length) {
-          return errorReply('ERR', 'syntax error');
+          return SYNTAX_ERR;
         }
         options.by = args[i] ?? '';
         break;
       case 'LIMIT':
         i++;
         if (i + 1 >= args.length) {
-          return errorReply('ERR', 'syntax error');
+          return SYNTAX_ERR;
         }
         {
           const offset = parseInt(args[i] ?? '', 10);
           i++;
           const count = parseInt(args[i] ?? '', 10);
           if (isNaN(offset) || isNaN(count)) {
-            return errorReply('ERR', 'value is not an integer or out of range');
+            return NOT_INTEGER_ERR;
           }
           options.limit = { offset, count };
         }
@@ -58,7 +61,7 @@ function parseSortArgs(args: string[]): SortOptions | Reply {
       case 'GET':
         i++;
         if (i >= args.length) {
-          return errorReply('ERR', 'syntax error');
+          return SYNTAX_ERR;
         }
         options.getPatterns.push(args[i] ?? '');
         break;
@@ -74,12 +77,12 @@ function parseSortArgs(args: string[]): SortOptions | Reply {
       case 'STORE':
         i++;
         if (i >= args.length) {
-          return errorReply('ERR', 'syntax error');
+          return SYNTAX_ERR;
         }
         options.store = args[i] ?? '';
         break;
       default:
-        return errorReply('ERR', 'syntax error');
+        return SYNTAX_ERR;
     }
     i++;
   }
@@ -122,13 +125,13 @@ function getElements(db: Database, key: string): string[] | Reply {
       return Array.from(zset.keys());
     }
     default:
-      return wrongTypeError();
+      return WRONGTYPE_ERR;
   }
 }
 
 export function sort(db: Database, args: string[]): Reply {
   if (args.length === 0) {
-    return errorReply('ERR', "wrong number of arguments for 'sort' command");
+    return wrongArityError('sort');
   }
 
   const key = args[0] ?? '';
@@ -141,7 +144,7 @@ export function sort(db: Database, args: string[]): Reply {
 
 export function sortRo(db: Database, args: string[]): Reply {
   if (args.length === 0) {
-    return errorReply('ERR', "wrong number of arguments for 'sort_ro' command");
+    return wrongArityError('sort_ro');
   }
 
   const key = args[0] ?? '';
@@ -150,7 +153,7 @@ export function sortRo(db: Database, args: string[]): Reply {
   const options = parsed;
 
   if (options.store !== null) {
-    return errorReply('ERR', 'syntax error');
+    return SYNTAX_ERR;
   }
 
   return executeSortCommand(db, key, options);

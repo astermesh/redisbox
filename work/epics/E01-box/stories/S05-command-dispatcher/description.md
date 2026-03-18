@@ -1,5 +1,7 @@
 # S05: Command Dispatcher
 
+**Status:** done
+
 Central routing layer between parsed RESP commands and type engine handlers. Validates arity, checks client state (MULTI mode, subscribe mode), routes to correct handler, and handles sub-commands.
 
 ---

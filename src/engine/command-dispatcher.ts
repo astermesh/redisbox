@@ -1,7 +1,12 @@
 import type { CommandDefinition } from './command-table.ts';
 import { CommandTable } from './command-table.ts';
 import type { Reply, CommandContext } from './types.ts';
-import { statusReply, errorReply } from './types.ts';
+import {
+  statusReply,
+  errorReply,
+  unknownCommandError,
+  wrongArityError,
+} from './types.ts';
 
 export interface QueuedCommand {
   def: CommandDefinition;
@@ -47,11 +52,6 @@ const SUBSCRIBE_ALLOWED = new Set([
  */
 const MULTI_PASSTHROUGH = new Set(['EXEC', 'DISCARD', 'MULTI', 'WATCH']);
 
-function formatUnknownCommandError(name: string, args: string[]): string {
-  const argsStr = args.map((a) => `'${a}'`).join(' ');
-  return `unknown command '${name}', with args beginning with: ${argsStr}`;
-}
-
 function checkArity(def: CommandDefinition, argc: number): boolean {
   if (def.arity > 0) {
     return argc === def.arity;
@@ -64,10 +64,7 @@ export class CommandDispatcher {
 
   dispatch(state: ClientState, ctx: CommandContext, rawArgs: string[]): Reply {
     if (rawArgs.length === 0) {
-      return errorReply(
-        'ERR',
-        "unknown command '', with args beginning with: "
-      );
+      return unknownCommandError('', []);
     }
 
     const cmdName = rawArgs[0] ?? '';
@@ -94,7 +91,7 @@ export class CommandDispatcher {
       // EXEC, DISCARD — look up and execute normally (fall through)
       const def = this.table.get(cmdName);
       if (!def) {
-        return errorReply('ERR', formatUnknownCommandError(cmdName, args));
+        return unknownCommandError(cmdName, args);
       }
       const arityError = this.table.checkArity(def, rawArgs.length);
       if (arityError) return arityError;
@@ -107,7 +104,7 @@ export class CommandDispatcher {
       if (state.inMulti) {
         state.multiDirty = true;
       }
-      return errorReply('ERR', formatUnknownCommandError(cmdName, args));
+      return unknownCommandError(cmdName, args);
     }
 
     // Resolve subcommand for arity checking
@@ -128,15 +125,11 @@ export class CommandDispatcher {
         state.multiDirty = true;
       }
       if (isSubcommand) {
-        return errorReply(
-          'ERR',
-          `wrong number of arguments for '${def.name.toLowerCase()}|${arityDef.name.toLowerCase()}' command`
+        return wrongArityError(
+          `${def.name.toLowerCase()}|${arityDef.name.toLowerCase()}`
         );
       }
-      return errorReply(
-        'ERR',
-        `wrong number of arguments for '${def.name.toLowerCase()}' command`
-      );
+      return wrongArityError(def.name.toLowerCase());
     }
 
     // MULTI mode: queue non-passthrough commands

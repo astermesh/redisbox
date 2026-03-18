@@ -9,7 +9,13 @@ import {
   NIL,
   ZERO,
   ONE,
-  wrongTypeError,
+  WRONGTYPE_ERR,
+  SYNTAX_ERR,
+  NOT_INTEGER_ERR,
+  STRING_EXCEEDS_512MB_ERR,
+  OFFSET_OUT_OF_RANGE_ERR,
+  wrongArityError,
+  invalidExpireTimeError,
 } from '../types.ts';
 
 const INT64_MAX = BigInt('9223372036854775807');
@@ -35,10 +41,7 @@ function strByteLength(s: string): number {
 function parseIntArg(s: string): { value: number; error: Reply | null } {
   const val = parseInt(s, 10);
   if (isNaN(val) || String(val) !== s) {
-    return {
-      value: 0,
-      error: errorReply('ERR', 'value is not an integer or out of range'),
-    };
+    return { value: 0, error: NOT_INTEGER_ERR };
   }
   return { value: val, error: null };
 }
@@ -62,7 +65,7 @@ export function get(db: Database, args: string[]): Reply {
   const key = args[0] ?? '';
   const entry = db.get(key);
   if (!entry) return NIL;
-  if (entry.type !== 'string') return wrongTypeError();
+  if (entry.type !== 'string') return WRONGTYPE_ERR;
   return bulkReply(entry.value as string);
 }
 
@@ -76,8 +79,6 @@ interface SetFlags {
   keepttl: boolean;
   getOld: boolean;
 }
-
-const SYNTAX_ERR = errorReply('ERR', 'syntax error');
 
 function hasTtlFlag(flags: SetFlags): boolean {
   return (
@@ -97,15 +98,12 @@ function parseTtlValue(
   }
   const val = parseInt(args[i] ?? '', 10);
   if (isNaN(val) || String(val) !== args[i]) {
-    return {
-      val: 0,
-      error: errorReply('ERR', 'value is not an integer or out of range'),
-    };
+    return { val: 0, error: NOT_INTEGER_ERR };
   }
   if (val <= 0) {
     return {
       val: 0,
-      error: errorReply('ERR', "invalid expire time in 'set' command"),
+      error: invalidExpireTimeError('set'),
     };
   }
   return { val, error: null };
@@ -214,7 +212,7 @@ export function set(db: Database, clock: () => number, args: string[]): Reply {
   if (flags.getOld) {
     const existing = db.get(key);
     if (existing) {
-      if (existing.type !== 'string') return wrongTypeError();
+      if (existing.type !== 'string') return WRONGTYPE_ERR;
       oldValue = existing.value as string;
     }
   }
@@ -279,7 +277,7 @@ export function mget(db: Database, args: string[]): Reply {
 
 export function mset(db: Database, args: string[]): Reply {
   if (args.length % 2 !== 0) {
-    return errorReply('ERR', "wrong number of arguments for 'mset' command");
+    return wrongArityError('mset');
   }
   for (let i = 0; i < args.length; i += 2) {
     const key = args[i] ?? '';
@@ -295,7 +293,7 @@ export function mset(db: Database, args: string[]): Reply {
 
 export function msetnx(db: Database, args: string[]): Reply {
   if (args.length % 2 !== 0) {
-    return errorReply('ERR', "wrong number of arguments for 'msetnx' command");
+    return wrongArityError('msetnx');
   }
   // Check if any key exists
   for (let i = 0; i < args.length; i += 2) {
@@ -318,7 +316,7 @@ export function append(db: Database, args: string[]): Reply {
   const appendValue = args[1] ?? '';
 
   const entry = db.get(key);
-  if (entry && entry.type !== 'string') return wrongTypeError();
+  if (entry && entry.type !== 'string') return WRONGTYPE_ERR;
 
   if (!entry) {
     // Key doesn't exist: create with determined encoding
@@ -341,7 +339,7 @@ export function strlen(db: Database, args: string[]): Reply {
   const key = args[0] ?? '';
   const entry = db.get(key);
   if (!entry) return ZERO;
-  if (entry.type !== 'string') return wrongTypeError();
+  if (entry.type !== 'string') return WRONGTYPE_ERR;
   return integerReply(strByteLength(entry.value as string));
 }
 
@@ -351,7 +349,7 @@ export function setrange(db: Database, args: string[]): Reply {
   const key = args[0] ?? '';
   const { value: offset, error } = parseIntArg(args[1] ?? '');
   if (error) return error;
-  if (offset < 0) return errorReply('ERR', 'offset is out of range');
+  if (offset < 0) return OFFSET_OUT_OF_RANGE_ERR;
 
   const newValueBytes = strToBytes(args[2] ?? '');
 
@@ -359,12 +357,12 @@ export function setrange(db: Database, args: string[]): Reply {
   if (newValueBytes.length === 0) {
     const entry = db.get(key);
     if (!entry) return ZERO;
-    if (entry.type !== 'string') return wrongTypeError();
+    if (entry.type !== 'string') return WRONGTYPE_ERR;
     return integerReply(strByteLength(entry.value as string));
   }
 
   const entry = db.get(key);
-  if (entry && entry.type !== 'string') return wrongTypeError();
+  if (entry && entry.type !== 'string') return WRONGTYPE_ERR;
 
   const existingBytes = entry
     ? strToBytes(entry.value as string)
@@ -375,7 +373,7 @@ export function setrange(db: Database, args: string[]): Reply {
   );
 
   if (requiredLen > 512 * 1024 * 1024) {
-    return errorReply('ERR', 'string exceeds maximum allowed size (512MB)');
+    return STRING_EXCEEDS_512MB_ERR;
   }
 
   const result = new Uint8Array(requiredLen);
@@ -398,7 +396,7 @@ export function getrange(db: Database, args: string[]): Reply {
 
   const entry = db.get(key);
   if (!entry) return bulkReply('');
-  if (entry.type !== 'string') return wrongTypeError();
+  if (entry.type !== 'string') return WRONGTYPE_ERR;
 
   const bytes = strToBytes(entry.value as string);
   const len = bytes.length;
@@ -439,8 +437,7 @@ export function getex(
         if (i >= args.length) return SYNTAX_ERR;
         const { value: val, error: parseErr } = parseIntArg(args[i] ?? '');
         if (parseErr) return parseErr;
-        if (val <= 0)
-          return errorReply('ERR', "invalid expire time in 'getex' command");
+        if (val <= 0) return invalidExpireTimeError('getex');
         ttlValue = val;
         break;
       }
@@ -457,7 +454,7 @@ export function getex(
   // Get the value
   const entry = db.get(key);
   if (!entry) return NIL;
-  if (entry.type !== 'string') return wrongTypeError();
+  if (entry.type !== 'string') return WRONGTYPE_ERR;
 
   // Apply TTL changes
   switch (mode) {
@@ -487,7 +484,7 @@ export function getdel(db: Database, args: string[]): Reply {
   const key = args[0] ?? '';
   const entry = db.get(key);
   if (!entry) return NIL;
-  if (entry.type !== 'string') return wrongTypeError();
+  if (entry.type !== 'string') return WRONGTYPE_ERR;
   const value = entry.value as string;
   db.delete(key);
   return bulkReply(value);
@@ -500,7 +497,7 @@ export function getset(db: Database, args: string[]): Reply {
   const newValue = args[1] ?? '';
 
   const entry = db.get(key);
-  if (entry && entry.type !== 'string') return wrongTypeError();
+  if (entry && entry.type !== 'string') return WRONGTYPE_ERR;
 
   const oldValue = entry ? (entry.value as string) : null;
 
@@ -534,8 +531,7 @@ export function setex(
   const key = args[0] ?? '';
   const { value: seconds, error } = parseIntArg(args[1] ?? '');
   if (error) return error;
-  if (seconds <= 0)
-    return errorReply('ERR', "invalid expire time in 'setex' command");
+  if (seconds <= 0) return invalidExpireTimeError('setex');
   const value = args[2] ?? '';
 
   const encoding = determineStringEncoding(value);
@@ -555,8 +551,7 @@ export function psetex(
   const key = args[0] ?? '';
   const { value: ms, error } = parseIntArg(args[1] ?? '');
   if (error) return error;
-  if (ms <= 0)
-    return errorReply('ERR', "invalid expire time in 'psetex' command");
+  if (ms <= 0) return invalidExpireTimeError('psetex');
   const value = args[2] ?? '';
 
   const encoding = determineStringEncoding(value);
@@ -575,8 +570,8 @@ export function lcs(db: Database, args: string[]): Reply {
   const entry1 = db.get(key1);
   const entry2 = db.get(key2);
 
-  if (entry1 && entry1.type !== 'string') return wrongTypeError();
-  if (entry2 && entry2.type !== 'string') return wrongTypeError();
+  if (entry1 && entry1.type !== 'string') return WRONGTYPE_ERR;
+  if (entry2 && entry2.type !== 'string') return WRONGTYPE_ERR;
 
   const s1 = entry1 ? (entry1.value as string) : '';
   const s2 = entry2 ? (entry2.value as string) : '';
