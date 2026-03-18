@@ -108,10 +108,7 @@ export function copy(
   }
 
   if (srcDb === destDb && src === dst) {
-    return errorReply(
-      'ERR',
-      'source and destination objects are the same'
-    );
+    return errorReply('ERR', 'source and destination objects are the same');
   }
 
   const copiedEntry = srcDb.copyEntry(src);
