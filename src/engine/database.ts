@@ -325,6 +325,7 @@ export class Database {
 
     this.store.delete(key);
     this.expiry.delete(key);
+    this.fieldExpiry.delete(key);
     this.bumpVersion(key);
     return true;
   }

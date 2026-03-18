@@ -160,6 +160,21 @@ describe('Database', () => {
       setTime(2000);
       expect(db.touch('k')).toBe(false);
     });
+
+    it('cleans up fieldExpiry when key lazily expires', () => {
+      const { db, setTime } = createDb(1000);
+      const fields = new Map([['f1', 'v1'], ['f2', 'v2']]);
+      db.set('h', 'hash', 'hashtable', fields);
+      db.setExpiry('h', 2000);
+      db.setFieldExpiry('h', 'f1', 5000);
+      db.setFieldExpiry('h', 'f2', 6000);
+      expect(db.fieldExpirySize).toBe(1);
+
+      setTime(2000);
+      db.get('h'); // triggers lazy key-level expiration
+      expect(db.has('h')).toBe(false);
+      expect(db.fieldExpirySize).toBe(0);
+    });
   });
 
   describe('key version tracking (T03)', () => {
