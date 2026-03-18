@@ -1,12 +1,6 @@
 import type { Database } from '../database.ts';
 import type { RedisEncoding, Reply } from '../types.ts';
-import {
-  bulkReply,
-  errorReply,
-  OK,
-  NIL,
-  wrongTypeError,
-} from '../types.ts';
+import { bulkReply, errorReply, OK, NIL, wrongTypeError } from '../types.ts';
 
 const INT64_MAX = BigInt('9223372036854775807');
 const INT64_MIN = BigInt('-9223372036854775808');
@@ -51,24 +45,41 @@ interface SetFlags {
 const SYNTAX_ERR = errorReply('ERR', 'syntax error');
 
 function hasTtlFlag(flags: SetFlags): boolean {
-  return flags.ex !== null || flags.px !== null || flags.exat !== null || flags.pxat !== null;
+  return (
+    flags.ex !== null ||
+    flags.px !== null ||
+    flags.exat !== null ||
+    flags.pxat !== null
+  );
 }
 
-function parseTtlValue(args: string[], i: number): { val: number; error: Reply | null } {
+function parseTtlValue(
+  args: string[],
+  i: number
+): { val: number; error: Reply | null } {
   if (i >= args.length) {
     return { val: 0, error: SYNTAX_ERR };
   }
   const val = parseInt(args[i] ?? '', 10);
   if (isNaN(val) || String(val) !== args[i]) {
-    return { val: 0, error: errorReply('ERR', 'value is not an integer or out of range') };
+    return {
+      val: 0,
+      error: errorReply('ERR', 'value is not an integer or out of range'),
+    };
   }
   if (val <= 0) {
-    return { val: 0, error: errorReply('ERR', 'invalid expire time in \'set\' command') };
+    return {
+      val: 0,
+      error: errorReply('ERR', "invalid expire time in 'set' command"),
+    };
   }
   return { val, error: null };
 }
 
-function parseSetFlags(args: string[]): { flags: SetFlags; error: Reply | null } {
+function parseSetFlags(args: string[]): {
+  flags: SetFlags;
+  error: Reply | null;
+} {
   const flags: SetFlags = {
     ex: null,
     px: null,
@@ -85,7 +96,8 @@ function parseSetFlags(args: string[]): { flags: SetFlags; error: Reply | null }
     const flag = (args[i] ?? '').toUpperCase();
     switch (flag) {
       case 'EX': {
-        if (hasTtlFlag(flags) || flags.keepttl) return { flags, error: SYNTAX_ERR };
+        if (hasTtlFlag(flags) || flags.keepttl)
+          return { flags, error: SYNTAX_ERR };
         i++;
         const { val, error } = parseTtlValue(args, i);
         if (error) return { flags, error };
@@ -93,7 +105,8 @@ function parseSetFlags(args: string[]): { flags: SetFlags; error: Reply | null }
         break;
       }
       case 'PX': {
-        if (hasTtlFlag(flags) || flags.keepttl) return { flags, error: SYNTAX_ERR };
+        if (hasTtlFlag(flags) || flags.keepttl)
+          return { flags, error: SYNTAX_ERR };
         i++;
         const { val, error } = parseTtlValue(args, i);
         if (error) return { flags, error };
@@ -101,7 +114,8 @@ function parseSetFlags(args: string[]): { flags: SetFlags; error: Reply | null }
         break;
       }
       case 'EXAT': {
-        if (hasTtlFlag(flags) || flags.keepttl) return { flags, error: SYNTAX_ERR };
+        if (hasTtlFlag(flags) || flags.keepttl)
+          return { flags, error: SYNTAX_ERR };
         i++;
         const { val, error } = parseTtlValue(args, i);
         if (error) return { flags, error };
@@ -109,7 +123,8 @@ function parseSetFlags(args: string[]): { flags: SetFlags; error: Reply | null }
         break;
       }
       case 'PXAT': {
-        if (hasTtlFlag(flags) || flags.keepttl) return { flags, error: SYNTAX_ERR };
+        if (hasTtlFlag(flags) || flags.keepttl)
+          return { flags, error: SYNTAX_ERR };
         i++;
         const { val, error } = parseTtlValue(args, i);
         if (error) return { flags, error };
@@ -125,7 +140,8 @@ function parseSetFlags(args: string[]): { flags: SetFlags; error: Reply | null }
         flags.xx = true;
         break;
       case 'KEEPTTL':
-        if (flags.keepttl || hasTtlFlag(flags)) return { flags, error: SYNTAX_ERR };
+        if (flags.keepttl || hasTtlFlag(flags))
+          return { flags, error: SYNTAX_ERR };
         flags.keepttl = true;
         break;
       case 'GET':
@@ -138,17 +154,19 @@ function parseSetFlags(args: string[]): { flags: SetFlags; error: Reply | null }
   }
 
   if (flags.getOld && flags.nx) {
-    return { flags, error: errorReply('ERR', 'NX and GET options at the same time are not compatible') };
+    return {
+      flags,
+      error: errorReply(
+        'ERR',
+        'NX and GET options at the same time are not compatible'
+      ),
+    };
   }
 
   return { flags, error: null };
 }
 
-export function set(
-  db: Database,
-  clock: () => number,
-  args: string[]
-): Reply {
+export function set(db: Database, clock: () => number, args: string[]): Reply {
   const key = args[0] ?? '';
   const value = args[1] ?? '';
   const flagArgs = args.slice(2);
