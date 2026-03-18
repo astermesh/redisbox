@@ -16,12 +16,12 @@ export class ClientState {
     this.createdAt = createdAt;
   }
 
-  /** Redis-compatible flag string (e.g. "N", "x", "bS", "xbS") */
+  /** Redis-compatible flag string (e.g. "N", "x", "bP", "xbP") */
   flagsString(): string {
     let flags = '';
     if (this.flagMulti) flags += 'x';
     if (this.flagBlocked) flags += 'b';
-    if (this.flagSubscribed) flags += 'S';
+    if (this.flagSubscribed) flags += 'P';
     return flags || 'N';
   }
 }

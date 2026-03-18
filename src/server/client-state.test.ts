@@ -102,17 +102,17 @@ describe('ClientState', () => {
       expect(state.flagsString()).toBe('b');
     });
 
-    it('returns S for subscribed', () => {
+    it('returns P for subscribed', () => {
       const state = new ClientState(1, 0);
       state.flagSubscribed = true;
-      expect(state.flagsString()).toBe('S');
+      expect(state.flagsString()).toBe('P');
     });
 
     it('combines multiple flags', () => {
       const state = new ClientState(1, 0);
       state.flagMulti = true;
       state.flagSubscribed = true;
-      expect(state.flagsString()).toBe('xS');
+      expect(state.flagsString()).toBe('xP');
     });
 
     it('combines all flags', () => {
@@ -120,7 +120,7 @@ describe('ClientState', () => {
       state.flagMulti = true;
       state.flagBlocked = true;
       state.flagSubscribed = true;
-      expect(state.flagsString()).toBe('xbS');
+      expect(state.flagsString()).toBe('xbP');
     });
   });
 });
