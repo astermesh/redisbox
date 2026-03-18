@@ -76,4 +76,5 @@ export function wrongTypeError(): Reply {
 export interface CommandContext {
   db: import('./database.ts').Database;
   engine: import('./engine.ts').RedisEngine;
+  client?: import('../server/client-state.ts').ClientState;
 }
