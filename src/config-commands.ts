@@ -122,7 +122,5 @@ function configRewrite(args: string[]): ConfigResponse {
     return error("ERR wrong number of arguments for 'config|rewrite' command");
   }
 
-  return error(
-    'ERR The server is running without a config file'
-  );
+  return error('ERR The server is running without a config file');
 }
