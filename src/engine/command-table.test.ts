@@ -223,6 +223,10 @@ describe('createCommandTable (registry)', () => {
 
   describe('all commands are registered', () => {
     const expectedCommands = [
+      'ping',
+      'echo',
+      'quit',
+      'reset',
       'del',
       'unlink',
       'exists',
@@ -297,6 +301,10 @@ describe('createCommandTable (registry)', () => {
 
   describe('arity values match Redis', () => {
     const arityTests: [string, number][] = [
+      ['ping', -1],
+      ['echo', 2],
+      ['quit', 1],
+      ['reset', 1],
       ['del', -2],
       ['unlink', -2],
       ['exists', -2],

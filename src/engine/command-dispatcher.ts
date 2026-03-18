@@ -79,6 +79,30 @@ export class CommandDispatcher {
       );
     }
 
+    // RESET: clear all client state and execute
+    if (upperName === 'RESET') {
+      const def = this.table.get(cmdName);
+      if (!def) {
+        return errorReply('ERR', formatUnknownCommandError(cmdName, args));
+      }
+      const arityError = this.table.checkArity(def, rawArgs.length);
+      if (arityError) return arityError;
+
+      state.inMulti = false;
+      state.multiDirty = false;
+      state.multiQueue = [];
+      state.subscribed = false;
+
+      if (ctx.client) {
+        ctx.client.dbIndex = 0;
+        ctx.client.flagMulti = false;
+        ctx.client.flagSubscribed = false;
+        ctx.db = ctx.engine.db(0);
+      }
+
+      return def.handler(ctx, args);
+    }
+
     // MULTI mode: handle special commands before lookup
     // These commands may not be registered yet but must not be queued.
     if (state.inMulti && MULTI_PASSTHROUGH.has(upperName)) {

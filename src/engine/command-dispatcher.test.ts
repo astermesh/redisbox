@@ -408,21 +408,18 @@ describe('CommandDispatcher', () => {
 
     it('allows PING in subscribe mode', () => {
       const result = dispatcher.dispatch(state, ctx, ['PING']);
-      // PING is not registered but should not be blocked by subscribe mode
-      const err = result as { kind: 'error'; message: string };
-      expect(err.message).not.toContain("Can't execute");
+      expect(result).toEqual({ kind: 'status', value: 'PONG' });
     });
 
-    it('allows RESET in subscribe mode', () => {
+    it('allows RESET in subscribe mode and clears subscribed flag', () => {
       const result = dispatcher.dispatch(state, ctx, ['RESET']);
-      const err = result as { kind: 'error'; message: string };
-      expect(err.message).not.toContain("Can't execute");
+      expect(result).toEqual({ kind: 'status', value: 'RESET' });
+      expect(state.subscribed).toBe(false);
     });
 
     it('allows QUIT in subscribe mode', () => {
       const result = dispatcher.dispatch(state, ctx, ['QUIT']);
-      const err = result as { kind: 'error'; message: string };
-      expect(err.message).not.toContain("Can't execute");
+      expect(result).toEqual({ kind: 'status', value: 'OK' });
     });
 
     it('lowercases command name in subscribe error message', () => {
@@ -448,14 +445,11 @@ describe('CommandDispatcher', () => {
       expect(state.multiQueue).toHaveLength(0);
     });
 
-    it('allowed subscribe commands pass through even in MULTI', () => {
+    it('allowed subscribe commands are queued in MULTI', () => {
       state.subscribed = true;
       state.inMulti = true;
-      // PING is not registered, so it returns unknown command error,
-      // but it should NOT be blocked by subscribe mode check
       const result = dispatcher.dispatch(state, ctx, ['PING']);
-      const err = result as { kind: 'error'; message: string };
-      expect(err.message).not.toContain("Can't execute");
+      expect(result).toEqual({ kind: 'status', value: 'QUEUED' });
     });
   });
 
@@ -466,6 +460,83 @@ describe('CommandDispatcher', () => {
       expect(s.multiDirty).toBe(false);
       expect(s.multiQueue).toEqual([]);
       expect(s.subscribed).toBe(false);
+    });
+  });
+
+  describe('PING command', () => {
+    it('returns PONG with no arguments', () => {
+      const result = dispatcher.dispatch(state, ctx, ['PING']);
+      expect(result).toEqual({ kind: 'status', value: 'PONG' });
+    });
+
+    it('returns bulk string with one argument', () => {
+      const result = dispatcher.dispatch(state, ctx, ['PING', 'hello']);
+      expect(result).toEqual({ kind: 'bulk', value: 'hello' });
+    });
+
+    it('is case-insensitive', () => {
+      const result = dispatcher.dispatch(state, ctx, ['ping']);
+      expect(result).toEqual({ kind: 'status', value: 'PONG' });
+    });
+  });
+
+  describe('ECHO command', () => {
+    it('returns the argument as bulk string', () => {
+      const result = dispatcher.dispatch(state, ctx, ['ECHO', 'hello']);
+      expect(result).toEqual({ kind: 'bulk', value: 'hello' });
+    });
+
+    it('rejects wrong number of arguments', () => {
+      const result = dispatcher.dispatch(state, ctx, ['ECHO']);
+      expect(result).toEqual({
+        kind: 'error',
+        prefix: 'ERR',
+        message: "wrong number of arguments for 'echo' command",
+      });
+    });
+  });
+
+  describe('QUIT command', () => {
+    it('returns OK', () => {
+      const result = dispatcher.dispatch(state, ctx, ['QUIT']);
+      expect(result).toEqual({ kind: 'status', value: 'OK' });
+    });
+  });
+
+  describe('RESET command', () => {
+    it('returns RESET status', () => {
+      const result = dispatcher.dispatch(state, ctx, ['RESET']);
+      expect(result).toEqual({ kind: 'status', value: 'RESET' });
+    });
+
+    it('clears MULTI state', () => {
+      state.inMulti = true;
+      state.multiDirty = true;
+      state.multiQueue = [
+        { def: makeDef(), args: ['a'] },
+        { def: makeDef(), args: ['b'] },
+      ];
+      const result = dispatcher.dispatch(state, ctx, ['RESET']);
+      expect(result).toEqual({ kind: 'status', value: 'RESET' });
+      expect(state.inMulti).toBe(false);
+      expect(state.multiDirty).toBe(false);
+      expect(state.multiQueue).toEqual([]);
+    });
+
+    it('clears subscribed state', () => {
+      state.subscribed = true;
+      const result = dispatcher.dispatch(state, ctx, ['RESET']);
+      expect(result).toEqual({ kind: 'status', value: 'RESET' });
+      expect(state.subscribed).toBe(false);
+    });
+
+    it('rejects extra arguments', () => {
+      const result = dispatcher.dispatch(state, ctx, ['RESET', 'extra']);
+      expect(result).toEqual({
+        kind: 'error',
+        prefix: 'ERR',
+        message: "wrong number of arguments for 'reset' command",
+      });
     });
   });
 
