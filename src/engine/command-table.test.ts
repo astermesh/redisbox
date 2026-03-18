@@ -249,6 +249,8 @@ describe('createCommandTable (registry)', () => {
       'scan',
       'sort',
       'sort_ro',
+      'get',
+      'set',
     ];
 
     for (const name of expectedCommands) {
@@ -290,6 +292,8 @@ describe('createCommandTable (registry)', () => {
       ['scan', -2],
       ['sort', -2],
       ['sort_ro', -2],
+      ['get', 2],
+      ['set', -3],
     ];
 
     for (const [name, expectedArity] of arityTests) {
@@ -340,6 +344,18 @@ describe('createCommandTable (registry)', () => {
       const def = getDef(table, 'expire');
       expect(def.flags.has('write')).toBe(true);
       expect(def.flags.has('fast')).toBe(true);
+    });
+
+    it('get is readonly and fast', () => {
+      const def = getDef(table, 'get');
+      expect(def.flags.has('readonly')).toBe(true);
+      expect(def.flags.has('fast')).toBe(true);
+    });
+
+    it('set is write and denyoom', () => {
+      const def = getDef(table, 'set');
+      expect(def.flags.has('write')).toBe(true);
+      expect(def.flags.has('denyoom')).toBe(true);
     });
   });
 
@@ -558,6 +574,36 @@ describe('createCommandTable (registry)', () => {
       const def = getDef(table, 'restore');
       expect(def.handler({ db, engine }, []).kind).toBe('error');
     });
+
+    it('get handler returns bulk string for existing key', () => {
+      const { engine, db } = createCtx();
+      db.set('k', 'string', 'raw', 'hello');
+      const def = getDef(table, 'get');
+      const result = def.handler({ db, engine }, ['k']);
+      expect(result).toEqual({ kind: 'bulk', value: 'hello' });
+    });
+
+    it('get handler returns nil for missing key', () => {
+      const { engine, db } = createCtx();
+      const def = getDef(table, 'get');
+      const result = def.handler({ db, engine }, ['missing']);
+      expect(result).toEqual({ kind: 'bulk', value: null });
+    });
+
+    it('set handler stores value and returns OK', () => {
+      const { engine, db } = createCtx();
+      const def = getDef(table, 'set');
+      const result = def.handler({ db, engine }, ['k', 'val']);
+      expect(result).toEqual({ kind: 'status', value: 'OK' });
+      expect(db.get('k')?.value).toBe('val');
+    });
+
+    it('set handler with EX sets expiry', () => {
+      const { engine, db } = createCtx();
+      const def = getDef(table, 'set');
+      def.handler({ db, engine }, ['k', 'v', 'EX', '10']);
+      expect(db.getExpiry('k')).toBe(11000);
+    });
   });
 
   describe('arity validation with registered commands', () => {
@@ -613,6 +659,20 @@ describe('createCommandTable (registry)', () => {
       const def = getDef(table, 'restore');
       expect(table.checkArity(def, 3)).not.toBeNull();
       expect(table.checkArity(def, 4)).toBeNull();
+      expect(table.checkArity(def, 7)).toBeNull();
+    });
+
+    it('get: requires exactly 2', () => {
+      const def = getDef(table, 'get');
+      expect(table.checkArity(def, 1)).not.toBeNull();
+      expect(table.checkArity(def, 2)).toBeNull();
+      expect(table.checkArity(def, 3)).not.toBeNull();
+    });
+
+    it('set: requires 3+', () => {
+      const def = getDef(table, 'set');
+      expect(table.checkArity(def, 2)).not.toBeNull();
+      expect(table.checkArity(def, 3)).toBeNull();
       expect(table.checkArity(def, 7)).toBeNull();
     });
   });

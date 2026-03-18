@@ -14,7 +14,7 @@ export type CommandFlag =
   | 'noscript'
   | 'blocking'
   | 'movablekeys'
-  | 'sortforstript'
+  | 'sort_for_script'
   | 'noauth';
 
 export type CommandHandler = (ctx: CommandContext, args: string[]) => Reply;

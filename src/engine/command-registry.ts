@@ -4,6 +4,7 @@ import * as generic from './commands/generic.ts';
 import * as ttl from './commands/ttl.ts';
 import * as scan from './commands/scan.ts';
 import * as sort from './commands/sort.ts';
+import * as string from './commands/string.ts';
 
 interface CommandSpec {
   name: string;
@@ -362,6 +363,28 @@ const commandSpecs: CommandSpec[] = [
     lastKey: 1,
     keyStep: 1,
     categories: ['@read', '@set', '@sortedset', '@list'],
+  },
+
+  // --- String commands ---
+  {
+    name: 'get',
+    handler: (ctx, args) => string.get(ctx.db, args),
+    arity: 2,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@string', '@fast'],
+  },
+  {
+    name: 'set',
+    handler: (ctx, args) => string.set(ctx.db, ctx.engine.clock, args),
+    arity: -3,
+    flags: ['write', 'denyoom'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@string'],
   },
 ];
 
