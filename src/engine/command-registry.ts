@@ -1,5 +1,9 @@
 import { CommandTable } from './command-table.ts';
-import type { CommandDefinition, CommandFlag, CommandHandler } from './command-table.ts';
+import type {
+  CommandDefinition,
+  CommandFlag,
+  CommandHandler,
+} from './command-table.ts';
 import * as generic from './commands/generic.ts';
 import * as ttl from './commands/ttl.ts';
 import * as scan from './commands/scan.ts';
