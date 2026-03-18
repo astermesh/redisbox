@@ -271,19 +271,41 @@ describe('SET', () => {
     it('rejects non-integer EX value', () => {
       const { db, clock } = createDb();
       const reply = str.set(db, clock, ['k', 'v', 'EX', 'abc']);
-      expect(reply.kind).toBe('error');
+      expect(reply).toEqual({
+        kind: 'error',
+        prefix: 'ERR',
+        message: 'value is not an integer or out of range',
+      });
     });
 
     it('rejects zero EX value', () => {
       const { db, clock } = createDb();
       const reply = str.set(db, clock, ['k', 'v', 'EX', '0']);
-      expect(reply.kind).toBe('error');
+      expect(reply).toEqual({
+        kind: 'error',
+        prefix: 'ERR',
+        message: "invalid expire time in 'set' command",
+      });
     });
 
     it('rejects negative EX value', () => {
       const { db, clock } = createDb();
       const reply = str.set(db, clock, ['k', 'v', 'EX', '-1']);
-      expect(reply.kind).toBe('error');
+      expect(reply).toEqual({
+        kind: 'error',
+        prefix: 'ERR',
+        message: "invalid expire time in 'set' command",
+      });
+    });
+
+    it('rejects float EX value', () => {
+      const { db, clock } = createDb();
+      const reply = str.set(db, clock, ['k', 'v', 'EX', '3.14']);
+      expect(reply).toEqual({
+        kind: 'error',
+        prefix: 'ERR',
+        message: 'value is not an integer or out of range',
+      });
     });
   });
 
@@ -297,13 +319,21 @@ describe('SET', () => {
     it('rejects zero PX value', () => {
       const { db, clock } = createDb();
       const reply = str.set(db, clock, ['k', 'v', 'PX', '0']);
-      expect(reply.kind).toBe('error');
+      expect(reply).toEqual({
+        kind: 'error',
+        prefix: 'ERR',
+        message: "invalid expire time in 'set' command",
+      });
     });
 
     it('rejects negative PX value', () => {
       const { db, clock } = createDb();
       const reply = str.set(db, clock, ['k', 'v', 'PX', '-100']);
-      expect(reply.kind).toBe('error');
+      expect(reply).toEqual({
+        kind: 'error',
+        prefix: 'ERR',
+        message: "invalid expire time in 'set' command",
+      });
     });
   });
 
@@ -484,55 +514,93 @@ describe('SET', () => {
       expect(db.getExpiry('k')).toBe(11000);
     });
 
-    it('GET + NX: error (incompatible in Redis 7+)', () => {
+    it('GET + NX: returns specific incompatibility error', () => {
       const { db, clock } = createDb();
-      // Redis 7+ returns error for SET ... GET NX combination
-      // because GET implies returning old value, but NX means "only if not exists"
-      // which is contradictory in behavior
       const reply = str.set(db, clock, ['k', 'v', 'GET', 'NX']);
-      expect(reply.kind).toBe('error');
+      expect(reply).toEqual({
+        kind: 'error',
+        prefix: 'ERR',
+        message: 'NX and GET options at the same time are not compatible',
+      });
     });
 
-    it('KEEPTTL + EX: error (mutually exclusive)', () => {
+    it('KEEPTTL + EX: syntax error', () => {
       const { db, clock } = createDb();
       const reply = str.set(db, clock, ['k', 'v', 'KEEPTTL', 'EX', '10']);
-      expect(reply.kind).toBe('error');
+      expect(reply).toEqual({ kind: 'error', prefix: 'ERR', message: 'syntax error' });
     });
 
-    it('KEEPTTL + PX: error (mutually exclusive)', () => {
+    it('KEEPTTL + PX: syntax error', () => {
       const { db, clock } = createDb();
       const reply = str.set(db, clock, ['k', 'v', 'KEEPTTL', 'PX', '10']);
-      expect(reply.kind).toBe('error');
+      expect(reply).toEqual({ kind: 'error', prefix: 'ERR', message: 'syntax error' });
     });
 
-    it('KEEPTTL + EXAT: error (mutually exclusive)', () => {
+    it('KEEPTTL + EXAT: syntax error', () => {
       const { db, clock } = createDb();
       const reply = str.set(db, clock, ['k', 'v', 'KEEPTTL', 'EXAT', '100']);
-      expect(reply.kind).toBe('error');
+      expect(reply).toEqual({ kind: 'error', prefix: 'ERR', message: 'syntax error' });
     });
 
-    it('KEEPTTL + PXAT: error (mutually exclusive)', () => {
+    it('KEEPTTL + PXAT: syntax error', () => {
       const { db, clock } = createDb();
       const reply = str.set(db, clock, ['k', 'v', 'KEEPTTL', 'PXAT', '100']);
-      expect(reply.kind).toBe('error');
+      expect(reply).toEqual({ kind: 'error', prefix: 'ERR', message: 'syntax error' });
     });
 
-    it('EX + PX: error (multiple TTL options)', () => {
+    it('EX + KEEPTTL: syntax error (reverse order)', () => {
+      const { db, clock } = createDb();
+      const reply = str.set(db, clock, ['k', 'v', 'EX', '10', 'KEEPTTL']);
+      expect(reply).toEqual({ kind: 'error', prefix: 'ERR', message: 'syntax error' });
+    });
+
+    it('EX + PX: syntax error (multiple TTL options)', () => {
       const { db, clock } = createDb();
       const reply = str.set(db, clock, ['k', 'v', 'EX', '10', 'PX', '5000']);
-      expect(reply.kind).toBe('error');
+      expect(reply).toEqual({ kind: 'error', prefix: 'ERR', message: 'syntax error' });
     });
 
-    it('EX + EXAT: error (multiple TTL options)', () => {
+    it('EX + EXAT: syntax error (multiple TTL options)', () => {
       const { db, clock } = createDb();
       const reply = str.set(db, clock, ['k', 'v', 'EX', '10', 'EXAT', '100']);
-      expect(reply.kind).toBe('error');
+      expect(reply).toEqual({ kind: 'error', prefix: 'ERR', message: 'syntax error' });
     });
 
-    it('NX + XX: error (mutually exclusive)', () => {
+    it('NX + XX: syntax error', () => {
       const { db, clock } = createDb();
       const reply = str.set(db, clock, ['k', 'v', 'NX', 'XX']);
-      expect(reply.kind).toBe('error');
+      expect(reply).toEqual({ kind: 'error', prefix: 'ERR', message: 'syntax error' });
+    });
+
+    it('XX + NX: syntax error (reverse order)', () => {
+      const { db, clock } = createDb();
+      const reply = str.set(db, clock, ['k', 'v', 'XX', 'NX']);
+      expect(reply).toEqual({ kind: 'error', prefix: 'ERR', message: 'syntax error' });
+    });
+
+    it('duplicate NX: syntax error', () => {
+      const { db, clock } = createDb();
+      const reply = str.set(db, clock, ['k', 'v', 'NX', 'NX']);
+      expect(reply).toEqual({ kind: 'error', prefix: 'ERR', message: 'syntax error' });
+    });
+
+    it('duplicate XX: syntax error', () => {
+      const { db, clock } = createDb();
+      const reply = str.set(db, clock, ['k', 'v', 'XX', 'XX']);
+      expect(reply).toEqual({ kind: 'error', prefix: 'ERR', message: 'syntax error' });
+    });
+
+    it('duplicate KEEPTTL: syntax error', () => {
+      const { db, clock } = createDb();
+      const reply = str.set(db, clock, ['k', 'v', 'KEEPTTL', 'KEEPTTL']);
+      expect(reply).toEqual({ kind: 'error', prefix: 'ERR', message: 'syntax error' });
+    });
+
+    it('duplicate GET: allowed (idempotent)', () => {
+      const { db, clock } = createDb();
+      db.set('k', 'string', 'raw', 'old');
+      const reply = str.set(db, clock, ['k', 'new', 'GET', 'GET']);
+      expect(reply).toEqual({ kind: 'bulk', value: 'old' });
     });
 
     it('KEEPTTL + XX: sets value, preserves TTL, only if key exists', () => {
@@ -561,34 +629,34 @@ describe('SET', () => {
   });
 
   describe('syntax errors', () => {
-    it('rejects unknown flag', () => {
+    it('rejects unknown flag with syntax error', () => {
       const { db, clock } = createDb();
       const reply = str.set(db, clock, ['k', 'v', 'BADOPT']);
-      expect(reply.kind).toBe('error');
+      expect(reply).toEqual({ kind: 'error', prefix: 'ERR', message: 'syntax error' });
     });
 
-    it('rejects EX without value', () => {
+    it('rejects EX without value with syntax error', () => {
       const { db, clock } = createDb();
       const reply = str.set(db, clock, ['k', 'v', 'EX']);
-      expect(reply.kind).toBe('error');
+      expect(reply).toEqual({ kind: 'error', prefix: 'ERR', message: 'syntax error' });
     });
 
-    it('rejects PX without value', () => {
+    it('rejects PX without value with syntax error', () => {
       const { db, clock } = createDb();
       const reply = str.set(db, clock, ['k', 'v', 'PX']);
-      expect(reply.kind).toBe('error');
+      expect(reply).toEqual({ kind: 'error', prefix: 'ERR', message: 'syntax error' });
     });
 
-    it('rejects EXAT without value', () => {
+    it('rejects EXAT without value with syntax error', () => {
       const { db, clock } = createDb();
       const reply = str.set(db, clock, ['k', 'v', 'EXAT']);
-      expect(reply.kind).toBe('error');
+      expect(reply).toEqual({ kind: 'error', prefix: 'ERR', message: 'syntax error' });
     });
 
-    it('rejects PXAT without value', () => {
+    it('rejects PXAT without value with syntax error', () => {
       const { db, clock } = createDb();
       const reply = str.set(db, clock, ['k', 'v', 'PXAT']);
-      expect(reply.kind).toBe('error');
+      expect(reply).toEqual({ kind: 'error', prefix: 'ERR', message: 'syntax error' });
     });
   });
 

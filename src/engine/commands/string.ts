@@ -48,6 +48,26 @@ interface SetFlags {
   getOld: boolean;
 }
 
+const SYNTAX_ERR = errorReply('ERR', 'syntax error');
+
+function hasTtlFlag(flags: SetFlags): boolean {
+  return flags.ex !== null || flags.px !== null || flags.exat !== null || flags.pxat !== null;
+}
+
+function parseTtlValue(args: string[], i: number): { val: number; error: Reply | null } {
+  if (i >= args.length) {
+    return { val: 0, error: SYNTAX_ERR };
+  }
+  const val = parseInt(args[i] ?? '', 10);
+  if (isNaN(val) || String(val) !== args[i]) {
+    return { val: 0, error: errorReply('ERR', 'value is not an integer or out of range') };
+  }
+  if (val <= 0) {
+    return { val: 0, error: errorReply('ERR', 'invalid expire time in \'set\' command') };
+  }
+  return { val, error: null };
+}
+
 function parseSetFlags(args: string[]): { flags: SetFlags; error: Reply | null } {
   const flags: SetFlags = {
     ex: null,
@@ -65,110 +85,60 @@ function parseSetFlags(args: string[]): { flags: SetFlags; error: Reply | null }
     const flag = (args[i] ?? '').toUpperCase();
     switch (flag) {
       case 'EX': {
-        if (flags.ex !== null || flags.px !== null || flags.exat !== null || flags.pxat !== null) {
-          return { flags, error: errorReply('ERR', 'XX and NX options at the same time are not compatible') };
-        }
+        if (hasTtlFlag(flags) || flags.keepttl) return { flags, error: SYNTAX_ERR };
         i++;
-        if (i >= args.length) {
-          return { flags, error: errorReply('ERR', 'value is not an integer or out of range') };
-        }
-        const val = parseInt(args[i] ?? '', 10);
-        if (isNaN(val) || String(val) !== args[i]) {
-          return { flags, error: errorReply('ERR', 'value is not an integer or out of range') };
-        }
-        if (val <= 0) {
-          return { flags, error: errorReply('ERR', 'invalid expire time in \'set\' command') };
-        }
+        const { val, error } = parseTtlValue(args, i);
+        if (error) return { flags, error };
         flags.ex = val;
         break;
       }
       case 'PX': {
-        if (flags.ex !== null || flags.px !== null || flags.exat !== null || flags.pxat !== null) {
-          return { flags, error: errorReply('ERR', 'XX and NX options at the same time are not compatible') };
-        }
+        if (hasTtlFlag(flags) || flags.keepttl) return { flags, error: SYNTAX_ERR };
         i++;
-        if (i >= args.length) {
-          return { flags, error: errorReply('ERR', 'value is not an integer or out of range') };
-        }
-        const val = parseInt(args[i] ?? '', 10);
-        if (isNaN(val) || String(val) !== args[i]) {
-          return { flags, error: errorReply('ERR', 'value is not an integer or out of range') };
-        }
-        if (val <= 0) {
-          return { flags, error: errorReply('ERR', 'invalid expire time in \'set\' command') };
-        }
+        const { val, error } = parseTtlValue(args, i);
+        if (error) return { flags, error };
         flags.px = val;
         break;
       }
       case 'EXAT': {
-        if (flags.ex !== null || flags.px !== null || flags.exat !== null || flags.pxat !== null) {
-          return { flags, error: errorReply('ERR', 'XX and NX options at the same time are not compatible') };
-        }
+        if (hasTtlFlag(flags) || flags.keepttl) return { flags, error: SYNTAX_ERR };
         i++;
-        if (i >= args.length) {
-          return { flags, error: errorReply('ERR', 'value is not an integer or out of range') };
-        }
-        const val = parseInt(args[i] ?? '', 10);
-        if (isNaN(val) || String(val) !== args[i]) {
-          return { flags, error: errorReply('ERR', 'value is not an integer or out of range') };
-        }
-        if (val <= 0) {
-          return { flags, error: errorReply('ERR', 'invalid expire time in \'set\' command') };
-        }
+        const { val, error } = parseTtlValue(args, i);
+        if (error) return { flags, error };
         flags.exat = val;
         break;
       }
       case 'PXAT': {
-        if (flags.ex !== null || flags.px !== null || flags.exat !== null || flags.pxat !== null) {
-          return { flags, error: errorReply('ERR', 'XX and NX options at the same time are not compatible') };
-        }
+        if (hasTtlFlag(flags) || flags.keepttl) return { flags, error: SYNTAX_ERR };
         i++;
-        if (i >= args.length) {
-          return { flags, error: errorReply('ERR', 'value is not an integer or out of range') };
-        }
-        const val = parseInt(args[i] ?? '', 10);
-        if (isNaN(val) || String(val) !== args[i]) {
-          return { flags, error: errorReply('ERR', 'value is not an integer or out of range') };
-        }
-        if (val <= 0) {
-          return { flags, error: errorReply('ERR', 'invalid expire time in \'set\' command') };
-        }
+        const { val, error } = parseTtlValue(args, i);
+        if (error) return { flags, error };
         flags.pxat = val;
         break;
       }
       case 'NX':
+        if (flags.nx || flags.xx) return { flags, error: SYNTAX_ERR };
         flags.nx = true;
         break;
       case 'XX':
+        if (flags.xx || flags.nx) return { flags, error: SYNTAX_ERR };
         flags.xx = true;
         break;
       case 'KEEPTTL':
+        if (flags.keepttl || hasTtlFlag(flags)) return { flags, error: SYNTAX_ERR };
         flags.keepttl = true;
         break;
       case 'GET':
         flags.getOld = true;
         break;
       default:
-        return {
-          flags,
-          error: errorReply('ERR', `Unsupported option ${args[i]}`),
-        };
+        return { flags, error: SYNTAX_ERR };
     }
     i++;
   }
 
-  // validate flag combinations
-  if (flags.nx && flags.xx) {
-    return { flags, error: errorReply('ERR', 'XX and NX options at the same time are not compatible') };
-  }
-
   if (flags.getOld && flags.nx) {
     return { flags, error: errorReply('ERR', 'NX and GET options at the same time are not compatible') };
-  }
-
-  const hasTtlFlag = flags.ex !== null || flags.px !== null || flags.exat !== null || flags.pxat !== null;
-  if (flags.keepttl && hasTtlFlag) {
-    return { flags, error: errorReply('ERR', 'KEEPTTL and expiry options at the same time are not compatible') };
   }
 
   return { flags, error: null };
@@ -204,7 +174,7 @@ export function set(
   }
   if (flags.xx) {
     if (!db.has(key)) {
-      return flags.getOld ? NIL : NIL;
+      return NIL;
     }
   }
 
