@@ -160,6 +160,37 @@ export class Database {
     return this.store.entries();
   }
 
+  get expirySize(): number {
+    return this.expiry.size;
+  }
+
+  /**
+   * Sample up to `count` random keys from the expiry index.
+   * Uses Fisher-Yates partial shuffle on an array of expiry keys.
+   */
+  sampleExpiryKeys(count: number, rng: () => number): string[] {
+    const keys = Array.from(this.expiry.keys());
+    if (keys.length === 0) return [];
+    if (count >= keys.length) return keys;
+
+    // Partial Fisher-Yates: shuffle first `count` positions
+    for (let i = 0; i < count; i++) {
+      const j = i + Math.floor(rng() * (keys.length - i));
+      const tmp = keys[i] as string;
+      keys[i] = keys[j] as string;
+      keys[j] = tmp;
+    }
+    return keys.slice(0, count);
+  }
+
+  /**
+   * Try to expire a single key. Returns true if the key was expired.
+   * Public variant for active expiration cycle.
+   */
+  tryExpire(key: string): boolean {
+    return this.expireIfNeeded(key);
+  }
+
   flushExpired(): void {
     for (const key of Array.from(this.expiry.keys())) {
       this.expireIfNeeded(key);
