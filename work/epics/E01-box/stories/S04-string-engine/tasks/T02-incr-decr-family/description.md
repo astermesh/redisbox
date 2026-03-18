@@ -1,5 +1,7 @@
 # T02: INCR/DECR Family
 
+**Status:** done
+
 Implement INCR, INCRBY, DECR, DECRBY, INCRBYFLOAT. Integer operations: value must be representable as 64-bit signed integer, overflow returns error (not wrap). INCRBYFLOAT: result stored as string, trailing zeroes trimmed.
 
 ## Acceptance Criteria
