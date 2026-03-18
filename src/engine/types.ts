@@ -66,11 +66,92 @@ export const ONE = integerReply(1);
 export const NIL = bulkReply(null);
 export const EMPTY_ARRAY = arrayReply([]);
 
-export function wrongTypeError(): Reply {
+// --- Standardized error constants (byte-identical to real Redis) ---
+
+export const WRONGTYPE_ERR = errorReply(
+  'WRONGTYPE',
+  'Operation against a key holding the wrong kind of value'
+);
+
+export const SYNTAX_ERR = errorReply('ERR', 'syntax error');
+
+export const NOT_INTEGER_ERR = errorReply(
+  'ERR',
+  'value is not an integer or out of range'
+);
+
+export const NOT_FLOAT_ERR = errorReply('ERR', 'value is not a valid float');
+
+export const OVERFLOW_ERR = errorReply(
+  'ERR',
+  'increment or decrement would overflow'
+);
+
+export const INF_NAN_ERR = errorReply(
+  'ERR',
+  'increment would produce NaN or Infinity'
+);
+
+export const STRING_EXCEEDS_512MB_ERR = errorReply(
+  'ERR',
+  'string exceeds maximum allowed size (512MB)'
+);
+
+export const OFFSET_OUT_OF_RANGE_ERR = errorReply(
+  'ERR',
+  'offset is out of range'
+);
+
+export const NO_SUCH_KEY_ERR = errorReply('ERR', 'no such key');
+
+/**
+ * Generate a "wrong number of arguments" error for a command.
+ * Matches Redis format: ERR wrong number of arguments for '<cmd>' command
+ */
+export function wrongArityError(commandName: string): Reply {
   return errorReply(
-    'WRONGTYPE',
-    'Operation against a key holding the wrong kind of value'
+    'ERR',
+    `wrong number of arguments for '${commandName}' command`
   );
+}
+
+/**
+ * Generate an "invalid expire time" error for a command.
+ * Matches Redis format: ERR invalid expire time in '<cmd>' command
+ */
+export function invalidExpireTimeError(commandName: string): Reply {
+  return errorReply('ERR', `invalid expire time in '${commandName}' command`);
+}
+
+/**
+ * Generate an "unknown command" error.
+ * Matches Redis format: ERR unknown command '<cmd>', with args beginning with: 'arg1' 'arg2' ...
+ */
+export function unknownCommandError(name: string, args: string[]): Reply {
+  const argsStr = args.map((a) => `'${a}'`).join(' ');
+  return errorReply(
+    'ERR',
+    `unknown command '${name}', with args beginning with: ${argsStr}`
+  );
+}
+
+/**
+ * Generate an "unknown subcommand" error.
+ * Matches Redis format: ERR unknown subcommand or wrong number of arguments for '<parent>|<sub>' command
+ */
+export function unknownSubcommandError(
+  parentName: string,
+  subName: string
+): Reply {
+  return errorReply(
+    'ERR',
+    `unknown subcommand or wrong number of arguments for '${parentName}|${subName}' command`
+  );
+}
+
+/** @deprecated Use WRONGTYPE_ERR constant instead */
+export function wrongTypeError(): Reply {
+  return WRONGTYPE_ERR;
 }
 
 export interface CommandContext {

@@ -11,6 +11,10 @@ import {
   ZERO,
   ONE,
   NIL,
+  SYNTAX_ERR,
+  NO_SUCH_KEY_ERR,
+  wrongArityError,
+  unknownSubcommandError,
 } from '../types.ts';
 
 export function del(db: Database, args: string[]): Reply {
@@ -42,7 +46,7 @@ export function rename(db: Database, args: string[]): Reply {
   const dst = args[1] ?? '';
   const entry = db.getWithoutTouch(src);
   if (!entry) {
-    return errorReply('ERR', 'no such key');
+    return NO_SUCH_KEY_ERR;
   }
   db.rename(src, dst);
   return OK;
@@ -53,7 +57,7 @@ export function renamenx(db: Database, args: string[]): Reply {
   const dst = args[1] ?? '';
   const srcEntry = db.getWithoutTouch(src);
   if (!srcEntry) {
-    return errorReply('ERR', 'no such key');
+    return NO_SUCH_KEY_ERR;
   }
   if (src === dst) return ZERO;
   if (db.has(dst)) return ZERO;
@@ -102,7 +106,7 @@ export function copy(
     } else if (flag === 'REPLACE') {
       replace = true;
     } else {
-      return errorReply('ERR', 'syntax error');
+      return SYNTAX_ERR;
     }
     i++;
   }
@@ -198,7 +202,7 @@ export function object(
   args: string[]
 ): Reply {
   if (args.length === 0) {
-    return errorReply('ERR', "wrong number of arguments for 'object' command");
+    return wrongArityError('object');
   }
 
   const subcommand = (args[0] ?? '').toUpperCase();
@@ -207,42 +211,27 @@ export function object(
   switch (subcommand) {
     case 'ENCODING':
       if (subArgs.length !== 1) {
-        return errorReply(
-          'ERR',
-          "wrong number of arguments for 'object|encoding' command"
-        );
+        return wrongArityError('object|encoding');
       }
       return objectEncoding(db, subArgs);
     case 'REFCOUNT':
       if (subArgs.length !== 1) {
-        return errorReply(
-          'ERR',
-          "wrong number of arguments for 'object|refcount' command"
-        );
+        return wrongArityError('object|refcount');
       }
       return objectRefcount(db, subArgs);
     case 'IDLETIME':
       if (subArgs.length !== 1) {
-        return errorReply(
-          'ERR',
-          "wrong number of arguments for 'object|idletime' command"
-        );
+        return wrongArityError('object|idletime');
       }
       return objectIdletimeWithClock(db, clock, subArgs);
     case 'FREQ':
       if (subArgs.length !== 1) {
-        return errorReply(
-          'ERR',
-          "wrong number of arguments for 'object|freq' command"
-        );
+        return wrongArityError('object|freq');
       }
       return objectFreq(db, subArgs);
     case 'HELP':
       return objectHelp();
     default:
-      return errorReply(
-        'ERR',
-        `unknown subcommand or wrong number of arguments for 'object|${(args[0] ?? '').toLowerCase()}' command`
-      );
+      return unknownSubcommandError('object', (args[0] ?? '').toLowerCase());
   }
 }
