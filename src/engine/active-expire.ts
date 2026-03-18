@@ -1,12 +1,16 @@
 import type { Database } from './database.ts';
 
 /**
- * Redis active expiration cycle (slow variant).
+ * Redis active expiration cycles (slow and fast variants).
  *
- * Mirrors the real Redis `activeExpireCycle(ACTIVE_EXPIRE_CYCLE_SLOW)` algorithm
- * from expire.c. Runs at `hz` frequency, sampling random keys with TTL and
- * deleting expired ones. Repeats sampling for a database when the expired
- * ratio exceeds the acceptable-stale threshold.
+ * Mirrors the real Redis `activeExpireCycle()` algorithm from expire.c.
+ *
+ * Slow cycle: runs at `hz` frequency from serverCron, with a time budget
+ * scaled by hz and effort.
+ *
+ * Fast cycle: runs before processing events (beforeSleep equivalent),
+ * with a fixed 1ms time budget. Only runs if the last slow cycle timed out
+ * (indicating high expired key ratio). Has a cooldown of 2ms between runs.
  *
  * Config parameters (matching Redis 7.x):
  * - hz: cycles per second (default 10)
@@ -19,6 +23,9 @@ const ACTIVE_EXPIRE_CYCLE_ACCEPTABLE_STALE = 10;
 
 // Check time budget every N iterations to avoid excessive clock calls
 const TIMELIMIT_CHECK_INTERVAL = 16;
+
+// Fast cycle: fixed 1ms budget (Redis: ACTIVE_EXPIRE_CYCLE_FAST_DURATION = 1000us)
+const ACTIVE_EXPIRE_CYCLE_FAST_DURATION_MS = 1;
 
 export interface ActiveExpireCycleOpts {
   databases: Database[];
@@ -35,27 +42,17 @@ export interface ActiveExpireCycleResult {
   timedOut: boolean;
 }
 
-export function activeExpireCycle(
-  opts: ActiveExpireCycleOpts
+/**
+ * Core expiration loop shared by both slow and fast cycles.
+ */
+function expireCycleCore(
+  databases: Database[],
+  clock: () => number,
+  rng: () => number,
+  configKeysPerLoop: number,
+  configCycleAcceptableStale: number,
+  timeLimitMs: number
 ): ActiveExpireCycleResult {
-  const { databases, clock, rng, hz, effort } = opts;
-
-  // Rescale effort from 1-10 config range to 0-9 (matches Redis expire.c)
-  const adjustedEffort = effort - 1;
-
-  // Scale parameters by effort (matches Redis expire.c)
-  const configKeysPerLoop =
-    ACTIVE_EXPIRE_CYCLE_KEYS_PER_LOOP +
-    (ACTIVE_EXPIRE_CYCLE_KEYS_PER_LOOP / 4) * adjustedEffort;
-  const configCycleSlowTimePerc =
-    ACTIVE_EXPIRE_CYCLE_SLOW_TIME_PERC + 2 * adjustedEffort;
-  const configCycleAcceptableStale =
-    ACTIVE_EXPIRE_CYCLE_ACCEPTABLE_STALE - adjustedEffort;
-
-  // Time limit in milliseconds
-  // Redis: timelimit = 1000000 * perc / hz / 100 (in microseconds)
-  // We use ms: timelimit_ms = 1000 * perc / hz / 100
-  const timeLimitMs = (1000 * configCycleSlowTimePerc) / hz / 100;
   const startTime = clock();
 
   let totalExpired = 0;
@@ -88,10 +85,10 @@ export function activeExpireCycle(
         }
       }
 
-      // If expired ratio is at or below acceptable stale threshold, move to next db
-      // Redis: if (expired <= sampled / (100/acceptable_stale)) break
+      // If expired ratio is below acceptable stale threshold, move to next db
+      // Redis: if ((expired*100/sampled) < config_cycle_acceptable_stale) break
       const threshold = sampled.length * (configCycleAcceptableStale / 100);
-      if (expired <= threshold) break;
+      if (expired < threshold) break;
 
       // Also check if no more expiring keys remain
       if (db.expirySize === 0) break;
@@ -108,4 +105,126 @@ export function activeExpireCycle(
   }
 
   return { expired: totalExpired, timedOut };
+}
+
+/**
+ * Slow active expiration cycle.
+ *
+ * Called from the main timer (serverCron equivalent) at `hz` frequency.
+ * Time budget is scaled by hz and effort.
+ */
+export function activeExpireCycle(
+  opts: ActiveExpireCycleOpts
+): ActiveExpireCycleResult {
+  const { databases, clock, rng, hz, effort } = opts;
+
+  // Rescale effort from 1-10 config range to 0-9 (matches Redis expire.c)
+  const adjustedEffort = effort - 1;
+
+  // Scale parameters by effort (matches Redis expire.c)
+  const configKeysPerLoop =
+    ACTIVE_EXPIRE_CYCLE_KEYS_PER_LOOP +
+    (ACTIVE_EXPIRE_CYCLE_KEYS_PER_LOOP / 4) * adjustedEffort;
+  const configCycleSlowTimePerc =
+    ACTIVE_EXPIRE_CYCLE_SLOW_TIME_PERC + 2 * adjustedEffort;
+  const configCycleAcceptableStale =
+    ACTIVE_EXPIRE_CYCLE_ACCEPTABLE_STALE - adjustedEffort;
+
+  // Time limit in milliseconds
+  // Redis: timelimit = 1000000 * perc / hz / 100 (in microseconds)
+  // We use ms: timelimit_ms = 1000 * perc / hz / 100
+  const timeLimitMs = (1000 * configCycleSlowTimePerc) / hz / 100;
+
+  return expireCycleCore(
+    databases,
+    clock,
+    rng,
+    configKeysPerLoop,
+    configCycleAcceptableStale,
+    timeLimitMs
+  );
+}
+
+/**
+ * Mutable state shared between slow and fast expiration cycles.
+ *
+ * Mirrors Redis's static variables `timelimit_exit`, `stat_expired_stale_perc`,
+ * and `last_fast_cycle` in expire.c.
+ */
+export interface FastExpireCycleState {
+  /** Whether the last slow cycle timed out. */
+  lastSlowTimedOut: boolean;
+  /** Timestamp (ms) of the last fast cycle run. */
+  lastFastCycleTime: number;
+}
+
+export function createFastExpireCycleState(): FastExpireCycleState {
+  return {
+    lastSlowTimedOut: false,
+    lastFastCycleTime: 0,
+  };
+}
+
+export interface FastActiveExpireCycleOpts {
+  databases: Database[];
+  clock: () => number;
+  rng: () => number;
+  effort: number;
+  state: FastExpireCycleState;
+}
+
+export interface FastActiveExpireCycleResult extends ActiveExpireCycleResult {
+  /** Whether the cycle was skipped because conditions were not met. */
+  skipped: boolean;
+}
+
+/**
+ * Fast active expiration cycle.
+ *
+ * Called before processing events (beforeSleep equivalent).
+ * Fixed 1ms time budget. Only runs if the last slow cycle timed out
+ * and at least 2ms have passed since the last fast cycle.
+ */
+export function fastActiveExpireCycle(
+  opts: FastActiveExpireCycleOpts
+): FastActiveExpireCycleResult {
+  const { databases, clock, rng, effort, state } = opts;
+
+  const now = clock();
+
+  // Condition 1: last slow cycle must have timed out (high expired ratio)
+  if (!state.lastSlowTimedOut) {
+    return { expired: 0, timedOut: false, skipped: true };
+  }
+
+  // Condition 2: cooldown — at least 2 * FAST_DURATION since last fast cycle
+  // Redis: if (start < last_fast_cycle + ACTIVE_EXPIRE_CYCLE_FAST_DURATION*2)
+  const cooldownMs = ACTIVE_EXPIRE_CYCLE_FAST_DURATION_MS * 2;
+  if (now < state.lastFastCycleTime + cooldownMs) {
+    return { expired: 0, timedOut: false, skipped: true };
+  }
+
+  state.lastFastCycleTime = now;
+
+  // Rescale effort from 1-10 config range to 0-9 (matches Redis expire.c)
+  const adjustedEffort = effort - 1;
+
+  // Scale sampling parameters by effort (same as slow cycle)
+  const configKeysPerLoop =
+    ACTIVE_EXPIRE_CYCLE_KEYS_PER_LOOP +
+    (ACTIVE_EXPIRE_CYCLE_KEYS_PER_LOOP / 4) * adjustedEffort;
+  const configCycleAcceptableStale =
+    ACTIVE_EXPIRE_CYCLE_ACCEPTABLE_STALE - adjustedEffort;
+
+  // Fixed 1ms time budget (not scaled by hz)
+  const result = expireCycleCore(
+    databases,
+    clock,
+    rng,
+    configKeysPerLoop,
+    configCycleAcceptableStale,
+    ACTIVE_EXPIRE_CYCLE_FAST_DURATION_MS
+  );
+
+  return { ...result, skipped: false };
 }

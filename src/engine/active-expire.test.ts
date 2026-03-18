@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { Database } from './database.ts';
-import { activeExpireCycle } from './active-expire.ts';
+import {
+  activeExpireCycle,
+  fastActiveExpireCycle,
+  createFastExpireCycleState,
+  type FastExpireCycleState,
+} from './active-expire.ts';
 
 function createDb(time = 1000): {
   db: Database;
@@ -532,6 +537,478 @@ describe('activeExpireCycle', () => {
 
       expect(result.expired).toBe(0);
       expect(result.timedOut).toBe(false);
+    });
+  });
+});
+
+describe('fastActiveExpireCycle', () => {
+  describe('conditional execution', () => {
+    it('skips when last slow cycle did not time out', () => {
+      const { db, setTime } = createDb(1000);
+
+      for (let i = 0; i < 50; i++) {
+        setKey(db, `k${i}`, 2000);
+      }
+      setTime(2001);
+
+      const state: FastExpireCycleState = {
+        lastSlowTimedOut: false,
+        lastFastCycleTime: 0,
+      };
+
+      const result = fastActiveExpireCycle({
+        databases: [db],
+        clock: () => 2001,
+        rng: () => Math.random(),
+        effort: 1,
+        state,
+      });
+
+      expect(result.skipped).toBe(true);
+      expect(result.expired).toBe(0);
+      // Keys should remain untouched
+      expect(db.size).toBe(50);
+    });
+
+    it('runs when last slow cycle timed out', () => {
+      const { db, setTime } = createDb(1000);
+
+      for (let i = 0; i < 50; i++) {
+        setKey(db, `k${i}`, 2000);
+      }
+      setTime(2001);
+
+      const state: FastExpireCycleState = {
+        lastSlowTimedOut: true,
+        lastFastCycleTime: 0,
+      };
+
+      const result = fastActiveExpireCycle({
+        databases: [db],
+        clock: () => 2001,
+        rng: () => Math.random(),
+        effort: 1,
+        state,
+      });
+
+      expect(result.skipped).toBe(false);
+      expect(result.expired).toBe(50);
+      expect(db.size).toBe(0);
+    });
+
+    it('skips when cooldown has not elapsed', () => {
+      const { db, setTime } = createDb(1000);
+
+      for (let i = 0; i < 50; i++) {
+        setKey(db, `k${i}`, 2000);
+      }
+      setTime(2001);
+
+      const state: FastExpireCycleState = {
+        lastSlowTimedOut: true,
+        lastFastCycleTime: 2000, // ran 1ms ago, cooldown is 2ms
+      };
+
+      const result = fastActiveExpireCycle({
+        databases: [db],
+        clock: () => 2001,
+        rng: () => Math.random(),
+        effort: 1,
+        state,
+      });
+
+      expect(result.skipped).toBe(true);
+      expect(result.expired).toBe(0);
+      expect(db.size).toBe(50);
+    });
+
+    it('runs when cooldown has elapsed', () => {
+      const { db, setTime } = createDb(1000);
+
+      for (let i = 0; i < 50; i++) {
+        setKey(db, `k${i}`, 2000);
+      }
+      setTime(2001);
+
+      const state: FastExpireCycleState = {
+        lastSlowTimedOut: true,
+        lastFastCycleTime: 1998, // ran 3ms ago, cooldown is 2ms
+      };
+
+      const result = fastActiveExpireCycle({
+        databases: [db],
+        clock: () => 2001,
+        rng: () => Math.random(),
+        effort: 1,
+        state,
+      });
+
+      expect(result.skipped).toBe(false);
+      expect(result.expired).toBe(50);
+    });
+  });
+
+  describe('time budget', () => {
+    it('respects fixed 1ms time budget', () => {
+      const { db, setTime } = createDb(1000);
+
+      for (let i = 0; i < 5000; i++) {
+        setKey(db, `k${i}`, 2000);
+      }
+      setTime(2001);
+
+      const state: FastExpireCycleState = {
+        lastSlowTimedOut: true,
+        lastFastCycleTime: 0,
+      };
+
+      // Clock advances 0.5ms per call — budget is 1ms, so ~2 clock reads
+      const result = fastActiveExpireCycle({
+        databases: [db],
+        clock: advancingClock(2001, 0.5),
+        rng: () => Math.random(),
+        effort: 1,
+        state,
+      });
+
+      expect(result.skipped).toBe(false);
+      expect(result.expired).toBeGreaterThan(0);
+      expect(result.expired).toBeLessThan(5000);
+      expect(result.timedOut).toBe(true);
+    });
+
+    it('time budget is fixed regardless of hz', () => {
+      // Unlike slow cycle, fast cycle always has 1ms budget
+      const makeDb = () => {
+        const { db, setTime } = createDb(1000);
+        for (let i = 0; i < 2000; i++) {
+          setKey(db, `k${i}`, 2000);
+        }
+        setTime(2001);
+        return db;
+      };
+
+      const state1: FastExpireCycleState = {
+        lastSlowTimedOut: true,
+        lastFastCycleTime: 0,
+      };
+      const state2: FastExpireCycleState = {
+        lastSlowTimedOut: true,
+        lastFastCycleTime: 0,
+      };
+
+      const db1 = makeDb();
+      const r1 = fastActiveExpireCycle({
+        databases: [db1],
+        clock: advancingClock(2001, 0.1),
+        rng: () => Math.random(),
+        effort: 1,
+        state: state1,
+      });
+
+      const db2 = makeDb();
+      const r2 = fastActiveExpireCycle({
+        databases: [db2],
+        clock: advancingClock(2001, 0.1),
+        rng: () => Math.random(),
+        effort: 1,
+        state: state2,
+      });
+
+      // Both should expire approximately the same number of keys
+      // since budget is the same (1ms) regardless of any other config
+      expect(r1.expired).toBe(r2.expired);
+    });
+
+    it('budget is smaller than slow cycle budget', () => {
+      const keyCount = 5000;
+      const makeDb = () => {
+        const { db, setTime } = createDb(1000);
+        for (let i = 0; i < keyCount; i++) {
+          setKey(db, `k${i}`, 2000);
+        }
+        setTime(2001);
+        return db;
+      };
+
+      // Slow cycle: at hz=10, effort=1, budget = 2.5ms
+      const dbSlow = makeDb();
+      const slowResult = activeExpireCycle({
+        databases: [dbSlow],
+        clock: advancingClock(2001, 0.1),
+        rng: () => Math.random(),
+        hz: 10,
+        effort: 1,
+      });
+
+      // Fast cycle: fixed 1ms budget
+      const dbFast = makeDb();
+      const state: FastExpireCycleState = {
+        lastSlowTimedOut: true,
+        lastFastCycleTime: 0,
+      };
+      const fastResult = fastActiveExpireCycle({
+        databases: [dbFast],
+        clock: advancingClock(2001, 0.1),
+        rng: () => Math.random(),
+        effort: 1,
+        state,
+      });
+
+      // Both should time out, but slow cycle deletes more
+      expect(slowResult.timedOut).toBe(true);
+      expect(fastResult.timedOut).toBe(true);
+      expect(slowResult.expired).toBeGreaterThan(fastResult.expired);
+    });
+  });
+
+  describe('state management', () => {
+    it('updates lastFastCycleTime on run', () => {
+      const { db, setTime } = createDb(1000);
+      setKey(db, 'k1', 2000);
+      setTime(2001);
+
+      const state: FastExpireCycleState = {
+        lastSlowTimedOut: true,
+        lastFastCycleTime: 0,
+      };
+
+      fastActiveExpireCycle({
+        databases: [db],
+        clock: () => 5000,
+        rng: () => Math.random(),
+        effort: 1,
+        state,
+      });
+
+      expect(state.lastFastCycleTime).toBe(5000);
+    });
+
+    it('does not update lastFastCycleTime when skipped', () => {
+      const { db } = createDb(1000);
+
+      const state: FastExpireCycleState = {
+        lastSlowTimedOut: false,
+        lastFastCycleTime: 100,
+      };
+
+      fastActiveExpireCycle({
+        databases: [db],
+        clock: () => 5000,
+        rng: () => Math.random(),
+        effort: 1,
+        state,
+      });
+
+      expect(state.lastFastCycleTime).toBe(100);
+    });
+
+    it('createFastExpireCycleState returns default state', () => {
+      const state = createFastExpireCycleState();
+      expect(state.lastSlowTimedOut).toBe(false);
+      expect(state.lastFastCycleTime).toBe(0);
+    });
+  });
+
+  describe('integration with slow cycle', () => {
+    it('slow cycle timedOut triggers fast cycle', () => {
+      const { db, setTime } = createDb(1000);
+
+      for (let i = 0; i < 5000; i++) {
+        setKey(db, `k${i}`, 2000);
+      }
+      setTime(2001);
+
+      // Slow cycle with tight time budget — will time out
+      const slowResult = activeExpireCycle({
+        databases: [db],
+        clock: advancingClock(2001, 5),
+        rng: () => Math.random(),
+        hz: 10,
+        effort: 1,
+      });
+
+      expect(slowResult.timedOut).toBe(true);
+      const afterSlow = db.size;
+
+      // Feed slow result into fast cycle state
+      const state: FastExpireCycleState = {
+        lastSlowTimedOut: slowResult.timedOut,
+        lastFastCycleTime: 0,
+      };
+
+      const fastResult = fastActiveExpireCycle({
+        databases: [db],
+        clock: () => 3000,
+        rng: () => Math.random(),
+        effort: 1,
+        state,
+      });
+
+      expect(fastResult.skipped).toBe(false);
+      expect(fastResult.expired).toBeGreaterThan(0);
+      expect(db.size).toBeLessThan(afterSlow);
+    });
+
+    it('slow cycle not timing out prevents fast cycle', () => {
+      const { db, setTime } = createDb(1000);
+
+      for (let i = 0; i < 10; i++) {
+        setKey(db, `k${i}`, 2000);
+      }
+      setTime(2001);
+
+      // Slow cycle with plenty of time — will not time out
+      const slowResult = activeExpireCycle({
+        databases: [db],
+        clock: () => 2001,
+        rng: () => Math.random(),
+        hz: 10,
+        effort: 1,
+      });
+
+      expect(slowResult.timedOut).toBe(false);
+
+      // Add more expired keys after slow cycle
+      for (let i = 100; i < 110; i++) {
+        setKey(db, `k${i}`, 2000);
+      }
+
+      const state: FastExpireCycleState = {
+        lastSlowTimedOut: slowResult.timedOut,
+        lastFastCycleTime: 0,
+      };
+
+      const fastResult = fastActiveExpireCycle({
+        databases: [db],
+        clock: () => 3000,
+        rng: () => Math.random(),
+        effort: 1,
+        state,
+      });
+
+      expect(fastResult.skipped).toBe(true);
+      expect(fastResult.expired).toBe(0);
+    });
+  });
+
+  describe('effort scaling', () => {
+    it('higher effort samples more keys per loop', () => {
+      const keyCount = 5000;
+      const makeDb = () => {
+        const { db, setTime } = createDb(1000);
+        for (let i = 0; i < keyCount; i++) {
+          setKey(db, `k${i}`, 2000);
+        }
+        setTime(2001);
+        return db;
+      };
+
+      const state1: FastExpireCycleState = {
+        lastSlowTimedOut: true,
+        lastFastCycleTime: 0,
+      };
+      const state10: FastExpireCycleState = {
+        lastSlowTimedOut: true,
+        lastFastCycleTime: 0,
+      };
+
+      const db1 = makeDb();
+      const r1 = fastActiveExpireCycle({
+        databases: [db1],
+        clock: advancingClock(2001, 1),
+        rng: () => Math.random(),
+        effort: 1,
+        state: state1,
+      });
+
+      const db10 = makeDb();
+      const r10 = fastActiveExpireCycle({
+        databases: [db10],
+        clock: advancingClock(2001, 1),
+        rng: () => Math.random(),
+        effort: 10,
+        state: state10,
+      });
+
+      // Both time out with same 1ms budget, but effort=10 samples more per iteration
+      expect(r1.timedOut).toBe(true);
+      expect(r10.timedOut).toBe(true);
+      expect(r10.expired).toBeGreaterThan(r1.expired);
+    });
+  });
+
+  describe('edge cases', () => {
+    it('handles empty databases', () => {
+      const { db } = createDb(1000);
+
+      const state: FastExpireCycleState = {
+        lastSlowTimedOut: true,
+        lastFastCycleTime: 0,
+      };
+
+      const result = fastActiveExpireCycle({
+        databases: [db],
+        clock: () => 2000,
+        rng: () => Math.random(),
+        effort: 1,
+        state,
+      });
+
+      expect(result.skipped).toBe(false);
+      expect(result.expired).toBe(0);
+    });
+
+    it('handles cooldown exactly at boundary', () => {
+      const { db, setTime } = createDb(1000);
+      setKey(db, 'k1', 2000);
+      setTime(2001);
+
+      // Cooldown is 2ms. lastFastCycleTime=1999, now=2001 → exactly 2ms elapsed
+      const state: FastExpireCycleState = {
+        lastSlowTimedOut: true,
+        lastFastCycleTime: 1999,
+      };
+
+      const result = fastActiveExpireCycle({
+        databases: [db],
+        clock: () => 2001,
+        rng: () => Math.random(),
+        effort: 1,
+        state,
+      });
+
+      // 2001 >= 1999 + 2 → should run
+      expect(result.skipped).toBe(false);
+      expect(result.expired).toBe(1);
+    });
+
+    it('handles multiple databases', () => {
+      const { db: db0, setTime: setTime0 } = createDb(1000);
+      const { db: db1, setTime: setTime1 } = createDb(1000);
+
+      setKey(db0, 'a', 2000);
+      setKey(db1, 'b', 2000);
+      setTime0(2001);
+      setTime1(2001);
+
+      const state: FastExpireCycleState = {
+        lastSlowTimedOut: true,
+        lastFastCycleTime: 0,
+      };
+
+      const result = fastActiveExpireCycle({
+        databases: [db0, db1],
+        clock: () => 2001,
+        rng: () => Math.random(),
+        effort: 1,
+        state,
+      });
+
+      expect(result.skipped).toBe(false);
+      expect(result.expired).toBe(2);
+      expect(db0.size).toBe(0);
+      expect(db1.size).toBe(0);
     });
   });
 });
