@@ -68,7 +68,9 @@ export class TcpServer extends EventEmitter {
     }
 
     return new Promise((resolve, reject) => {
-      const server = net.createServer((socket) => this.handleConnection(socket));
+      const server = net.createServer((socket) =>
+        this.handleConnection(socket)
+      );
 
       server.on('error', (err) => {
         reject(err);
