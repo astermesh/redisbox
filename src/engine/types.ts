@@ -35,7 +35,7 @@ export interface EngineDeps {
 
 export type Reply =
   | { kind: 'status'; value: string }
-  | { kind: 'integer'; value: number }
+  | { kind: 'integer'; value: number | bigint }
   | { kind: 'bulk'; value: string | null }
   | { kind: 'array'; value: Reply[] }
   | { kind: 'error'; prefix: string; message: string };
@@ -44,7 +44,7 @@ export function statusReply(value: string): Reply {
   return { kind: 'status', value };
 }
 
-export function integerReply(value: number): Reply {
+export function integerReply(value: number | bigint): Reply {
   return { kind: 'integer', value };
 }
 

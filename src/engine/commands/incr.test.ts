@@ -127,6 +127,28 @@ describe('INCR', () => {
       message: 'value is not an integer or out of range',
     });
   });
+
+  it('returns correct value for large integers beyond Number.MAX_SAFE_INTEGER', () => {
+    const { db } = createDb();
+    // 9223372036854775806 = INT64_MAX - 1, beyond Number.MAX_SAFE_INTEGER
+    db.set('k', 'string', 'int', '9223372036854775806');
+    const reply = incr.incr(db, ['k']);
+    expect(reply).toEqual({
+      kind: 'integer',
+      value: 9223372036854775807n,
+    });
+    expect(db.get('k')?.value).toBe('9223372036854775807');
+  });
+
+  it('returns correct value for large negative integers beyond -MAX_SAFE_INTEGER', () => {
+    const { db } = createDb();
+    db.set('k', 'string', 'int', '-9223372036854775807');
+    const reply = incr.incr(db, ['k']);
+    expect(reply).toEqual({
+      kind: 'integer',
+      value: -9223372036854775806n,
+    });
+  });
 });
 
 // --- DECR ---
@@ -288,6 +310,17 @@ describe('INCRBY', () => {
     const { db } = createDb();
     incr.incrby(db, ['k', '42']);
     expect(db.get('k')?.encoding).toBe('int');
+  });
+
+  it('returns bigint for large values beyond Number.MAX_SAFE_INTEGER', () => {
+    const { db } = createDb();
+    db.set('k', 'string', 'int', '9223372036854775700');
+    const reply = incr.incrby(db, ['k', '100']);
+    expect(reply).toEqual({
+      kind: 'integer',
+      value: 9223372036854775800n,
+    });
+    expect(db.get('k')?.value).toBe('9223372036854775800');
   });
 });
 
@@ -532,5 +565,30 @@ describe('INCRBYFLOAT', () => {
     const { db } = createDb();
     incr.incrbyfloat(db, ['k', '3.14']);
     expect(typeof db.get('k')?.value).toBe('string');
+  });
+
+  it('uses scientific notation for very small results (exp < -4)', () => {
+    const { db } = createDb();
+    db.set('k', 'string', 'embstr', '0');
+    // Use a power of 2 that is exactly representable as a double
+    incr.incrbyfloat(db, ['k', '0.000030517578125']); // 2^-15
+    // Redis uses scientific notation for exponent < -4
+    expect(db.get('k')?.value).toBe('3.0517578125e-05');
+  });
+
+  it('uses scientific notation for very large results (exp >= 17)', () => {
+    const { db } = createDb();
+    db.set('k', 'string', 'embstr', '0');
+    incr.incrbyfloat(db, ['k', '1e18']);
+    expect(db.get('k')?.value).toBe('1e+18');
+  });
+
+  it('formats zero result as "0"', () => {
+    const { db } = createDb();
+    db.set('k', 'string', 'embstr', '5.0');
+    expect(incr.incrbyfloat(db, ['k', '-5.0'])).toEqual({
+      kind: 'bulk',
+      value: '0',
+    });
   });
 });

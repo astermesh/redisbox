@@ -63,7 +63,13 @@ function incrByInt(db: Database, key: string, delta: bigint): Reply {
   const strResult = result.toString();
   db.set(key, 'string', 'int', strResult);
 
-  return integerReply(Number(result));
+  // Use Number for values within safe integer range, BigInt otherwise
+  // to preserve precision for 64-bit integers beyond Number.MAX_SAFE_INTEGER
+  const replyValue =
+    result >= -9007199254740991n && result <= 9007199254740991n
+      ? Number(result)
+      : result;
+  return integerReply(replyValue);
 }
 
 export function incr(db: Database, args: string[]): Reply {
@@ -117,15 +123,54 @@ function parseFloat64(value: string): { value: number; isInf: boolean } | null {
 }
 
 /**
- * Format a float result the way Redis does:
- * - Uses shortest representation that round-trips
- * - No trailing zeroes after decimal point
- * - No decimal point if integer
+ * Format a float result matching Redis's ld2string(LD_STR_AUTO) behavior.
+ *
+ * Redis uses %.17Lg (17 significant digits, C's %g scientific notation rules)
+ * with trailing zeroes trimmed. C's %g uses scientific notation when
+ * exponent < -4 or >= precision (17).
+ *
+ * For the fixed-notation range (exp -4..16), we use String(n) which gives
+ * the shortest round-trip representation. This matches Redis's long double
+ * output in most cases (Redis's 80-bit precision means 17-digit output
+ * looks "clean", while 64-bit double's 17-digit output reveals artifacts).
+ *
+ * For the scientific-notation range, we format with C conventions
+ * (at least 2-digit exponent, sign prefix).
  */
 function formatFloat(n: number): string {
-  // toString() produces the shortest decimal that uniquely identifies
-  // the double, matching Redis's %.17Lg behavior after trimming
+  if (n === 0 || Object.is(n, -0)) return '0';
+
+  const exp = getExponent(n);
+
+  // C's %g with precision 17: scientific when exp < -4 or exp >= 17
+  if (exp < -4 || exp >= 17) {
+    return formatScientific(n);
+  }
+  // Fixed notation — String(n) gives shortest round-trip representation
   return String(n);
+}
+
+function getExponent(n: number): number {
+  const parts = Math.abs(n).toExponential().split('e');
+  return parseInt(parts[1] ?? '0', 10);
+}
+
+function formatScientific(n: number): string {
+  const s = n.toExponential(16); // 1 + 16 = 17 significant digits
+  const eIdx = s.indexOf('e');
+  let mantissa = s.substring(0, eIdx);
+  const expRaw = s.substring(eIdx + 1);
+
+  // Trim trailing zeros from mantissa
+  if (mantissa.includes('.')) {
+    mantissa = mantissa.replace(/0+$/, '').replace(/\.$/, '');
+  }
+
+  // Pad exponent to at least 2 digits (C convention)
+  const sign = expRaw.startsWith('-') ? '-' : '+';
+  const absExp = Math.abs(parseInt(expRaw, 10)).toString().padStart(2, '0');
+
+  return `${mantissa}e${sign}${absExp}`;
 }
 
 export function incrbyfloat(db: Database, args: string[]): Reply {
