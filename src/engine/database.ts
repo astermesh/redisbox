@@ -3,6 +3,7 @@ import type { RedisEntry, RedisEncoding, RedisType } from './types.ts';
 export class Database {
   private readonly store = new Map<string, RedisEntry>();
   private readonly expiry = new Map<string, number>();
+  private readonly fieldExpiry = new Map<string, Map<string, number>>();
   private readonly versions = new Map<string, number>();
   private globalVersion = 0;
   private readonly clock: () => number;
@@ -55,6 +56,7 @@ export class Database {
     const existed = this.store.delete(key);
     if (existed) {
       this.expiry.delete(key);
+      this.fieldExpiry.delete(key);
       this.bumpVersion(key);
     }
     return existed;
@@ -64,19 +66,25 @@ export class Database {
     const entry = this.store.get(src);
     if (!entry) return;
     const srcExpiry = this.expiry.get(src);
+    const srcFieldExpiry = this.fieldExpiry.get(src);
 
     if (src === dst) return;
 
     this.store.delete(src);
     this.expiry.delete(src);
+    this.fieldExpiry.delete(src);
     this.bumpVersion(src);
 
     this.store.delete(dst);
     this.expiry.delete(dst);
+    this.fieldExpiry.delete(dst);
 
     this.store.set(dst, entry);
     if (srcExpiry !== undefined) {
       this.expiry.set(dst, srcExpiry);
+    }
+    if (srcFieldExpiry !== undefined) {
+      this.fieldExpiry.set(dst, srcFieldExpiry);
     }
     this.bumpVersion(dst);
   }
@@ -197,6 +205,119 @@ export class Database {
     }
   }
 
+  // --- Field-level expiry (Redis 7.4+ hash field TTL) ---
+
+  get fieldExpirySize(): number {
+    return this.fieldExpiry.size;
+  }
+
+  setFieldExpiry(key: string, field: string, expiryMs: number): boolean {
+    const entry = this.store.get(key);
+    if (!entry || entry.type !== 'hash') return false;
+    const hash = entry.value as Map<string, string>;
+    if (!hash.has(field)) return false;
+
+    let fields = this.fieldExpiry.get(key);
+    if (!fields) {
+      fields = new Map();
+      this.fieldExpiry.set(key, fields);
+    }
+    fields.set(field, expiryMs);
+    this.bumpVersion(key);
+    return true;
+  }
+
+  getFieldExpiry(key: string, field: string): number | undefined {
+    return this.fieldExpiry.get(key)?.get(field);
+  }
+
+  removeFieldExpiry(key: string, field: string): boolean {
+    const fields = this.fieldExpiry.get(key);
+    if (!fields) return false;
+    const had = fields.delete(field);
+    if (had && fields.size === 0) {
+      this.fieldExpiry.delete(key);
+    }
+    return had;
+  }
+
+  /**
+   * Sample up to `count` random keys from the field expiry index.
+   * Uses Fisher-Yates partial shuffle.
+   */
+  sampleFieldExpiryKeys(count: number, rng: () => number): string[] {
+    const keys = Array.from(this.fieldExpiry.keys());
+    if (keys.length === 0) return [];
+    if (count >= keys.length) return keys;
+
+    for (let i = 0; i < count; i++) {
+      const j = i + Math.floor(rng() * (keys.length - i));
+      const tmp = keys[i] as string;
+      keys[i] = keys[j] as string;
+      keys[j] = tmp;
+    }
+    return keys.slice(0, count);
+  }
+
+  /**
+   * Sample up to `count` random fields with TTL for a given key.
+   * Uses Fisher-Yates partial shuffle.
+   */
+  sampleFieldsWithExpiry(
+    key: string,
+    count: number,
+    rng: () => number
+  ): string[] {
+    const fields = this.fieldExpiry.get(key);
+    if (!fields || fields.size === 0) return [];
+
+    const fieldNames = Array.from(fields.keys());
+    if (count >= fieldNames.length) return fieldNames;
+
+    for (let i = 0; i < count; i++) {
+      const j = i + Math.floor(rng() * (fieldNames.length - i));
+      const tmp = fieldNames[i] as string;
+      fieldNames[i] = fieldNames[j] as string;
+      fieldNames[j] = tmp;
+    }
+    return fieldNames.slice(0, count);
+  }
+
+  /**
+   * Try to expire a single field of a hash. Returns true if the field was expired.
+   * If the hash becomes empty after field deletion, deletes the key.
+   */
+  tryExpireField(key: string, field: string): boolean {
+    const fields = this.fieldExpiry.get(key);
+    if (!fields) return false;
+
+    const expiryTime = fields.get(field);
+    if (expiryTime === undefined) return false;
+    if (this.clock() < expiryTime) return false;
+
+    // Field is expired — delete it from the hash
+    const entry = this.store.get(key);
+    if (!entry || entry.type !== 'hash') return false;
+
+    const hash = entry.value as Map<string, string>;
+    hash.delete(field);
+    fields.delete(field);
+
+    if (fields.size === 0) {
+      this.fieldExpiry.delete(key);
+    }
+
+    // If hash is now empty, delete the entire key
+    if (hash.size === 0) {
+      this.store.delete(key);
+      this.expiry.delete(key);
+      this.fieldExpiry.delete(key);
+    }
+
+    this.bumpVersion(key);
+    return true;
+  }
+
   private expireIfNeeded(key: string): boolean {
     const expiryTime = this.expiry.get(key);
     if (expiryTime === undefined) return false;
@@ -204,6 +325,7 @@ export class Database {
 
     this.store.delete(key);
     this.expiry.delete(key);
+    this.fieldExpiry.delete(key);
     this.bumpVersion(key);
     return true;
   }

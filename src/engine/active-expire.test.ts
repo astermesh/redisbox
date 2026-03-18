@@ -469,6 +469,202 @@ describe('activeExpireCycle', () => {
     });
   });
 
+  describe('hash field expiration', () => {
+    function setHash(
+      db: Database,
+      key: string,
+      fields: Record<string, string>,
+      fieldExpiries?: Record<string, number>
+    ): void {
+      const map = new Map(Object.entries(fields));
+      db.set(key, 'hash', 'hashtable', map);
+      if (fieldExpiries) {
+        for (const [field, expiry] of Object.entries(fieldExpiries)) {
+          db.setFieldExpiry(key, field, expiry);
+        }
+      }
+    }
+
+    it('deletes expired hash fields', () => {
+      const { db, setTime } = createDb(1000);
+
+      setHash(db, 'h1', { f1: 'v1', f2: 'v2' }, { f1: 2000, f2: 2000 });
+      setHash(db, 'h2', { f1: 'v1' }, { f1: 2000 });
+
+      setTime(2001);
+
+      const result = activeExpireCycle({
+        databases: [db],
+        clock: () => 2001,
+        rng: () => Math.random(),
+        hz: 10,
+        effort: 1,
+      });
+
+      expect(result.fieldExpired).toBe(3);
+      // All fields expired → keys should be deleted
+      expect(db.has('h1')).toBe(false);
+      expect(db.has('h2')).toBe(false);
+    });
+
+    it('preserves non-expired hash fields', () => {
+      const { db, setTime } = createDb(1000);
+
+      setHash(db, 'h', { f1: 'v1', f2: 'v2' }, { f1: 2000, f2: 5000 });
+
+      setTime(2001);
+
+      const result = activeExpireCycle({
+        databases: [db],
+        clock: () => 2001,
+        rng: () => Math.random(),
+        hz: 10,
+        effort: 1,
+      });
+
+      expect(result.fieldExpired).toBe(1);
+      expect(db.has('h')).toBe(true);
+      const hash = db.get('h')?.value as Map<string, string>;
+      expect(hash.has('f1')).toBe(false);
+      expect(hash.has('f2')).toBe(true);
+    });
+
+    it('deletes empty hash after all fields expired', () => {
+      const { db, setTime } = createDb(1000);
+
+      setHash(db, 'h', { f1: 'v1' }, { f1: 2000 });
+
+      setTime(2001);
+
+      activeExpireCycle({
+        databases: [db],
+        clock: () => 2001,
+        rng: () => Math.random(),
+        hz: 10,
+        effort: 1,
+      });
+
+      expect(db.has('h')).toBe(false);
+      expect(db.size).toBe(0);
+    });
+
+    it('returns zero fieldExpired when no field expiry exists', () => {
+      const { db } = createDb(1000);
+
+      setKey(db, 'k1');
+      setKey(db, 'k2');
+
+      const result = activeExpireCycle({
+        databases: [db],
+        clock: () => 2000,
+        rng: () => Math.random(),
+        hz: 10,
+        effort: 1,
+      });
+
+      expect(result.fieldExpired).toBe(0);
+    });
+
+    it('skips databases with no field expiry keys', () => {
+      const { db: db0 } = createDb(1000);
+      const { db: db1, setTime: setTime1 } = createDb(1000);
+
+      setKey(db0, 'k1');
+      setHash(db1, 'h', { f1: 'v1' }, { f1: 2000 });
+      setTime1(2001);
+
+      const result = activeExpireCycle({
+        databases: [db0, db1],
+        clock: () => 2001,
+        rng: () => Math.random(),
+        hz: 10,
+        effort: 1,
+      });
+
+      expect(result.fieldExpired).toBe(1);
+    });
+
+    it('handles both key and field expiration in the same cycle', () => {
+      const { db, setTime } = createDb(1000);
+
+      // Key-level expiry
+      setKey(db, 'str1', 2000);
+      setKey(db, 'str2', 2000);
+
+      // Field-level expiry
+      setHash(db, 'h', { f1: 'v1', f2: 'v2' }, { f1: 2000 });
+
+      setTime(2001);
+
+      const result = activeExpireCycle({
+        databases: [db],
+        clock: () => 2001,
+        rng: () => Math.random(),
+        hz: 10,
+        effort: 1,
+      });
+
+      expect(result.expired).toBe(2);
+      expect(result.fieldExpired).toBe(1);
+      expect(db.has('str1')).toBe(false);
+      expect(db.has('str2')).toBe(false);
+      expect(db.has('h')).toBe(true);
+      const hash = db.get('h')?.value as Map<string, string>;
+      expect(hash.has('f1')).toBe(false);
+      expect(hash.has('f2')).toBe(true);
+    });
+
+    it('continues sampling fields when expired ratio is high', () => {
+      const { db, setTime } = createDb(1000);
+
+      // Create a hash with many expired fields
+      const fields: Record<string, string> = {};
+      const expiries: Record<string, number> = {};
+      for (let i = 0; i < 200; i++) {
+        fields[`f${i}`] = `v${i}`;
+        expiries[`f${i}`] = 2000;
+      }
+      setHash(db, 'h', fields, expiries);
+
+      setTime(2001);
+
+      const result = activeExpireCycle({
+        databases: [db],
+        clock: () => 2001,
+        rng: () => Math.random(),
+        hz: 10,
+        effort: 1,
+      });
+
+      expect(result.fieldExpired).toBe(200);
+      expect(db.has('h')).toBe(false);
+    });
+
+    it('time budget applies to field expiration', () => {
+      const { db, setTime } = createDb(1000);
+
+      // Create many hashes with expired fields
+      for (let i = 0; i < 500; i++) {
+        setHash(db, `h${i}`, { f1: 'v1', f2: 'v2' }, { f1: 2000, f2: 2000 });
+      }
+
+      setTime(2001);
+
+      // Very fast advancing clock — should time out
+      const result = activeExpireCycle({
+        databases: [db],
+        clock: advancingClock(2001, 5),
+        rng: () => Math.random(),
+        hz: 10,
+        effort: 1,
+      });
+
+      expect(result.timedOut).toBe(true);
+      // Some fields expired, but not all due to time budget
+      expect(result.fieldExpired).toBeGreaterThan(0);
+    });
+  });
+
   describe('edge cases', () => {
     it('handles empty databases', () => {
       const { db } = createDb(1000);
@@ -1009,6 +1205,101 @@ describe('fastActiveExpireCycle', () => {
       expect(result.expired).toBe(2);
       expect(db0.size).toBe(0);
       expect(db1.size).toBe(0);
+    });
+  });
+
+  describe('hash field expiration', () => {
+    function setHash(
+      db: Database,
+      key: string,
+      fields: Record<string, string>,
+      fieldExpiries?: Record<string, number>
+    ): void {
+      const map = new Map(Object.entries(fields));
+      db.set(key, 'hash', 'hashtable', map);
+      if (fieldExpiries) {
+        for (const [field, expiry] of Object.entries(fieldExpiries)) {
+          db.setFieldExpiry(key, field, expiry);
+        }
+      }
+    }
+
+    it('deletes expired hash fields in fast cycle', () => {
+      const { db, setTime } = createDb(1000);
+
+      setHash(db, 'h1', { f1: 'v1', f2: 'v2' }, { f1: 2000, f2: 2000 });
+      setHash(db, 'h2', { f1: 'v1' }, { f1: 2000 });
+
+      setTime(2001);
+
+      const state: FastExpireCycleState = {
+        lastSlowTimedOut: true,
+        lastFastCycleTime: 0,
+      };
+
+      const result = fastActiveExpireCycle({
+        databases: [db],
+        clock: () => 2001,
+        rng: () => Math.random(),
+        effort: 1,
+        state,
+      });
+
+      expect(result.skipped).toBe(false);
+      expect(result.fieldExpired).toBe(3);
+      expect(db.has('h1')).toBe(false);
+      expect(db.has('h2')).toBe(false);
+    });
+
+    it('handles both key and field expiration in fast cycle', () => {
+      const { db, setTime } = createDb(1000);
+
+      setKey(db, 'str1', 2000);
+      setHash(db, 'h', { f1: 'v1', f2: 'v2' }, { f1: 2000 });
+
+      setTime(2001);
+
+      const state: FastExpireCycleState = {
+        lastSlowTimedOut: true,
+        lastFastCycleTime: 0,
+      };
+
+      const result = fastActiveExpireCycle({
+        databases: [db],
+        clock: () => 2001,
+        rng: () => Math.random(),
+        effort: 1,
+        state,
+      });
+
+      expect(result.skipped).toBe(false);
+      expect(result.expired).toBe(1);
+      expect(result.fieldExpired).toBe(1);
+      expect(db.has('str1')).toBe(false);
+      expect(db.has('h')).toBe(true);
+      const hash = db.get('h')?.value as Map<string, string>;
+      expect(hash.has('f1')).toBe(false);
+      expect(hash.has('f2')).toBe(true);
+    });
+
+    it('skipped result includes fieldExpired: 0', () => {
+      const { db } = createDb(1000);
+
+      const state: FastExpireCycleState = {
+        lastSlowTimedOut: false,
+        lastFastCycleTime: 0,
+      };
+
+      const result = fastActiveExpireCycle({
+        databases: [db],
+        clock: () => 2001,
+        rng: () => Math.random(),
+        effort: 1,
+        state,
+      });
+
+      expect(result.skipped).toBe(true);
+      expect(result.fieldExpired).toBe(0);
     });
   });
 });

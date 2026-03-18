@@ -38,6 +38,8 @@ export interface ActiveExpireCycleOpts {
 export interface ActiveExpireCycleResult {
   /** Total number of keys expired in this cycle. */
   expired: number;
+  /** Total number of hash fields expired in this cycle. */
+  fieldExpired: number;
   /** Whether the cycle stopped early due to time budget. */
   timedOut: boolean;
 }
@@ -56,28 +58,39 @@ function expireCycleCore(
   const startTime = clock();
 
   let totalExpired = 0;
+  let totalFieldExpired = 0;
   let timedOut = false;
   let iteration = 0;
 
   for (const db of databases) {
-    if (db.expirySize === 0) continue;
+    // --- Key-level expiration ---
+    if (db.expirySize > 0) {
+      for (;;) {
+        const sampled = db.sampleExpiryKeys(configKeysPerLoop, rng);
+        if (sampled.length === 0) break;
 
-    // Inner loop: keep sampling while expired ratio exceeds threshold
-    for (;;) {
-      const sampled = db.sampleExpiryKeys(configKeysPerLoop, rng);
-      if (sampled.length === 0) break;
-
-      let expired = 0;
-      for (const key of sampled) {
-        if (db.tryExpire(key)) {
-          expired++;
+        let expired = 0;
+        for (const key of sampled) {
+          if (db.tryExpire(key)) {
+            expired++;
+          }
         }
-      }
-      totalExpired += expired;
+        totalExpired += expired;
 
-      iteration++;
-      // Check time limit periodically
-      if (iteration % TIMELIMIT_CHECK_INTERVAL === 0) {
+        iteration++;
+        if (iteration % TIMELIMIT_CHECK_INTERVAL === 0) {
+          const elapsed = clock() - startTime;
+          if (elapsed >= timeLimitMs) {
+            timedOut = true;
+            break;
+          }
+        }
+
+        const threshold = sampled.length * (configCycleAcceptableStale / 100);
+        if (expired <= threshold) break;
+
+        if (db.expirySize === 0) break;
+
         const elapsed = clock() - startTime;
         if (elapsed >= timeLimitMs) {
           timedOut = true;
@@ -85,26 +98,57 @@ function expireCycleCore(
         }
       }
 
-      // If expired ratio is below acceptable stale threshold, move to next db
-      // Redis: if ((expired*100/sampled) < config_cycle_acceptable_stale) break
-      const threshold = sampled.length * (configCycleAcceptableStale / 100);
-      if (expired < threshold) break;
-
-      // Also check if no more expiring keys remain
-      if (db.expirySize === 0) break;
-
-      // Quick time check when we know we'll loop again
-      const elapsed = clock() - startTime;
-      if (elapsed >= timeLimitMs) {
-        timedOut = true;
-        break;
-      }
+      if (timedOut) break;
     }
 
-    if (timedOut) break;
+    // --- Hash field-level expiration ---
+    if (db.fieldExpirySize > 0) {
+      for (;;) {
+        const sampledKeys = db.sampleFieldExpiryKeys(configKeysPerLoop, rng);
+        if (sampledKeys.length === 0) break;
+
+        let fieldExpired = 0;
+        for (const key of sampledKeys) {
+          const sampledFields = db.sampleFieldsWithExpiry(
+            key,
+            configKeysPerLoop,
+            rng
+          );
+          for (const field of sampledFields) {
+            if (db.tryExpireField(key, field)) {
+              fieldExpired++;
+            }
+          }
+        }
+        totalFieldExpired += fieldExpired;
+
+        iteration++;
+        if (iteration % TIMELIMIT_CHECK_INTERVAL === 0) {
+          const elapsed = clock() - startTime;
+          if (elapsed >= timeLimitMs) {
+            timedOut = true;
+            break;
+          }
+        }
+
+        const threshold =
+          sampledKeys.length * (configCycleAcceptableStale / 100);
+        if (fieldExpired <= threshold) break;
+
+        if (db.fieldExpirySize === 0) break;
+
+        const elapsed = clock() - startTime;
+        if (elapsed >= timeLimitMs) {
+          timedOut = true;
+          break;
+        }
+      }
+
+      if (timedOut) break;
+    }
   }
 
-  return { expired: totalExpired, timedOut };
+  return { expired: totalExpired, fieldExpired: totalFieldExpired, timedOut };
 }
 
 /**
@@ -194,14 +238,14 @@ export function fastActiveExpireCycle(
 
   // Condition 1: last slow cycle must have timed out (high expired ratio)
   if (!state.lastSlowTimedOut) {
-    return { expired: 0, timedOut: false, skipped: true };
+    return { expired: 0, fieldExpired: 0, timedOut: false, skipped: true };
   }
 
   // Condition 2: cooldown — at least 2 * FAST_DURATION since last fast cycle
   // Redis: if (start < last_fast_cycle + ACTIVE_EXPIRE_CYCLE_FAST_DURATION*2)
   const cooldownMs = ACTIVE_EXPIRE_CYCLE_FAST_DURATION_MS * 2;
   if (now < state.lastFastCycleTime + cooldownMs) {
-    return { expired: 0, timedOut: false, skipped: true };
+    return { expired: 0, fieldExpired: 0, timedOut: false, skipped: true };
   }
 
   state.lastFastCycleTime = now;

@@ -160,6 +160,21 @@ describe('Database', () => {
       setTime(2000);
       expect(db.touch('k')).toBe(false);
     });
+
+    it('cleans up fieldExpiry when key lazily expires', () => {
+      const { db, setTime } = createDb(1000);
+      const fields = new Map([['f1', 'v1'], ['f2', 'v2']]);
+      db.set('h', 'hash', 'hashtable', fields);
+      db.setExpiry('h', 2000);
+      db.setFieldExpiry('h', 'f1', 5000);
+      db.setFieldExpiry('h', 'f2', 6000);
+      expect(db.fieldExpirySize).toBe(1);
+
+      setTime(2000);
+      db.get('h'); // triggers lazy key-level expiration
+      expect(db.has('h')).toBe(false);
+      expect(db.fieldExpirySize).toBe(0);
+    });
   });
 
   describe('key version tracking (T03)', () => {
@@ -323,6 +338,298 @@ describe('Database', () => {
       db.set('alive', 'string', 'raw', 'v');
       setTime(2000);
       expect(db.randomKey()).toBe('alive');
+    });
+  });
+
+  describe('field expiry management', () => {
+    it('setFieldExpiry returns false for non-existent key', () => {
+      const { db } = createDb();
+      expect(db.setFieldExpiry('missing', 'f1', 5000)).toBe(false);
+    });
+
+    it('setFieldExpiry returns false for non-hash key', () => {
+      const { db } = createDb();
+      db.set('k', 'string', 'raw', 'v');
+      expect(db.setFieldExpiry('k', 'f1', 5000)).toBe(false);
+    });
+
+    it('setFieldExpiry returns false for non-existent field', () => {
+      const { db } = createDb();
+      const fields = new Map([['f1', 'v1']]);
+      db.set('h', 'hash', 'hashtable', fields);
+      expect(db.setFieldExpiry('h', 'missing', 5000)).toBe(false);
+    });
+
+    it('sets and gets field expiry', () => {
+      const { db } = createDb();
+      const fields = new Map([['f1', 'v1'], ['f2', 'v2']]);
+      db.set('h', 'hash', 'hashtable', fields);
+      expect(db.setFieldExpiry('h', 'f1', 5000)).toBe(true);
+      expect(db.getFieldExpiry('h', 'f1')).toBe(5000);
+      expect(db.getFieldExpiry('h', 'f2')).toBeUndefined();
+    });
+
+    it('getFieldExpiry returns undefined for non-existent key', () => {
+      const { db } = createDb();
+      expect(db.getFieldExpiry('missing', 'f1')).toBeUndefined();
+    });
+
+    it('removeFieldExpiry removes field TTL', () => {
+      const { db } = createDb();
+      const fields = new Map([['f1', 'v1']]);
+      db.set('h', 'hash', 'hashtable', fields);
+      db.setFieldExpiry('h', 'f1', 5000);
+      expect(db.removeFieldExpiry('h', 'f1')).toBe(true);
+      expect(db.getFieldExpiry('h', 'f1')).toBeUndefined();
+    });
+
+    it('removeFieldExpiry returns false when no field expiry set', () => {
+      const { db } = createDb();
+      const fields = new Map([['f1', 'v1']]);
+      db.set('h', 'hash', 'hashtable', fields);
+      expect(db.removeFieldExpiry('h', 'f1')).toBe(false);
+    });
+
+    it('removeFieldExpiry returns false for non-existent key', () => {
+      const { db } = createDb();
+      expect(db.removeFieldExpiry('missing', 'f1')).toBe(false);
+    });
+
+    it('tracks fieldExpirySize correctly', () => {
+      const { db } = createDb();
+      expect(db.fieldExpirySize).toBe(0);
+
+      const fields1 = new Map([['f1', 'v1'], ['f2', 'v2']]);
+      db.set('h1', 'hash', 'hashtable', fields1);
+      db.setFieldExpiry('h1', 'f1', 5000);
+      expect(db.fieldExpirySize).toBe(1);
+
+      const fields2 = new Map([['f1', 'v1']]);
+      db.set('h2', 'hash', 'hashtable', fields2);
+      db.setFieldExpiry('h2', 'f1', 5000);
+      expect(db.fieldExpirySize).toBe(2);
+
+      // Adding more field expiry to same key doesn't increase size
+      db.setFieldExpiry('h1', 'f2', 6000);
+      expect(db.fieldExpirySize).toBe(2);
+    });
+
+    it('cleans up fieldExpiry index when last field expiry removed', () => {
+      const { db } = createDb();
+      const fields = new Map([['f1', 'v1'], ['f2', 'v2']]);
+      db.set('h', 'hash', 'hashtable', fields);
+      db.setFieldExpiry('h', 'f1', 5000);
+      db.setFieldExpiry('h', 'f2', 6000);
+      expect(db.fieldExpirySize).toBe(1);
+
+      db.removeFieldExpiry('h', 'f1');
+      expect(db.fieldExpirySize).toBe(1); // still has f2
+
+      db.removeFieldExpiry('h', 'f2');
+      expect(db.fieldExpirySize).toBe(0); // cleaned up
+    });
+
+    it('cleans up fieldExpiry when key is deleted', () => {
+      const { db } = createDb();
+      const fields = new Map([['f1', 'v1']]);
+      db.set('h', 'hash', 'hashtable', fields);
+      db.setFieldExpiry('h', 'f1', 5000);
+      expect(db.fieldExpirySize).toBe(1);
+
+      db.delete('h');
+      expect(db.fieldExpirySize).toBe(0);
+    });
+
+    it('bumps version on setFieldExpiry', () => {
+      const { db } = createDb();
+      const fields = new Map([['f1', 'v1']]);
+      db.set('h', 'hash', 'hashtable', fields);
+      const v1 = db.getVersion('h');
+      db.setFieldExpiry('h', 'f1', 5000);
+      expect(db.getVersion('h')).toBeGreaterThan(v1);
+    });
+  });
+
+  describe('lazy field expiration', () => {
+    it('tryExpireField expires a field past its TTL', () => {
+      const { db, setTime } = createDb(1000);
+      const fields = new Map([['f1', 'v1'], ['f2', 'v2']]);
+      db.set('h', 'hash', 'hashtable', fields);
+      db.setFieldExpiry('h', 'f1', 2000);
+
+      setTime(2000);
+      expect(db.tryExpireField('h', 'f1')).toBe(true);
+
+      const entry = db.get('h');
+      const val = entry?.value as Map<string, string>;
+      expect(val.has('f1')).toBe(false);
+      expect(val.has('f2')).toBe(true);
+    });
+
+    it('tryExpireField does not expire a field before its TTL', () => {
+      const { db, setTime } = createDb(1000);
+      const fields = new Map([['f1', 'v1']]);
+      db.set('h', 'hash', 'hashtable', fields);
+      db.setFieldExpiry('h', 'f1', 3000);
+
+      setTime(2000);
+      expect(db.tryExpireField('h', 'f1')).toBe(false);
+
+      const entry = db.get('h');
+      const val = entry?.value as Map<string, string>;
+      expect(val.has('f1')).toBe(true);
+    });
+
+    it('tryExpireField returns false for field without TTL', () => {
+      const { db } = createDb(1000);
+      const fields = new Map([['f1', 'v1']]);
+      db.set('h', 'hash', 'hashtable', fields);
+      expect(db.tryExpireField('h', 'f1')).toBe(false);
+    });
+
+    it('tryExpireField returns false for non-existent key', () => {
+      const { db } = createDb(1000);
+      expect(db.tryExpireField('missing', 'f1')).toBe(false);
+    });
+
+    it('tryExpireField deletes key when last field expires', () => {
+      const { db, setTime } = createDb(1000);
+      const fields = new Map([['f1', 'v1']]);
+      db.set('h', 'hash', 'hashtable', fields);
+      db.setFieldExpiry('h', 'f1', 2000);
+
+      setTime(2000);
+      db.tryExpireField('h', 'f1');
+
+      expect(db.has('h')).toBe(false);
+      expect(db.fieldExpirySize).toBe(0);
+    });
+
+    it('tryExpireField cleans up field expiry metadata', () => {
+      const { db, setTime } = createDb(1000);
+      const fields = new Map([['f1', 'v1'], ['f2', 'v2']]);
+      db.set('h', 'hash', 'hashtable', fields);
+      db.setFieldExpiry('h', 'f1', 2000);
+      db.setFieldExpiry('h', 'f2', 5000);
+
+      setTime(2000);
+      db.tryExpireField('h', 'f1');
+
+      expect(db.getFieldExpiry('h', 'f1')).toBeUndefined();
+      expect(db.getFieldExpiry('h', 'f2')).toBe(5000);
+      expect(db.fieldExpirySize).toBe(1); // still has h with f2
+    });
+
+    it('tryExpireField bumps version when field expired', () => {
+      const { db, setTime } = createDb(1000);
+      const fields = new Map([['f1', 'v1'], ['f2', 'v2']]);
+      db.set('h', 'hash', 'hashtable', fields);
+      db.setFieldExpiry('h', 'f1', 2000);
+      const v1 = db.getVersion('h');
+
+      setTime(2000);
+      db.tryExpireField('h', 'f1');
+      expect(db.getVersion('h')).toBeGreaterThan(v1);
+    });
+  });
+
+  describe('sampleFieldExpiryKeys', () => {
+    it('returns up to count random keys from field expiry index', () => {
+      const { db } = createDb();
+      for (let i = 0; i < 50; i++) {
+        const fields = new Map([['f1', `v${i}`]]);
+        db.set(`h${i}`, 'hash', 'hashtable', fields);
+        db.setFieldExpiry(`h${i}`, 'f1', 5000);
+      }
+
+      const sample = db.sampleFieldExpiryKeys(20, () => Math.random());
+      expect(sample.length).toBe(20);
+      for (const key of sample) {
+        expect(db.getFieldExpiry(key, 'f1')).toBeDefined();
+      }
+    });
+
+    it('returns all keys when count exceeds fieldExpirySize', () => {
+      const { db } = createDb();
+      for (let i = 0; i < 3; i++) {
+        const fields = new Map([['f1', `v${i}`]]);
+        db.set(`h${i}`, 'hash', 'hashtable', fields);
+        db.setFieldExpiry(`h${i}`, 'f1', 5000);
+      }
+
+      const sample = db.sampleFieldExpiryKeys(20, () => Math.random());
+      expect(sample.length).toBe(3);
+    });
+
+    it('returns empty array when no field expiry exists', () => {
+      const { db } = createDb();
+      db.set('h', 'hash', 'hashtable', new Map([['f1', 'v1']]));
+      expect(db.sampleFieldExpiryKeys(20, () => Math.random()).length).toBe(0);
+    });
+
+    it('returns unique keys', () => {
+      const { db } = createDb();
+      for (let i = 0; i < 50; i++) {
+        const fields = new Map([['f1', `v${i}`]]);
+        db.set(`h${i}`, 'hash', 'hashtable', fields);
+        db.setFieldExpiry(`h${i}`, 'f1', 5000);
+      }
+
+      const sample = db.sampleFieldExpiryKeys(20, () => Math.random());
+      const unique = new Set(sample);
+      expect(unique.size).toBe(sample.length);
+    });
+  });
+
+  describe('sampleFieldsWithExpiry', () => {
+    it('returns up to count fields with TTL for a given key', () => {
+      const { db } = createDb();
+      const fields = new Map<string, string>();
+      for (let i = 0; i < 50; i++) {
+        fields.set(`f${i}`, `v${i}`);
+      }
+      db.set('h', 'hash', 'hashtable', fields);
+      for (let i = 0; i < 50; i++) {
+        db.setFieldExpiry('h', `f${i}`, 5000 + i);
+      }
+
+      const sample = db.sampleFieldsWithExpiry('h', 20, () => Math.random());
+      expect(sample.length).toBe(20);
+      for (const field of sample) {
+        expect(db.getFieldExpiry('h', field)).toBeDefined();
+      }
+    });
+
+    it('returns all fields when count exceeds available', () => {
+      const { db } = createDb();
+      const fields = new Map([['f1', 'v1'], ['f2', 'v2']]);
+      db.set('h', 'hash', 'hashtable', fields);
+      db.setFieldExpiry('h', 'f1', 5000);
+      db.setFieldExpiry('h', 'f2', 6000);
+
+      const sample = db.sampleFieldsWithExpiry('h', 20, () => Math.random());
+      expect(sample.length).toBe(2);
+    });
+
+    it('returns empty array for non-existent key', () => {
+      const { db } = createDb();
+      expect(db.sampleFieldsWithExpiry('missing', 20, () => Math.random()).length).toBe(0);
+    });
+
+    it('returns unique fields', () => {
+      const { db } = createDb();
+      const fields = new Map<string, string>();
+      for (let i = 0; i < 50; i++) {
+        fields.set(`f${i}`, `v${i}`);
+      }
+      db.set('h', 'hash', 'hashtable', fields);
+      for (let i = 0; i < 50; i++) {
+        db.setFieldExpiry('h', `f${i}`, 5000 + i);
+      }
+
+      const sample = db.sampleFieldsWithExpiry('h', 20, () => Math.random());
+      const unique = new Set(sample);
+      expect(unique.size).toBe(sample.length);
     });
   });
 });
