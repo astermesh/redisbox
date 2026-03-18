@@ -117,15 +117,23 @@ describe('CommandReader', () => {
       }).toThrow('Protocol error');
     });
 
-    it('throws on negative multibulk count', () => {
-      const noop = () => {
-        /* error callback */
-      };
-      const reader = new CommandReader(noop);
+    it('silently accepts *-1 null multibulk (matches Redis behavior)', () => {
+      const commands: string[][] = [];
+      const reader = new CommandReader((args) => commands.push(args));
 
-      expect(() => {
-        reader.write(Buffer.from('*-2\r\n'));
-      }).toThrow('Protocol error');
+      reader.write(Buffer.from('*-1\r\n*1\r\n$4\r\nPING\r\n'));
+
+      // *-1 is silently ignored (Redis returns C_OK with no command)
+      expect(commands).toEqual([['PING']]);
+    });
+
+    it('silently accepts any negative multibulk count', () => {
+      const commands: string[][] = [];
+      const reader = new CommandReader((args) => commands.push(args));
+
+      reader.write(Buffer.from('*-2\r\n*1\r\n$4\r\nPING\r\n'));
+
+      expect(commands).toEqual([['PING']]);
     });
 
     it('throws on non-$ marker in multibulk body', () => {

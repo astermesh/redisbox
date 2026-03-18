@@ -341,10 +341,15 @@ describe('ClientConnection', () => {
       const response = await readResponse(client);
       expect(response.toString()).toMatch(/^-ERR/);
 
-      await new Promise<void>((resolve) => {
-        client.on('close', () => resolve());
-        setTimeout(resolve, 1000);
-      });
+      const closed = await Promise.race([
+        new Promise<boolean>((resolve) =>
+          client.on('close', () => resolve(true))
+        ),
+        new Promise<boolean>((resolve) =>
+          setTimeout(() => resolve(false), 2000)
+        ),
+      ]);
+      expect(closed).toBe(true);
 
       client.destroy();
     });

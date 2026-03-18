@@ -55,6 +55,7 @@ export class ClientConnection {
   private readonly dispatcherState: DispatcherClientState;
   private readonly engine: RedisEngine;
   private paused = false;
+  private closed = false;
 
   constructor(options: ClientConnectionOptions) {
     this.socket = options.socket;
@@ -70,11 +71,14 @@ export class ClientConnection {
   }
 
   private onData(data: Buffer): void {
+    if (this.closed) return;
     try {
       this.reader.write(data);
     } catch (err) {
+      this.closed = true;
       const msg = err instanceof Error ? err.message : 'Protocol error';
       this.socket.end(serializer.error(`ERR ${msg}`));
+      this.socket.destroy();
     }
   }
 

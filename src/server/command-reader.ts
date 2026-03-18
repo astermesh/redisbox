@@ -93,11 +93,12 @@ export class CommandReader {
     }
 
     const count = parseInt(countStr, 10);
-    if (isNaN(count) || count < 0) {
+    if (isNaN(count)) {
       throw new Error('Protocol error: invalid multibulk length');
     }
 
-    if (count === 0) return [];
+    // Redis: ll <= 0 → return C_OK (no command). Handles *0, *-1, etc.
+    if (count <= 0) return [];
 
     const args: string[] = [];
     for (let i = 0; i < count; i++) {
