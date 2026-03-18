@@ -10,7 +10,7 @@ import type { Database } from './database.ts';
  *
  * Config parameters (matching Redis 7.x):
  * - hz: cycles per second (default 10)
- * - active-expire-effort: 1..100, scales sampling size and time budget
+ * - active-expire-effort: 1..10, scales sampling size and time budget
  */
 
 const ACTIVE_EXPIRE_CYCLE_KEYS_PER_LOOP = 20;
@@ -40,14 +40,17 @@ export function activeExpireCycle(
 ): ActiveExpireCycleResult {
   const { databases, clock, rng, hz, effort } = opts;
 
+  // Rescale effort from 1-10 config range to 0-9 (matches Redis expire.c)
+  const adjustedEffort = effort - 1;
+
   // Scale parameters by effort (matches Redis expire.c)
   const configKeysPerLoop =
     ACTIVE_EXPIRE_CYCLE_KEYS_PER_LOOP +
-    Math.floor((ACTIVE_EXPIRE_CYCLE_KEYS_PER_LOOP / 4) * effort);
+    (ACTIVE_EXPIRE_CYCLE_KEYS_PER_LOOP / 4) * adjustedEffort;
   const configCycleSlowTimePerc =
-    ACTIVE_EXPIRE_CYCLE_SLOW_TIME_PERC + 2 * effort;
+    ACTIVE_EXPIRE_CYCLE_SLOW_TIME_PERC + 2 * adjustedEffort;
   const configCycleAcceptableStale =
-    ACTIVE_EXPIRE_CYCLE_ACCEPTABLE_STALE - effort;
+    ACTIVE_EXPIRE_CYCLE_ACCEPTABLE_STALE - adjustedEffort;
 
   // Time limit in milliseconds
   // Redis: timelimit = 1000000 * perc / hz / 100 (in microseconds)

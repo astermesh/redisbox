@@ -204,7 +204,7 @@ describe('activeExpireCycle', () => {
 
       setTime(2001);
 
-      // Clock advances 5ms per call; budget at hz=10 effort=1 is ~2.7ms
+      // Clock advances 5ms per call; budget at hz=10 effort=1 is 2.5ms
       // Should stop very quickly
       const result = activeExpireCycle({
         databases: [db],
@@ -248,7 +248,7 @@ describe('activeExpireCycle', () => {
         effort: 1,
       });
 
-      // hz=10 has ~2.7ms budget, hz=100 has ~0.27ms budget
+      // hz=10 has 2.5ms budget, hz=100 has 0.25ms budget
       const expired10 = 2000 - db10.size;
       const expired100 = 2000 - db100.size;
       expect(expired10).toBeGreaterThan(expired100);
@@ -257,8 +257,8 @@ describe('activeExpireCycle', () => {
 
   describe('effort scaling', () => {
     it('higher effort samples more keys per loop', () => {
-      // effort=1: keys_per_loop = 25
-      // effort=10: keys_per_loop = 70
+      // effort=1 (adjusted=0): keys_per_loop = 20
+      // effort=10 (adjusted=9): keys_per_loop = 20 + 5*9 = 65
       // With all keys expired, effort=10 samples more per iteration.
       // Use advancing clock so time budget limits how many iterations run.
       // Same clock speed means effort=10 deletes more keys per iteration.
@@ -273,7 +273,7 @@ describe('activeExpireCycle', () => {
       };
 
       // Use same time budget (same hz) but different effort for keys_per_loop
-      // Clock advances 1ms per call — at hz=10 effort=1 budget is ~2.7ms
+      // Clock advances 1ms per call — at hz=10 effort=1 budget is 2.5ms
       // Both will time out, but effort=10 processes more keys per iteration
       const db1 = makeDb();
       const r1 = activeExpireCycle({
@@ -297,7 +297,7 @@ describe('activeExpireCycle', () => {
       expect(r1.timedOut).toBe(true);
       expect(r10.timedOut).toBe(true);
 
-      // effort=10 samples 70 keys per loop vs 25 — more expired per iteration
+      // effort=10 samples 65 keys per loop vs 20 — more expired per iteration
       expect(r10.expired).toBeGreaterThan(r1.expired);
     });
 
@@ -313,8 +313,8 @@ describe('activeExpireCycle', () => {
       };
 
       // Use a clock that advances fast enough to hit effort=1 budget
-      // but not effort=100 budget
-      // effort=1: budget ~2.7ms, effort=100: budget ~225ms
+      // but not effort=10 budget
+      // effort=1 (adjusted=0): budget 2.5ms, effort=10 (adjusted=9): budget 4.3ms
       const db1 = makeDb();
       const r1 = activeExpireCycle({
         databases: [db1],
@@ -324,18 +324,18 @@ describe('activeExpireCycle', () => {
         effort: 1,
       });
 
-      const db100 = makeDb();
-      const r100 = activeExpireCycle({
-        databases: [db100],
+      const db10 = makeDb();
+      const r10 = activeExpireCycle({
+        databases: [db10],
         clock: advancingClock(2001, 0.5),
         rng: () => Math.random(),
         hz: 10,
-        effort: 100,
+        effort: 10,
       });
 
-      // effort=1 should time out, effort=100 gets much more budget
+      // effort=1 should time out, effort=10 gets more budget
       expect(r1.timedOut).toBe(true);
-      expect(r100.expired).toBeGreaterThan(r1.expired);
+      expect(r10.expired).toBeGreaterThan(r1.expired);
     });
   });
 
