@@ -1,6 +1,12 @@
 import type { Database } from '../database.ts';
 import type { Reply } from '../types.ts';
-import { integerReply, errorReply, ONE, ZERO } from '../types.ts';
+import {
+  integerReply,
+  errorReply,
+  ONE,
+  ZERO,
+  NOT_INTEGER_ERR,
+} from '../types.ts';
 
 const NO_TTL = integerReply(-1);
 const NO_KEY = integerReply(-2);
@@ -97,7 +103,7 @@ export function expire(
   const key = args[0] ?? '';
   const seconds = parseInt(args[1] ?? '', 10);
   if (isNaN(seconds)) {
-    return errorReply('ERR', 'value is not an integer or out of range');
+    return NOT_INTEGER_ERR;
   }
 
   if (!db.has(key)) return ZERO;
@@ -124,7 +130,7 @@ export function pexpire(
   const key = args[0] ?? '';
   const ms = parseInt(args[1] ?? '', 10);
   if (isNaN(ms)) {
-    return errorReply('ERR', 'value is not an integer or out of range');
+    return NOT_INTEGER_ERR;
   }
 
   if (!db.has(key)) return ZERO;
@@ -151,7 +157,7 @@ export function expireat(
   const key = args[0] ?? '';
   const timestamp = parseInt(args[1] ?? '', 10);
   if (isNaN(timestamp)) {
-    return errorReply('ERR', 'value is not an integer or out of range');
+    return NOT_INTEGER_ERR;
   }
 
   if (!db.has(key)) return ZERO;
@@ -178,7 +184,7 @@ export function pexpireat(
   const key = args[0] ?? '';
   const timestampMs = parseInt(args[1] ?? '', 10);
   if (isNaN(timestampMs)) {
-    return errorReply('ERR', 'value is not an integer or out of range');
+    return NOT_INTEGER_ERR;
   }
 
   if (!db.has(key)) return ZERO;

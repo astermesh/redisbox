@@ -3,19 +3,16 @@ import type { Reply } from '../types.ts';
 import {
   integerReply,
   bulkReply,
-  errorReply,
-  wrongTypeError,
+  WRONGTYPE_ERR,
+  NOT_INTEGER_ERR,
+  NOT_FLOAT_ERR,
+  INF_NAN_ERR,
+  OVERFLOW_ERR,
 } from '../types.ts';
 import { determineStringEncoding } from './string.ts';
 
 const INT64_MAX = BigInt('9223372036854775807');
 const INT64_MIN = BigInt('-9223372036854775808');
-
-const NOT_INTEGER_ERR = errorReply(
-  'ERR',
-  'value is not an integer or out of range'
-);
-const OVERFLOW_ERR = errorReply('ERR', 'increment or decrement would overflow');
 
 /**
  * Parse a string as a 64-bit signed integer.
@@ -44,7 +41,7 @@ function getIntValue(
 ): { val: bigint; error: Reply | null } {
   const entry = db.get(key);
   if (!entry) return { val: 0n, error: null };
-  if (entry.type !== 'string') return { val: 0n, error: wrongTypeError() };
+  if (entry.type !== 'string') return { val: 0n, error: WRONGTYPE_ERR };
   const n = parseInteger(entry.value as string);
   if (n === null) return { val: 0n, error: NOT_INTEGER_ERR };
   return { val: n, error: null };
@@ -97,12 +94,6 @@ export function decrby(db: Database, args: string[]): Reply {
   if (delta === null) return NOT_INTEGER_ERR;
   return incrByInt(db, key, -delta);
 }
-
-const NOT_FLOAT_ERR = errorReply('ERR', 'value is not a valid float');
-const INF_NAN_ERR = errorReply(
-  'ERR',
-  'increment would produce NaN or Infinity'
-);
 
 /**
  * Parse a float value for INCRBYFLOAT.
@@ -186,7 +177,7 @@ export function incrbyfloat(db: Database, args: string[]): Reply {
   const entry = db.get(key);
   let current = 0;
   if (entry) {
-    if (entry.type !== 'string') return wrongTypeError();
+    if (entry.type !== 'string') return WRONGTYPE_ERR;
     const parsed = parseFloat64(entry.value as string);
     if (parsed === null) return NOT_FLOAT_ERR;
     if (parsed.isInf) return INF_NAN_ERR;

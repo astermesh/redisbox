@@ -1,6 +1,13 @@
 import type { Database } from '../database.ts';
 import type { Reply } from '../types.ts';
-import { bulkReply, arrayReply, EMPTY_ARRAY } from '../types.ts';
+import {
+  bulkReply,
+  arrayReply,
+  errorReply,
+  EMPTY_ARRAY,
+  SYNTAX_ERR,
+  NOT_INTEGER_ERR,
+} from '../types.ts';
 import { matchGlob } from '../glob-pattern.ts';
 
 export function keys(db: Database, args: string[]): Reply {
@@ -19,7 +26,7 @@ export function keys(db: Database, args: string[]): Reply {
 export function scan(db: Database, args: string[]): Reply {
   const cursor = parseInt(args[0] ?? '0', 10);
   if (isNaN(cursor) || cursor < 0) {
-    return { kind: 'error', prefix: 'ERR', message: 'invalid cursor' };
+    return errorReply('ERR', 'invalid cursor');
   }
 
   let matchPattern: string | null = null;
@@ -36,17 +43,13 @@ export function scan(db: Database, args: string[]): Reply {
       i++;
       count = parseInt(args[i] ?? '10', 10);
       if (isNaN(count) || count <= 0) {
-        return {
-          kind: 'error',
-          prefix: 'ERR',
-          message: 'value is not an integer or out of range',
-        };
+        return NOT_INTEGER_ERR;
       }
     } else if (flag === 'TYPE') {
       i++;
       typeFilter = (args[i] ?? '').toLowerCase();
     } else {
-      return { kind: 'error', prefix: 'ERR', message: 'syntax error' };
+      return SYNTAX_ERR;
     }
     i++;
   }

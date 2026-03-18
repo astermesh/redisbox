@@ -1,5 +1,5 @@
 import type { Reply } from './types.ts';
-import { errorReply } from './types.ts';
+import { wrongArityError, unknownCommandError } from './types.ts';
 import type { CommandContext } from './types.ts';
 
 export type CommandFlag =
@@ -67,17 +67,11 @@ export class CommandTable {
   checkArity(def: CommandDefinition, argc: number): Reply | null {
     if (def.arity > 0) {
       if (argc !== def.arity) {
-        return errorReply(
-          'ERR',
-          `wrong number of arguments for '${def.name.toLowerCase()}' command`
-        );
+        return wrongArityError(def.name.toLowerCase());
       }
     } else {
       if (argc < Math.abs(def.arity)) {
-        return errorReply(
-          'ERR',
-          `wrong number of arguments for '${def.name.toLowerCase()}' command`
-        );
+        return wrongArityError(def.name.toLowerCase());
       }
     }
     return null;
@@ -89,10 +83,7 @@ export class CommandTable {
   lookup(name: string): CommandDefinition | Reply {
     const def = this.get(name);
     if (!def) {
-      return errorReply(
-        'ERR',
-        `unknown command '${name}', with args beginning with: `
-      );
+      return unknownCommandError(name, []);
     }
     return def;
   }
