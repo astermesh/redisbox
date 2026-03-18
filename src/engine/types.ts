@@ -149,11 +149,6 @@ export function unknownSubcommandError(
   );
 }
 
-/** @deprecated Use WRONGTYPE_ERR constant instead */
-export function wrongTypeError(): Reply {
-  return WRONGTYPE_ERR;
-}
-
 export interface CommandContext {
   db: import('./database.ts').Database;
   engine: import('./engine.ts').RedisEngine;
