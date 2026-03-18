@@ -9,6 +9,7 @@ import * as ttl from './commands/ttl.ts';
 import * as scan from './commands/scan.ts';
 import * as sort from './commands/sort.ts';
 import * as string from './commands/string.ts';
+import * as incr from './commands/incr.ts';
 
 interface CommandSpec {
   name: string;
@@ -389,6 +390,58 @@ const commandSpecs: CommandSpec[] = [
     lastKey: 1,
     keyStep: 1,
     categories: ['@write', '@string'],
+  },
+
+  // --- INCR/DECR family ---
+  {
+    name: 'incr',
+    handler: (ctx, args) => incr.incr(ctx.db, args),
+    arity: 2,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@string', '@fast'],
+  },
+  {
+    name: 'decr',
+    handler: (ctx, args) => incr.decr(ctx.db, args),
+    arity: 2,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@string', '@fast'],
+  },
+  {
+    name: 'incrby',
+    handler: (ctx, args) => incr.incrby(ctx.db, args),
+    arity: 3,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@string', '@fast'],
+  },
+  {
+    name: 'decrby',
+    handler: (ctx, args) => incr.decrby(ctx.db, args),
+    arity: 3,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@string', '@fast'],
+  },
+  {
+    name: 'incrbyfloat',
+    handler: (ctx, args) => incr.incrbyfloat(ctx.db, args),
+    arity: 3,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@string', '@fast'],
   },
 ];
 
