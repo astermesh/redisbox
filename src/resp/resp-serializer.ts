@@ -64,7 +64,7 @@ export function error(value: string): Buffer {
   return Buffer.from(`-${value}\r\n`);
 }
 
-export function integer(value: number): Buffer {
+export function integer(value: number | bigint): Buffer {
   return Buffer.from(`:${value}\r\n`);
 }
 

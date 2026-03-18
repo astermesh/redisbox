@@ -1,5 +1,7 @@
 # T03: Client State Management
 
+**Status:** done
+
 Create ClientState structure tracking per-connection state: client ID, selected database, name, flags (multi, blocked, subscribed), creation time, last command. Provide lookup by client ID.
 
 ## Acceptance Criteria
