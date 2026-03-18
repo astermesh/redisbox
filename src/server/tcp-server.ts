@@ -91,10 +91,11 @@ export class TcpServer extends EventEmitter {
       return Promise.resolve();
     }
 
-    // destroy all active connections
+    // destroy all active connections and emit disconnection events
     for (const [id, socket] of this.connections) {
-      socket.destroy();
       this.connections.delete(id);
+      this.emit('disconnection', id);
+      socket.destroy();
     }
 
     const srv = this.server;

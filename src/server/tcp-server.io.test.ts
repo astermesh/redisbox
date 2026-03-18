@@ -33,13 +33,18 @@ describe('TcpServer', () => {
     });
 
     it('listens on a specified port', async () => {
-      server = new TcpServer({ port: 0, host: '127.0.0.1' });
+      // first find a free port
+      const tmp = new TcpServer({ port: 0, host: '127.0.0.1' });
+      await tmp.start();
+      const freePort = tmp.port;
+      await tmp.stop();
+
+      server = new TcpServer({ port: freePort, host: '127.0.0.1' });
       await server.start();
 
-      const port = server.port;
-      expect(port).toBeGreaterThan(0);
+      expect(server.port).toBe(freePort);
 
-      const client = await connect(port);
+      const client = await connect(freePort);
       client.destroy();
     });
 
@@ -202,6 +207,31 @@ describe('TcpServer', () => {
       server = undefined;
     });
 
+    it('emits disconnection events for all clients on server stop', async () => {
+      server = new TcpServer({ port: 0, host: '127.0.0.1' });
+      await server.start();
+
+      const clients = await Promise.all([
+        connect(server.port),
+        connect(server.port),
+        connect(server.port),
+      ]);
+
+      await delay(50);
+
+      const disconnectedIds: number[] = [];
+      server.on('disconnection', (id) => disconnectedIds.push(id));
+
+      const connectedIds = [...server.clientIds];
+      await server.stop();
+
+      expect(disconnectedIds.length).toBe(3);
+      expect(disconnectedIds.sort()).toEqual(connectedIds.sort());
+
+      for (const c of clients) c.destroy();
+      server = undefined;
+    });
+
     it('handles rapid connect/disconnect', async () => {
       server = new TcpServer({ port: 0, host: '127.0.0.1' });
       await server.start();
@@ -246,6 +276,28 @@ describe('TcpServer', () => {
       await server.stop();
       await server.stop(); // should not throw
       server = undefined;
+    });
+
+    it('can be restarted after stop', async () => {
+      server = new TcpServer({ port: 0, host: '127.0.0.1' });
+      await server.start();
+      const port1 = server.port;
+
+      const client1 = await connect(port1);
+      await delay(50);
+      expect(server.connectionCount).toBe(1);
+      client1.destroy();
+
+      await server.stop();
+      expect(server.listening).toBe(false);
+
+      await server.start();
+      expect(server.listening).toBe(true);
+
+      const client2 = await connect(server.port);
+      await delay(50);
+      expect(server.connectionCount).toBe(1);
+      client2.destroy();
     });
 
     it('rejects new connections after stop', async () => {
