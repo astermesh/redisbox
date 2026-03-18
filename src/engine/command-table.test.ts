@@ -251,6 +251,11 @@ describe('createCommandTable (registry)', () => {
       'sort_ro',
       'get',
       'set',
+      'incr',
+      'decr',
+      'incrby',
+      'decrby',
+      'incrbyfloat',
     ];
 
     for (const name of expectedCommands) {
@@ -294,6 +299,11 @@ describe('createCommandTable (registry)', () => {
       ['sort_ro', -2],
       ['get', 2],
       ['set', -3],
+      ['incr', 2],
+      ['decr', 2],
+      ['incrby', 3],
+      ['decrby', 3],
+      ['incrbyfloat', 3],
     ];
 
     for (const [name, expectedArity] of arityTests) {
