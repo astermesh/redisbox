@@ -49,8 +49,7 @@ const MULTI_PASSTHROUGH = new Set(['EXEC', 'DISCARD', 'MULTI', 'WATCH']);
 
 function formatUnknownCommandError(name: string, args: string[]): string {
   const argsStr = args.map((a) => `'${a}'`).join(' ');
-  const trailing = argsStr.length > 0 ? argsStr : '';
-  return `unknown command '${name}', with args beginning with: ${trailing}`;
+  return `unknown command '${name}', with args beginning with: ${argsStr}`;
 }
 
 function checkArity(def: CommandDefinition, argc: number): boolean {

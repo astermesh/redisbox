@@ -143,9 +143,11 @@ describe('CommandDispatcher', () => {
       expect(err.message).toContain("'BadCmd'");
     });
 
-    it('returns error for empty command array', () => {
+    it('returns correct error format for empty command array', () => {
       const result = dispatcher.dispatch(state, ctx, []);
-      expect(result.kind).toBe('error');
+      expect(result).toEqual(
+        errorReply('ERR', "unknown command '', with args beginning with: ")
+      );
     });
   });
 
@@ -433,6 +435,27 @@ describe('CommandDispatcher', () => {
       const result = dispatcher.dispatch(state, ctx, ['Set', 'k', 'v']);
       const err = result as { kind: 'error'; message: string };
       expect(err.message).toContain("'set'");
+    });
+  });
+
+  describe('subscribe mode + MULTI interaction', () => {
+    it('subscribe mode check takes priority over MULTI mode', () => {
+      state.subscribed = true;
+      state.inMulti = true;
+      const result = dispatcher.dispatch(state, ctx, ['SET', 'k', 'v']);
+      const err = result as { kind: 'error'; message: string };
+      expect(err.message).toContain("Can't execute 'set'");
+      expect(state.multiQueue).toHaveLength(0);
+    });
+
+    it('allowed subscribe commands pass through even in MULTI', () => {
+      state.subscribed = true;
+      state.inMulti = true;
+      // PING is not registered, so it returns unknown command error,
+      // but it should NOT be blocked by subscribe mode check
+      const result = dispatcher.dispatch(state, ctx, ['PING']);
+      const err = result as { kind: 'error'; message: string };
+      expect(err.message).not.toContain("Can't execute");
     });
   });
 
