@@ -1,5 +1,7 @@
 # T02: RESP Pipeline Integration
 
+**Status:** done
+
 Wire the RESP parser to incoming socket data and the RESP serializer to outgoing responses. Process parsed commands through the command dispatcher. Maintain strict response ordering for pipelined commands. Handle backpressure (pause reading if write buffer is full).
 
 ## Acceptance Criteria

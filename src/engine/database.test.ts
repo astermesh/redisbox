@@ -163,7 +163,10 @@ describe('Database', () => {
 
     it('cleans up fieldExpiry when key lazily expires', () => {
       const { db, setTime } = createDb(1000);
-      const fields = new Map([['f1', 'v1'], ['f2', 'v2']]);
+      const fields = new Map([
+        ['f1', 'v1'],
+        ['f2', 'v2'],
+      ]);
       db.set('h', 'hash', 'hashtable', fields);
       db.setExpiry('h', 2000);
       db.setFieldExpiry('h', 'f1', 5000);
@@ -362,7 +365,10 @@ describe('Database', () => {
 
     it('sets and gets field expiry', () => {
       const { db } = createDb();
-      const fields = new Map([['f1', 'v1'], ['f2', 'v2']]);
+      const fields = new Map([
+        ['f1', 'v1'],
+        ['f2', 'v2'],
+      ]);
       db.set('h', 'hash', 'hashtable', fields);
       expect(db.setFieldExpiry('h', 'f1', 5000)).toBe(true);
       expect(db.getFieldExpiry('h', 'f1')).toBe(5000);
@@ -399,7 +405,10 @@ describe('Database', () => {
       const { db } = createDb();
       expect(db.fieldExpirySize).toBe(0);
 
-      const fields1 = new Map([['f1', 'v1'], ['f2', 'v2']]);
+      const fields1 = new Map([
+        ['f1', 'v1'],
+        ['f2', 'v2'],
+      ]);
       db.set('h1', 'hash', 'hashtable', fields1);
       db.setFieldExpiry('h1', 'f1', 5000);
       expect(db.fieldExpirySize).toBe(1);
@@ -416,7 +425,10 @@ describe('Database', () => {
 
     it('cleans up fieldExpiry index when last field expiry removed', () => {
       const { db } = createDb();
-      const fields = new Map([['f1', 'v1'], ['f2', 'v2']]);
+      const fields = new Map([
+        ['f1', 'v1'],
+        ['f2', 'v2'],
+      ]);
       db.set('h', 'hash', 'hashtable', fields);
       db.setFieldExpiry('h', 'f1', 5000);
       db.setFieldExpiry('h', 'f2', 6000);
@@ -453,7 +465,10 @@ describe('Database', () => {
   describe('lazy field expiration', () => {
     it('tryExpireField expires a field past its TTL', () => {
       const { db, setTime } = createDb(1000);
-      const fields = new Map([['f1', 'v1'], ['f2', 'v2']]);
+      const fields = new Map([
+        ['f1', 'v1'],
+        ['f2', 'v2'],
+      ]);
       db.set('h', 'hash', 'hashtable', fields);
       db.setFieldExpiry('h', 'f1', 2000);
 
@@ -507,7 +522,10 @@ describe('Database', () => {
 
     it('tryExpireField cleans up field expiry metadata', () => {
       const { db, setTime } = createDb(1000);
-      const fields = new Map([['f1', 'v1'], ['f2', 'v2']]);
+      const fields = new Map([
+        ['f1', 'v1'],
+        ['f2', 'v2'],
+      ]);
       db.set('h', 'hash', 'hashtable', fields);
       db.setFieldExpiry('h', 'f1', 2000);
       db.setFieldExpiry('h', 'f2', 5000);
@@ -522,7 +540,10 @@ describe('Database', () => {
 
     it('tryExpireField bumps version when field expired', () => {
       const { db, setTime } = createDb(1000);
-      const fields = new Map([['f1', 'v1'], ['f2', 'v2']]);
+      const fields = new Map([
+        ['f1', 'v1'],
+        ['f2', 'v2'],
+      ]);
       db.set('h', 'hash', 'hashtable', fields);
       db.setFieldExpiry('h', 'f1', 2000);
       const v1 = db.getVersion('h');
@@ -602,7 +623,10 @@ describe('Database', () => {
 
     it('returns all fields when count exceeds available', () => {
       const { db } = createDb();
-      const fields = new Map([['f1', 'v1'], ['f2', 'v2']]);
+      const fields = new Map([
+        ['f1', 'v1'],
+        ['f2', 'v2'],
+      ]);
       db.set('h', 'hash', 'hashtable', fields);
       db.setFieldExpiry('h', 'f1', 5000);
       db.setFieldExpiry('h', 'f2', 6000);
@@ -613,7 +637,9 @@ describe('Database', () => {
 
     it('returns empty array for non-existent key', () => {
       const { db } = createDb();
-      expect(db.sampleFieldsWithExpiry('missing', 20, () => Math.random()).length).toBe(0);
+      expect(
+        db.sampleFieldsWithExpiry('missing', 20, () => Math.random()).length
+      ).toBe(0);
     });
 
     it('returns unique fields', () => {
