@@ -1,5 +1,7 @@
 # T01: GET, SET, and Encoding Tracking
 
+**Status:** done
+
 Implement GET and SET with all flags: EX, PX, EXAT, PXAT, NX, XX, KEEPTTL, GET (Redis 6.2+). Track string encoding: `int` for numeric values fitting 64-bit signed integer, `embstr` for strings ≤44 bytes, `raw` for strings >44 bytes. After mutation of embstr, convert to raw.
 
 ## Acceptance Criteria
