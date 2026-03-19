@@ -100,6 +100,9 @@ function parseCount(
   countArg: string | undefined
 ): { count: number | null; error: null } | { count: null; error: Reply } {
   if (countArg === undefined) return { count: null, error: null };
+  if (!/^-?\d+$/.test(countArg)) {
+    return { count: null, error: NOT_INTEGER_ERR };
+  }
   const n = Number(countArg);
   if (!Number.isInteger(n) || n < 0) {
     return { count: null, error: NOT_INTEGER_ERR };

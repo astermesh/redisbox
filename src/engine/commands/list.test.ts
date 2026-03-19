@@ -220,6 +220,21 @@ describe('LPOP', () => {
     });
   });
 
+  it('returns error for float count', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k', 'a']);
+    expect(list.lpop(db, ['k', '2.0'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'value is not an integer or out of range',
+    });
+  });
+
+  it('returns nil for non-existing key with count 0', () => {
+    const { db } = createDb();
+    expect(list.lpop(db, ['k', '0'])).toEqual(NIL);
+  });
+
   it('returns WRONGTYPE for non-list key', () => {
     const { db } = createDb();
     db.set('k', 'string', 'raw', 'val');
@@ -286,6 +301,31 @@ describe('RPOP', () => {
       prefix: 'ERR',
       message: 'value is not an integer or out of range',
     });
+  });
+
+  it('returns error for non-integer count', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k', 'a']);
+    expect(list.rpop(db, ['k', 'abc'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'value is not an integer or out of range',
+    });
+  });
+
+  it('returns error for float count', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k', 'a']);
+    expect(list.rpop(db, ['k', '1.5'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'value is not an integer or out of range',
+    });
+  });
+
+  it('returns nil for non-existing key with count 0', () => {
+    const { db } = createDb();
+    expect(list.rpop(db, ['k', '0'])).toEqual(NIL);
   });
 
   it('returns WRONGTYPE for non-list key', () => {
