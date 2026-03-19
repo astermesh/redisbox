@@ -173,6 +173,17 @@ export class CommandDispatcher {
       return NOAUTH_ERR;
     }
 
+    // MULTI: enter transaction mode
+    if (upperName === 'MULTI') {
+      state.inMulti = true;
+      state.multiDirty = false;
+      state.multiQueue = [];
+      if (ctx.client) {
+        ctx.client.flagMulti = true;
+      }
+      return def.handler(ctx, args);
+    }
+
     // MULTI mode: queue non-passthrough commands
     if (state.inMulti) {
       state.multiQueue.push({ def, args });
