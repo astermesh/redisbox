@@ -314,6 +314,13 @@ describe('createCommandTable (registry)', () => {
       'lpop',
       'rpop',
       'llen',
+      'sadd',
+      'srem',
+      'sismember',
+      'smismember',
+      'smembers',
+      'scard',
+      'smove',
       'command',
     ];
 
@@ -421,6 +428,13 @@ describe('createCommandTable (registry)', () => {
       ['lpop', -2],
       ['rpop', -2],
       ['llen', 2],
+      ['sadd', -3],
+      ['srem', -3],
+      ['sismember', 3],
+      ['smismember', -3],
+      ['smembers', 2],
+      ['scard', 2],
+      ['smove', 4],
     ];
 
     for (const [name, expectedArity] of arityTests) {
