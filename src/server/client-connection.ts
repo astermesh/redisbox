@@ -33,11 +33,17 @@ function replyToRespValue(reply: Reply): RespValue {
         : { type: 'bulk', value: Buffer.from(reply.value) };
     case 'array':
       return { type: 'array', value: reply.value.map(replyToRespValue) };
+    case 'multi':
+      // multi replies are handled in serializeReply; this branch should not be reached
+      return { type: 'array', value: reply.value.map(replyToRespValue) };
   }
 }
 
 /** Serialize an engine Reply to a RESP wire-format Buffer. */
 export function serializeReply(reply: Reply): Buffer {
+  if (reply.kind === 'multi') {
+    return Buffer.concat(reply.value.map(serializeReply));
+  }
   return serializer.serialize(replyToRespValue(reply));
 }
 
@@ -99,6 +105,7 @@ export class ClientConnection {
       client: this.clientState,
       config: this.config,
       clientStore: this.clientStore,
+      pubsub: this.engine.pubsub,
     };
 
     const reply = this.dispatcher.dispatch(this.dispatcherState, ctx, args);

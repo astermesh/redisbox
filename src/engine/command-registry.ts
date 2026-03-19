@@ -19,6 +19,7 @@ import * as set from './commands/set.ts';
 import * as database from './commands/database.ts';
 import * as cmd from './commands/command.ts';
 import * as transaction from './commands/transaction.ts';
+import * as pubsub from './commands/pubsub.ts';
 import type { CommandContext } from './types.ts';
 
 function getTable(ctx: CommandContext): CommandTable {
@@ -1306,6 +1307,28 @@ const commandSpecs: CommandSpec[] = [
     lastKey: 2,
     keyStep: 1,
     categories: ['@write', '@set', '@fast'],
+  },
+
+  // --- Pub/Sub commands ---
+  {
+    name: 'subscribe',
+    handler: (ctx, args) => pubsub.subscribe(ctx, args),
+    arity: -2,
+    flags: ['pubsub', 'loading', 'stale'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@pubsub', '@slow'],
+  },
+  {
+    name: 'unsubscribe',
+    handler: (ctx, args) => pubsub.unsubscribe(ctx, args),
+    arity: -1,
+    flags: ['pubsub', 'loading', 'stale'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@pubsub', '@slow'],
   },
 
   // --- Command introspection ---
