@@ -3,6 +3,7 @@ import type { Reply } from '../types.ts';
 import {
   arrayReply,
   bulkReply,
+  statusReply,
   integerReply,
   errorReply,
   wrongArityError,
@@ -17,7 +18,7 @@ import {
 function commandInfoEntry(def: CommandDefinition): Reply {
   const flags: Reply[] = [];
   for (const f of def.flags) {
-    flags.push(bulkReply(f));
+    flags.push(statusReply(f));
   }
 
   const categories: Reply[] = [];
@@ -67,6 +68,7 @@ export function commandCount(table: CommandTable, args: string[]): Reply {
 
 /**
  * COMMAND LIST [FILTERBY MODULE name | ACLCAT category | PATTERN pattern]
+ * Redis requires the FILTERBY keyword before the filter type.
  */
 export function commandList(table: CommandTable, args: string[]): Reply {
   if (args.length === 0) {
@@ -78,20 +80,14 @@ export function commandList(table: CommandTable, args: string[]): Reply {
     return arrayReply(names);
   }
 
-  if (args.length < 2) {
+  // Redis requires exactly: FILTERBY <type> <value>
+  const keyword = (args[0] ?? '').toUpperCase();
+  if (keyword !== 'FILTERBY' || args.length !== 3) {
     return errorReply('ERR', 'syntax error');
   }
 
-  const filterType = (args[0] ?? '').toUpperCase();
-  const filterValue = args[1] ?? '';
-
-  if (args.length !== 2) {
-    return errorReply('ERR', 'syntax error');
-  }
-
-  if (filterType === 'FILTERBY') {
-    return errorReply('ERR', 'syntax error');
-  }
+  const filterType = (args[1] ?? '').toUpperCase();
+  const filterValue = args[2] ?? '';
 
   switch (filterType) {
     case 'MODULE': {
@@ -240,17 +236,11 @@ export function commandGetkeys(table: CommandTable, args: string[]): Reply {
   const cmdName = args[0] ?? '';
   const def = table.get(cmdName);
   if (!def) {
-    return errorReply(
-      'ERR',
-      `Invalid command specified, or key spec not found for '${cmdName}'`
-    );
+    return errorReply('ERR', 'Invalid command specified');
   }
 
   if (def.firstKey === 0) {
-    return errorReply(
-      'ERR',
-      `Invalid command specified, or key spec not found for '${cmdName}'`
-    );
+    return errorReply('ERR', 'The command has no key arguments');
   }
 
   // Check arity of the specified command (args includes the command name)
@@ -258,13 +248,13 @@ export function commandGetkeys(table: CommandTable, args: string[]): Reply {
   if (def.arity > 0 && argc !== def.arity) {
     return errorReply(
       'ERR',
-      `Invalid number of arguments specified for '${cmdName}'`
+      'Invalid number of arguments specified for command'
     );
   }
   if (def.arity < 0 && argc < Math.abs(def.arity)) {
     return errorReply(
       'ERR',
-      `Invalid number of arguments specified for '${cmdName}'`
+      'Invalid number of arguments specified for command'
     );
   }
 

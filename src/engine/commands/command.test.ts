@@ -23,6 +23,16 @@ function asBulk(reply: Reply): string | null {
   return (reply as { kind: 'bulk'; value: string | null }).value;
 }
 
+function asStatus(reply: Reply): string {
+  expect(reply.kind).toBe('status');
+  return (reply as { kind: 'status'; value: string }).value;
+}
+
+function asError(reply: Reply): { prefix: string; message: string } {
+  expect(reply.kind).toBe('error');
+  return reply as { kind: 'error'; prefix: string; message: string };
+}
+
 function at(arr: Reply[], index: number): Reply {
   const v = arr[index];
   expect(v).toBeDefined();
@@ -43,16 +53,54 @@ describe('COMMAND (no subcommand)', () => {
     const arr = asArray(result);
     const entry = asArray(at(arr, 0));
     expect(entry.length).toBe(10);
-    expect(at(entry, 0).kind).toBe('bulk');
-    expect(at(entry, 1).kind).toBe('integer');
-    expect(at(entry, 2).kind).toBe('array');
-    expect(at(entry, 3).kind).toBe('integer');
-    expect(at(entry, 4).kind).toBe('integer');
-    expect(at(entry, 5).kind).toBe('integer');
-    expect(at(entry, 6).kind).toBe('array');
-    expect(at(entry, 7).kind).toBe('array');
-    expect(at(entry, 8).kind).toBe('array');
-    expect(at(entry, 9).kind).toBe('array');
+    expect(at(entry, 0).kind).toBe('bulk'); // name
+    expect(at(entry, 1).kind).toBe('integer'); // arity
+    expect(at(entry, 2).kind).toBe('array'); // flags
+    expect(at(entry, 3).kind).toBe('integer'); // firstKey
+    expect(at(entry, 4).kind).toBe('integer'); // lastKey
+    expect(at(entry, 5).kind).toBe('integer'); // keyStep
+    expect(at(entry, 6).kind).toBe('array'); // categories
+    expect(at(entry, 7).kind).toBe('array'); // tips
+    expect(at(entry, 8).kind).toBe('array'); // key specs
+    expect(at(entry, 9).kind).toBe('array'); // subcommands
+  });
+
+  it('flags are returned as status replies (matching Redis)', () => {
+    const t = table();
+    const result = cmd.command(t);
+    const arr = asArray(result);
+    // Find GET which has flags: readonly, fast
+    const getEntry = arr.find((e) => {
+      const inner = asArray(e);
+      return asBulk(at(inner, 0)) === 'get';
+    });
+    expect(getEntry).toBeDefined();
+    const entry = asArray(getEntry as Reply);
+    const flags = asArray(at(entry, 2));
+    expect(flags.length).toBeGreaterThan(0);
+    for (const flag of flags) {
+      expect(flag.kind).toBe('status');
+    }
+    const flagValues = flags.map((f) => asStatus(f));
+    expect(flagValues).toContain('readonly');
+    expect(flagValues).toContain('fast');
+  });
+
+  it('categories are returned as bulk replies', () => {
+    const t = table();
+    const result = cmd.command(t);
+    const arr = asArray(result);
+    const getEntry = arr.find((e) => {
+      const inner = asArray(e);
+      return asBulk(at(inner, 0)) === 'get';
+    });
+    expect(getEntry).toBeDefined();
+    const entry = asArray(getEntry as Reply);
+    const categories = asArray(at(entry, 6));
+    expect(categories.length).toBeGreaterThan(0);
+    for (const cat of categories) {
+      expect(cat.kind).toBe('bulk');
+    }
   });
 
   it('includes correct metadata for GET command', () => {
@@ -99,41 +147,70 @@ describe('COMMAND LIST', () => {
     expect(names).toContain('command');
   });
 
-  it('filters by ACLCAT', () => {
+  it('filters by FILTERBY ACLCAT', () => {
     const t = table();
-    const result = cmd.commandList(t, ['ACLCAT', 'hash']);
+    const result = cmd.commandList(t, ['FILTERBY', 'ACLCAT', 'hash']);
     const names = asArray(result).map((r) => asBulk(r));
     expect(names).toContain('hset');
     expect(names).toContain('hget');
     expect(names).not.toContain('get');
   });
 
-  it('filters by PATTERN', () => {
+  it('filters by FILTERBY PATTERN', () => {
     const t = table();
-    const result = cmd.commandList(t, ['PATTERN', 'h*']);
+    const result = cmd.commandList(t, ['FILTERBY', 'PATTERN', 'h*']);
     const names = asArray(result).map((r) => asBulk(r));
     expect(names).toContain('hset');
     expect(names).toContain('hget');
     expect(names).not.toContain('get');
   });
 
-  it('MODULE filter returns empty array (no modules)', () => {
+  it('FILTERBY MODULE returns empty array (no modules)', () => {
     const t = table();
-    const result = cmd.commandList(t, ['MODULE', 'mymod']);
+    const result = cmd.commandList(t, ['FILTERBY', 'MODULE', 'mymod']);
     const names = asArray(result);
     expect(names.length).toBe(0);
   });
 
-  it('rejects invalid filter type', () => {
+  it('rejects invalid filter type after FILTERBY', () => {
     const t = table();
-    const result = cmd.commandList(t, ['INVALID', 'value']);
+    const result = cmd.commandList(t, ['FILTERBY', 'INVALID', 'value']);
     expect(result.kind).toBe('error');
+    expect(asError(result).message).toBe('syntax error');
+  });
+
+  it('rejects missing FILTERBY keyword', () => {
+    const t = table();
+    const result = cmd.commandList(t, ['ACLCAT', 'hash']);
+    expect(result.kind).toBe('error');
+    expect(asError(result).message).toBe('syntax error');
   });
 
   it('rejects FILTERBY without enough args', () => {
     const t = table();
-    const result = cmd.commandList(t, ['ACLCAT']);
+    const result = cmd.commandList(t, ['FILTERBY']);
     expect(result.kind).toBe('error');
+    expect(asError(result).message).toBe('syntax error');
+  });
+
+  it('rejects FILTERBY with only filter type (no value)', () => {
+    const t = table();
+    const result = cmd.commandList(t, ['FILTERBY', 'ACLCAT']);
+    expect(result.kind).toBe('error');
+    expect(asError(result).message).toBe('syntax error');
+  });
+
+  it('rejects extra args after FILTERBY value', () => {
+    const t = table();
+    const result = cmd.commandList(t, ['FILTERBY', 'ACLCAT', 'hash', 'extra']);
+    expect(result.kind).toBe('error');
+  });
+
+  it('FILTERBY keyword is case-insensitive', () => {
+    const t = table();
+    const result = cmd.commandList(t, ['filterby', 'ACLCAT', 'hash']);
+    const names = asArray(result).map((r) => asBulk(r));
+    expect(names).toContain('hset');
   });
 });
 
@@ -226,22 +303,30 @@ describe('COMMAND GETKEYS', () => {
     expect(keys).toEqual(['a', 'b', 'c']);
   });
 
-  it('returns error for unknown command', () => {
+  it('returns exact Redis error for unknown command', () => {
     const t = table();
     const result = cmd.commandGetkeys(t, ['fakecmd', 'arg1']);
-    expect(result.kind).toBe('error');
+    const err = asError(result);
+    expect(err.prefix).toBe('ERR');
+    expect(err.message).toBe('Invalid command specified');
   });
 
-  it('returns error for command with no keys (PING)', () => {
+  it('returns exact Redis error for command with no keys (PING)', () => {
     const t = table();
     const result = cmd.commandGetkeys(t, ['ping']);
-    expect(result.kind).toBe('error');
+    const err = asError(result);
+    expect(err.prefix).toBe('ERR');
+    expect(err.message).toBe('The command has no key arguments');
   });
 
-  it('returns error with wrong arity', () => {
+  it('returns exact Redis error with wrong arity', () => {
     const t = table();
     const result = cmd.commandGetkeys(t, ['get']);
-    expect(result.kind).toBe('error');
+    const err = asError(result);
+    expect(err.prefix).toBe('ERR');
+    expect(err.message).toBe(
+      'Invalid number of arguments specified for command'
+    );
   });
 
   it('rejects zero arguments', () => {
