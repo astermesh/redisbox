@@ -83,7 +83,7 @@ export class CommandDispatcher {
     if (upperName === 'RESET') {
       const def = this.table.get(cmdName);
       if (!def) {
-        return errorReply('ERR', formatUnknownCommandError(cmdName, args));
+        return unknownCommandError(cmdName, args);
       }
       const arityError = this.table.checkArity(def, rawArgs.length);
       if (arityError) return arityError;

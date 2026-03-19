@@ -13,6 +13,15 @@ describe('PING', () => {
   it('echoes empty string argument', () => {
     expect(cmd.ping([''])).toEqual({ kind: 'bulk', value: '' });
   });
+
+  it('rejects more than one argument', () => {
+    const result = cmd.ping(['a', 'b']);
+    expect(result).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: "wrong number of arguments for 'ping' command",
+    });
+  });
 });
 
 describe('ECHO', () => {

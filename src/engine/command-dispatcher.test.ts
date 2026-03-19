@@ -478,6 +478,15 @@ describe('CommandDispatcher', () => {
       const result = dispatcher.dispatch(state, ctx, ['ping']);
       expect(result).toEqual({ kind: 'status', value: 'PONG' });
     });
+
+    it('rejects more than one argument', () => {
+      const result = dispatcher.dispatch(state, ctx, ['PING', 'a', 'b']);
+      expect(result).toEqual({
+        kind: 'error',
+        prefix: 'ERR',
+        message: "wrong number of arguments for 'ping' command",
+      });
+    });
   });
 
   describe('ECHO command', () => {
@@ -499,6 +508,11 @@ describe('CommandDispatcher', () => {
   describe('QUIT command', () => {
     it('returns OK', () => {
       const result = dispatcher.dispatch(state, ctx, ['QUIT']);
+      expect(result).toEqual({ kind: 'status', value: 'OK' });
+    });
+
+    it('accepts extra arguments (arity -1)', () => {
+      const result = dispatcher.dispatch(state, ctx, ['QUIT', 'extra', 'args']);
       expect(result).toEqual({ kind: 'status', value: 'OK' });
     });
   });
