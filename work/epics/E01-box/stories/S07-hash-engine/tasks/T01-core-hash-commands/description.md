@@ -1,5 +1,7 @@
 # T01: Core Hash Commands
 
+**Status:** done
+
 Implement HSET (variadic), HGET, HMSET, HMGET, HGETALL, HDEL, HEXISTS, HLEN, HKEYS, HVALS, HSETNX. Track encoding: listpack for small hashes (≤128 fields, each ≤64 bytes), hashtable for large hashes. HSET returns count of new fields (not updated).
 
 ## Acceptance Criteria
