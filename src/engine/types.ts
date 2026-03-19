@@ -154,4 +154,5 @@ export interface CommandContext {
   engine: import('./engine.ts').RedisEngine;
   client?: import('../server/client-state.ts').ClientState;
   config?: import('../config-store.ts').ConfigStore;
+  clientStore?: import('../server/client-state.ts').ClientStateStore;
 }
