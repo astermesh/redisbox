@@ -548,6 +548,257 @@ describe('SkipList', () => {
       expect(removed).toEqual(['b', 'c', 'd']);
       expect(sl.length).toBe(2);
     });
+
+    it('deletes first element only', () => {
+      const sl = createList();
+      sl.insert(1, 'a');
+      sl.insert(2, 'b');
+      sl.insert(3, 'c');
+
+      const removed = sl.deleteRangeByRank(0, 0);
+      expect(removed).toEqual(['a']);
+      expect(sl.length).toBe(2);
+      expect(sl.head.lvl(0).forward?.element).toBe('b');
+    });
+
+    it('deletes last element only', () => {
+      const sl = createList();
+      sl.insert(1, 'a');
+      sl.insert(2, 'b');
+      sl.insert(3, 'c');
+
+      const removed = sl.deleteRangeByRank(2, 2);
+      expect(removed).toEqual(['c']);
+      expect(sl.length).toBe(2);
+      expect(sl.tail?.element).toBe('b');
+    });
+
+    it('deletes all elements', () => {
+      const sl = createList();
+      sl.insert(1, 'a');
+      sl.insert(2, 'b');
+      sl.insert(3, 'c');
+
+      const removed = sl.deleteRangeByRank(0, 2);
+      expect(removed).toEqual(['a', 'b', 'c']);
+      expect(sl.length).toBe(0);
+      expect(sl.tail).toBeNull();
+    });
+
+    it('returns empty when start > end', () => {
+      const sl = createList();
+      sl.insert(1, 'a');
+      sl.insert(2, 'b');
+
+      const removed = sl.deleteRangeByRank(2, 1);
+      expect(removed).toEqual([]);
+      expect(sl.length).toBe(2);
+    });
+
+    it('returns empty when start is beyond list length', () => {
+      const sl = createList();
+      sl.insert(1, 'a');
+
+      const removed = sl.deleteRangeByRank(5, 10);
+      expect(removed).toEqual([]);
+      expect(sl.length).toBe(1);
+    });
+  });
+
+  describe('deleteRangeByScore with infinities', () => {
+    it('deletes all elements with -Infinity to +Infinity', () => {
+      const sl = createList();
+      sl.insert(1, 'a');
+      sl.insert(2, 'b');
+      sl.insert(3, 'c');
+
+      const removed = sl.deleteRangeByScore(-Infinity, Infinity);
+      expect(removed).toEqual(['a', 'b', 'c']);
+      expect(sl.length).toBe(0);
+      expect(sl.tail).toBeNull();
+    });
+
+    it('deletes from -Infinity to a score', () => {
+      const sl = createList();
+      sl.insert(-Infinity, 'neg');
+      sl.insert(0, 'zero');
+      sl.insert(5, 'five');
+
+      const removed = sl.deleteRangeByScore(-Infinity, 0);
+      expect(removed).toEqual(['neg', 'zero']);
+      expect(sl.length).toBe(1);
+    });
+
+    it('deletes from a score to +Infinity', () => {
+      const sl = createList();
+      sl.insert(1, 'a');
+      sl.insert(5, 'b');
+      sl.insert(Infinity, 'inf');
+
+      const removed = sl.deleteRangeByScore(5, Infinity);
+      expect(removed).toEqual(['b', 'inf']);
+      expect(sl.length).toBe(1);
+    });
+  });
+
+  describe('ranks after bulk deletion', () => {
+    it('ranks are correct after deleteRangeByScore', () => {
+      const sl = createList();
+      sl.insert(1, 'a');
+      sl.insert(2, 'b');
+      sl.insert(3, 'c');
+      sl.insert(4, 'd');
+      sl.insert(5, 'e');
+
+      sl.deleteRangeByScore(2, 4);
+      // Remaining: a(1), e(5)
+      expect(sl.getRank(1, 'a')).toBe(0);
+      expect(sl.getRank(5, 'e')).toBe(1);
+      expect(sl.getElementByRank(1)?.element).toBe('a');
+      expect(sl.getElementByRank(2)?.element).toBe('e');
+    });
+
+    it('ranks are correct after deleteRangeByRank', () => {
+      const sl = createList();
+      sl.insert(1, 'a');
+      sl.insert(2, 'b');
+      sl.insert(3, 'c');
+      sl.insert(4, 'd');
+      sl.insert(5, 'e');
+
+      sl.deleteRangeByRank(1, 3);
+      // Remaining: a(1), e(5)
+      expect(sl.getRank(1, 'a')).toBe(0);
+      expect(sl.getRank(5, 'e')).toBe(1);
+      expect(sl.getElementByRank(1)?.element).toBe('a');
+      expect(sl.getElementByRank(2)?.element).toBe('e');
+    });
+  });
+
+  describe('backward pointers after bulk deletion', () => {
+    it('backward chain intact after deleteRangeByScore', () => {
+      const sl = createList();
+      sl.insert(1, 'a');
+      sl.insert(2, 'b');
+      sl.insert(3, 'c');
+      sl.insert(4, 'd');
+      sl.insert(5, 'e');
+
+      sl.deleteRangeByScore(2, 4);
+      const backward = collectBackward(sl);
+      expect(backward).toEqual([
+        { score: 5, element: 'e' },
+        { score: 1, element: 'a' },
+      ]);
+    });
+
+    it('backward chain intact after deleteRangeByRank', () => {
+      const sl = createList();
+      sl.insert(1, 'a');
+      sl.insert(2, 'b');
+      sl.insert(3, 'c');
+      sl.insert(4, 'd');
+      sl.insert(5, 'e');
+
+      sl.deleteRangeByRank(0, 2);
+      const backward = collectBackward(sl);
+      expect(backward).toEqual([
+        { score: 5, element: 'e' },
+        { score: 4, element: 'd' },
+      ]);
+      // First remaining node's backward should be null
+      expect(sl.head.lvl(0).forward?.backward).toBeNull();
+    });
+  });
+
+  describe('getElementByRank after deletions', () => {
+    it('returns correct elements after single delete', () => {
+      const sl = createList();
+      sl.insert(1, 'a');
+      sl.insert(2, 'b');
+      sl.insert(3, 'c');
+
+      sl.delete(2, 'b');
+      expect(sl.getElementByRank(1)?.element).toBe('a');
+      expect(sl.getElementByRank(2)?.element).toBe('c');
+      expect(sl.getElementByRank(3)).toBeNull();
+    });
+
+    it('returns correct elements after deleting first', () => {
+      const sl = createList();
+      sl.insert(1, 'a');
+      sl.insert(2, 'b');
+      sl.insert(3, 'c');
+
+      sl.delete(1, 'a');
+      expect(sl.getElementByRank(1)?.element).toBe('b');
+      expect(sl.getElementByRank(2)?.element).toBe('c');
+    });
+  });
+
+  describe('stress test: bulk operations with invariant checks', () => {
+    it('all invariants hold after mixed inserts and bulk deletes', () => {
+      let seed = 123;
+      const rng = (): number => {
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+        return seed / 0x7fffffff;
+      };
+
+      const sl = new SkipList(rng);
+      const entries: { score: number; element: string }[] = [];
+
+      // Insert 200 elements
+      for (let i = 0; i < 200; i++) {
+        const score = Math.floor(rng() * 1000);
+        const element = `e${String(i).padStart(4, '0')}`;
+        sl.insert(score, element);
+        entries.push({ score, element });
+      }
+
+      entries.sort((a, b) =>
+        a.score !== b.score
+          ? a.score - b.score
+          : a.element < b.element
+            ? -1
+            : a.element > b.element
+              ? 1
+              : 0
+      );
+
+      // Delete by score range [200, 500]
+      const removed = sl.deleteRangeByScore(200, 500);
+      const remaining = entries.filter((e) => !removed.includes(e.element));
+
+      expect(sl.length).toBe(remaining.length);
+
+      // Verify forward order
+      const forward = collectForward(sl);
+      expect(forward).toEqual(remaining);
+
+      // Verify backward order
+      const backward = collectBackward(sl);
+      expect(backward).toEqual([...remaining].reverse());
+
+      // Verify all ranks
+      for (let i = 0; i < remaining.length; i++) {
+        const e = remaining[i] as { score: number; element: string };
+        expect(sl.getRank(e.score, e.element)).toBe(i);
+        expect(sl.getElementByRank(i + 1)?.element).toBe(e.element);
+      }
+
+      // Delete by rank range [0, 9] (first 10 remaining)
+      const removed2 = sl.deleteRangeByRank(0, 9);
+      expect(removed2.length).toBe(Math.min(10, remaining.length));
+      const remaining2 = remaining.slice(removed2.length);
+
+      expect(sl.length).toBe(remaining2.length);
+
+      // Verify ranks again
+      for (let i = 0; i < remaining2.length; i++) {
+        const e = remaining2[i] as { score: number; element: string };
+        expect(sl.getRank(e.score, e.element)).toBe(i);
+      }
+    });
   });
 });
 
