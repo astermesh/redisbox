@@ -294,6 +294,10 @@ describe('createCommandTable (registry)', () => {
       'hkeys',
       'hvals',
       'hsetnx',
+      'hincrby',
+      'hincrbyfloat',
+      'hrandfield',
+      'hscan',
       'command',
     ];
 
@@ -381,6 +385,10 @@ describe('createCommandTable (registry)', () => {
       ['hkeys', 2],
       ['hvals', 2],
       ['hsetnx', 4],
+      ['hincrby', 4],
+      ['hincrbyfloat', 4],
+      ['hrandfield', -2],
+      ['hscan', -3],
     ];
 
     for (const [name, expectedArity] of arityTests) {

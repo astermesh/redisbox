@@ -1,5 +1,7 @@
 # T02: Hash Arithmetic and Random
 
+**Status:** done
+
 Implement HINCRBY, HINCRBYFLOAT, HRANDFIELD, HSCAN. HINCRBY: integer increment, error on non-integer. HINCRBYFLOAT: float increment with Redis formatting. HRANDFIELD: positive count=unique, negative count=may duplicate, supports WITHVALUES. HSCAN: cursor-based iteration with MATCH and COUNT.
 
 ## Acceptance Criteria

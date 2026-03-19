@@ -18,7 +18,7 @@ const INT64_MIN = BigInt('-9223372036854775808');
  * Parse a string as a 64-bit signed integer.
  * Returns null if the value is not a valid integer or out of range.
  */
-function parseInteger(value: string): bigint | null {
+export function parseInteger(value: string): bigint | null {
   if (value === '' || value !== value.trim()) return null;
   // reject floats, leading zeros (except "0" itself), and non-numeric
   if (!/^-?(?:0|[1-9]\d*)$/.test(value)) return null;
@@ -100,7 +100,9 @@ export function decrby(db: Database, args: string[]): Reply {
  * Returns { value, isInf } where isInf indicates inf/-inf input.
  * Returns null for unparseable values.
  */
-function parseFloat64(value: string): { value: number; isInf: boolean } | null {
+export function parseFloat64(
+  value: string
+): { value: number; isInf: boolean } | null {
   if (value === '' || value !== value.trim()) return null;
   const lower = value.toLowerCase();
   if (lower === 'nan') return null;
@@ -128,7 +130,7 @@ function parseFloat64(value: string): { value: number; isInf: boolean } | null {
  * For the scientific-notation range, we format with C conventions
  * (at least 2-digit exponent, sign prefix).
  */
-function formatFloat(n: number): string {
+export function formatFloat(n: number): string {
   if (n === 0 || Object.is(n, -0)) return '0';
 
   const exp = getExponent(n);
