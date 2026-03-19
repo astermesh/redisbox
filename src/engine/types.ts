@@ -155,4 +155,5 @@ export interface CommandContext {
   client?: import('../server/client-state.ts').ClientState;
   config?: import('../config-store.ts').ConfigStore;
   clientStore?: import('../server/client-state.ts').ClientStateStore;
+  commandTable?: import('./command-table.ts').CommandTable;
 }

@@ -14,6 +14,15 @@ import * as string from './commands/string.ts';
 import * as incr from './commands/incr.ts';
 import * as hash from './commands/hash.ts';
 import * as database from './commands/database.ts';
+import * as cmd from './commands/command.ts';
+import type { CommandContext } from './types.ts';
+
+function getTable(ctx: CommandContext): CommandTable {
+  if (!ctx.commandTable) {
+    throw new Error('commandTable not set on context');
+  }
+  return ctx.commandTable;
+}
 
 interface CommandSpec {
   name: string;
@@ -1004,6 +1013,80 @@ const commandSpecs: CommandSpec[] = [
     lastKey: 1,
     keyStep: 1,
     categories: ['@write', '@hash', '@fast'],
+  },
+
+  // --- Command introspection ---
+  {
+    name: 'command',
+    handler: (ctx, args) => cmd.commandDispatch(getTable(ctx), args),
+    arity: -1,
+    flags: ['readonly', 'loading', 'stale'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@slow', '@connection'],
+    subcommands: [
+      {
+        name: 'count',
+        handler: (ctx, args) => cmd.commandCount(getTable(ctx), args),
+        arity: 2,
+        flags: ['readonly', 'loading', 'stale'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow', '@connection'],
+      },
+      {
+        name: 'list',
+        handler: (ctx, args) => cmd.commandList(getTable(ctx), args),
+        arity: -2,
+        flags: ['readonly', 'loading', 'stale'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow', '@connection'],
+      },
+      {
+        name: 'info',
+        handler: (ctx, args) => cmd.commandInfo(getTable(ctx), args),
+        arity: -3,
+        flags: ['readonly', 'loading', 'stale'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow', '@connection'],
+      },
+      {
+        name: 'docs',
+        handler: (ctx, args) => cmd.commandDocs(getTable(ctx), args),
+        arity: -2,
+        flags: ['readonly', 'loading', 'stale'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow', '@connection'],
+      },
+      {
+        name: 'getkeys',
+        handler: (ctx, args) => cmd.commandGetkeys(getTable(ctx), args),
+        arity: -4,
+        flags: ['readonly', 'loading', 'stale'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow', '@connection'],
+      },
+      {
+        name: 'help',
+        handler: () => cmd.commandHelp(),
+        arity: 2,
+        flags: ['readonly', 'loading', 'stale'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow', '@connection'],
+      },
+    ],
   },
 ];
 

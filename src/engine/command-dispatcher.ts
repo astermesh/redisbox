@@ -72,6 +72,8 @@ export class CommandDispatcher {
   constructor(private readonly table: CommandTable) {}
 
   dispatch(state: ClientState, ctx: CommandContext, rawArgs: string[]): Reply {
+    ctx.commandTable = this.table;
+
     if (rawArgs.length === 0) {
       return unknownCommandError('', []);
     }
