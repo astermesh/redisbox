@@ -4,8 +4,10 @@ import type { Database } from '../database.ts';
 import type { Reply } from '../types.ts';
 import * as hash from './hash.ts';
 
+let rngValue = 0.5;
 function createDb(): { db: Database; engine: RedisEngine } {
-  const engine = new RedisEngine({ clock: () => 1000, rng: () => 0.5 });
+  rngValue = 0.5;
+  const engine = new RedisEngine({ clock: () => 1000, rng: () => rngValue });
   return { db: engine.db(0), engine };
 }
 
@@ -13,7 +15,7 @@ function bulk(value: string | null): Reply {
   return { kind: 'bulk', value };
 }
 
-function integer(value: number): Reply {
+function integer(value: number | bigint): Reply {
   return { kind: 'integer', value };
 }
 
@@ -442,5 +444,481 @@ describe('HDEL field expiry cleanup', () => {
     db.setFieldExpiry('k', 'f1', 2000);
     hash.hdel(db, ['k', 'f1']);
     expect(db.getFieldExpiry('k', 'f1')).toBeUndefined();
+  });
+});
+
+// --- HINCRBY ---
+
+describe('HINCRBY', () => {
+  it('creates hash and field when key does not exist', () => {
+    const { db } = createDb();
+    expect(hash.hincrby(db, ['k', 'f1', '5'])).toEqual(integer(5));
+    expect(hash.hget(db, ['k', 'f1'])).toEqual(bulk('5'));
+  });
+
+  it('creates field when field does not exist', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1']);
+    expect(hash.hincrby(db, ['k', 'f2', '10'])).toEqual(integer(10));
+  });
+
+  it('increments existing integer field', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', '10']);
+    expect(hash.hincrby(db, ['k', 'f1', '5'])).toEqual(integer(15));
+    expect(hash.hget(db, ['k', 'f1'])).toEqual(bulk('15'));
+  });
+
+  it('decrements with negative increment', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', '10']);
+    expect(hash.hincrby(db, ['k', 'f1', '-3'])).toEqual(integer(7));
+  });
+
+  it('returns error for non-integer field value', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'hello']);
+    expect(hash.hincrby(db, ['k', 'f1', '1'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'hash value is not an integer',
+    });
+  });
+
+  it('returns error for non-integer increment', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', '10']);
+    expect(hash.hincrby(db, ['k', 'f1', 'abc'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'value is not an integer or out of range',
+    });
+  });
+
+  it('returns error for float increment', () => {
+    const { db } = createDb();
+    expect(hash.hincrby(db, ['k', 'f1', '1.5'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'value is not an integer or out of range',
+    });
+  });
+
+  it('handles overflow', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', '9223372036854775807']);
+    expect(hash.hincrby(db, ['k', 'f1', '1'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'increment or decrement would overflow',
+    });
+  });
+
+  it('handles underflow', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', '-9223372036854775808']);
+    expect(hash.hincrby(db, ['k', 'f1', '-1'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'increment or decrement would overflow',
+    });
+  });
+
+  it('returns WRONGTYPE for non-hash key', () => {
+    const { db } = createDb();
+    db.set('k', 'string', 'raw', 'val');
+    expect(hash.hincrby(db, ['k', 'f1', '1'])).toEqual(WRONGTYPE);
+  });
+
+  it('handles large 64-bit values', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', '9223372036854775800']);
+    expect(hash.hincrby(db, ['k', 'f1', '6'])).toEqual(
+      integer(9223372036854775806n)
+    );
+  });
+});
+
+// --- HINCRBYFLOAT ---
+
+describe('HINCRBYFLOAT', () => {
+  it('creates hash and field when key does not exist', () => {
+    const { db } = createDb();
+    expect(hash.hincrbyfloat(db, ['k', 'f1', '2.5'])).toEqual(bulk('2.5'));
+    expect(hash.hget(db, ['k', 'f1'])).toEqual(bulk('2.5'));
+  });
+
+  it('creates field when field does not exist', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1']);
+    expect(hash.hincrbyfloat(db, ['k', 'f2', '3.14'])).toEqual(bulk('3.14'));
+  });
+
+  it('increments existing float field', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', '10.5']);
+    expect(hash.hincrbyfloat(db, ['k', 'f1', '0.1'])).toEqual(bulk('10.6'));
+  });
+
+  it('increments integer field with float', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', '10']);
+    expect(hash.hincrbyfloat(db, ['k', 'f1', '1.5'])).toEqual(bulk('11.5'));
+  });
+
+  it('handles negative increment', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', '10']);
+    expect(hash.hincrbyfloat(db, ['k', 'f1', '-5.5'])).toEqual(bulk('4.5'));
+  });
+
+  it('returns error for non-float field value', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'hello']);
+    expect(hash.hincrbyfloat(db, ['k', 'f1', '1.0'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'hash value is not a valid float',
+    });
+  });
+
+  it('returns error for non-float increment', () => {
+    const { db } = createDb();
+    expect(hash.hincrbyfloat(db, ['k', 'f1', 'abc'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'value is not a valid float',
+    });
+  });
+
+  it('returns error for inf increment', () => {
+    const { db } = createDb();
+    expect(hash.hincrbyfloat(db, ['k', 'f1', 'inf'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'increment would produce NaN or Infinity',
+    });
+  });
+
+  it('returns error when result would be infinity', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', '1.7e308']);
+    expect(hash.hincrbyfloat(db, ['k', 'f1', '1.7e308'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'increment would produce NaN or Infinity',
+    });
+  });
+
+  it('formats result with zero correctly', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', '5']);
+    expect(hash.hincrbyfloat(db, ['k', 'f1', '-5'])).toEqual(bulk('0'));
+  });
+
+  it('returns WRONGTYPE for non-hash key', () => {
+    const { db } = createDb();
+    db.set('k', 'string', 'raw', 'val');
+    expect(hash.hincrbyfloat(db, ['k', 'f1', '1.0'])).toEqual(WRONGTYPE);
+  });
+});
+
+// --- HRANDFIELD ---
+
+describe('HRANDFIELD', () => {
+  it('returns nil for non-existing key (no count)', () => {
+    const { db } = createDb();
+    expect(hash.hrandfield(db, ['k'], () => 0.5)).toEqual(NIL);
+  });
+
+  it('returns a field name for existing key', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1', 'f2', 'v2']);
+    const result = hash.hrandfield(db, ['k'], () => 0);
+    expect(result).toEqual(bulk('f1'));
+  });
+
+  it('returns empty array for count=0', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1']);
+    expect(hash.hrandfield(db, ['k', '0'], () => 0.5)).toEqual(EMPTY_ARRAY);
+  });
+
+  it('returns unique fields with positive count', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1', 'f2', 'v2', 'f3', 'v3']);
+    const result = hash.hrandfield(db, ['k', '2'], () => 0.1);
+    expect(result.kind).toBe('array');
+    if (result.kind === 'array') {
+      expect(result.value.length).toBe(2);
+      // All unique
+      const fields = result.value.map((r) =>
+        r.kind === 'bulk' ? r.value : null
+      );
+      expect(new Set(fields).size).toBe(2);
+    }
+  });
+
+  it('returns at most hash size with positive count > size', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1', 'f2', 'v2']);
+    const result = hash.hrandfield(db, ['k', '10'], () => 0.1);
+    expect(result.kind).toBe('array');
+    if (result.kind === 'array') {
+      expect(result.value.length).toBe(2);
+    }
+  });
+
+  it('returns |count| fields with negative count (may duplicate)', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1']);
+    const result = hash.hrandfield(db, ['k', '-5'], () => 0);
+    expect(result.kind).toBe('array');
+    if (result.kind === 'array') {
+      expect(result.value.length).toBe(5);
+      // All should be f1 since there's only one field
+      for (const r of result.value) {
+        expect(r).toEqual(bulk('f1'));
+      }
+    }
+  });
+
+  it('returns field-value pairs with WITHVALUES', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1']);
+    const result = hash.hrandfield(db, ['k', '1', 'WITHVALUES'], () => 0);
+    expect(result).toEqual(arr(bulk('f1'), bulk('v1')));
+  });
+
+  it('returns field-value pairs with negative count and WITHVALUES', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1']);
+    const result = hash.hrandfield(db, ['k', '-2', 'WITHVALUES'], () => 0);
+    expect(result).toEqual(arr(bulk('f1'), bulk('v1'), bulk('f1'), bulk('v1')));
+  });
+
+  it('returns empty array for non-existing key with count', () => {
+    const { db } = createDb();
+    expect(hash.hrandfield(db, ['k', '3'], () => 0.5)).toEqual(EMPTY_ARRAY);
+  });
+
+  it('returns WRONGTYPE for non-hash key', () => {
+    const { db } = createDb();
+    db.set('k', 'string', 'raw', 'val');
+    expect(hash.hrandfield(db, ['k'], () => 0.5)).toEqual(WRONGTYPE);
+  });
+
+  it('returns WRONGTYPE for non-hash key with count', () => {
+    const { db } = createDb();
+    db.set('k', 'string', 'raw', 'val');
+    expect(hash.hrandfield(db, ['k', '1'], () => 0.5)).toEqual(WRONGTYPE);
+  });
+
+  it('is case-insensitive for WITHVALUES', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1']);
+    const result = hash.hrandfield(db, ['k', '1', 'withvalues'], () => 0);
+    expect(result).toEqual(arr(bulk('f1'), bulk('v1')));
+  });
+
+  it('returns error for invalid count', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1']);
+    expect(hash.hrandfield(db, ['k', 'abc'], () => 0.5)).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'value is not an integer or out of range',
+    });
+  });
+
+  it('returns syntax error for extra arguments without WITHVALUES', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1']);
+    expect(hash.hrandfield(db, ['k', '1', 'EXTRA'], () => 0.5)).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
+  });
+
+  it('returns syntax error for extra args after WITHVALUES', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1']);
+    expect(
+      hash.hrandfield(db, ['k', '1', 'WITHVALUES', 'EXTRA'], () => 0.5)
+    ).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
+  });
+});
+
+// --- HSCAN ---
+
+describe('HSCAN', () => {
+  it('scans all fields of a hash', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1', 'f2', 'v2']);
+    const result = hash.hscan(db, ['k', '0']);
+    expect(result).toEqual(
+      arr(bulk('0'), arr(bulk('f1'), bulk('v1'), bulk('f2'), bulk('v2')))
+    );
+  });
+
+  it('returns empty scan for non-existing key', () => {
+    const { db } = createDb();
+    expect(hash.hscan(db, ['k', '0'])).toEqual(arr(bulk('0'), EMPTY_ARRAY));
+  });
+
+  it('returns WRONGTYPE for non-hash key', () => {
+    const { db } = createDb();
+    db.set('k', 'string', 'raw', 'val');
+    expect(hash.hscan(db, ['k', '0'])).toEqual(WRONGTYPE);
+  });
+
+  it('filters fields with MATCH pattern', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'alpha', '1', 'beta', '2', 'abc', '3']);
+    const result = hash.hscan(db, ['k', '0', 'MATCH', 'a*']);
+    expect(result).toEqual(
+      arr(bulk('0'), arr(bulk('alpha'), bulk('1'), bulk('abc'), bulk('3')))
+    );
+  });
+
+  it('uses COUNT to limit batch size', () => {
+    const { db } = createDb();
+    // Create 20 fields
+    const args = ['k'];
+    for (let i = 0; i < 20; i++) {
+      args.push(`f${String(i).padStart(2, '0')}`, `v${i}`);
+    }
+    hash.hset(db, args);
+
+    // Scan with count=5
+    const result1 = hash.hscan(db, ['k', '0', 'COUNT', '5']);
+    expect(result1.kind).toBe('array');
+    if (result1.kind === 'array') {
+      const cursor1 = result1.value[0];
+      expect(cursor1).not.toEqual(bulk('0')); // not done yet
+      const items1 = result1.value[1];
+      if (items1?.kind === 'array') {
+        // Each field-value pair = 2 entries, so count=5 → up to 10 entries
+        expect(items1.value.length).toBeLessThanOrEqual(10);
+        expect(items1.value.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('full iteration returns all fields', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1', 'f2', 'v2', 'f3', 'v3']);
+
+    const allFields: string[] = [];
+    let cursor = '0';
+    let iterations = 0;
+    do {
+      const result = hash.hscan(db, ['k', cursor, 'COUNT', '1']);
+      if (result.kind !== 'array') break;
+      const cursorReply = result.value[0];
+      if (cursorReply?.kind === 'bulk') cursor = cursorReply.value ?? '0';
+      const items = result.value[1];
+      if (items?.kind === 'array') {
+        for (let i = 0; i < items.value.length; i += 2) {
+          const field = items.value[i];
+          if (field?.kind === 'bulk' && field.value !== null) {
+            allFields.push(field.value);
+          }
+        }
+      }
+      iterations++;
+    } while (cursor !== '0' && iterations < 100);
+
+    expect(allFields.sort()).toEqual(['f1', 'f2', 'f3']);
+  });
+
+  it('returns error for invalid cursor', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1']);
+    expect(hash.hscan(db, ['k', 'abc'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'invalid cursor',
+    });
+  });
+
+  it('returns syntax error for unknown option', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1']);
+    expect(hash.hscan(db, ['k', '0', 'INVALID'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
+  });
+
+  it('returns error for non-integer COUNT', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1']);
+    expect(hash.hscan(db, ['k', '0', 'COUNT', 'abc'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'value is not an integer or out of range',
+    });
+  });
+
+  it('returns syntax error for COUNT 0', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1']);
+    expect(hash.hscan(db, ['k', '0', 'COUNT', '0'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
+  });
+
+  it('returns syntax error for negative COUNT', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1']);
+    expect(hash.hscan(db, ['k', '0', 'COUNT', '-5'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
+  });
+
+  it('MATCH is case-insensitive option name', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1', 'g1', 'v2']);
+    const result = hash.hscan(db, ['k', '0', 'match', 'f*']);
+    expect(result).toEqual(arr(bulk('0'), arr(bulk('f1'), bulk('v1'))));
+  });
+
+  it('handles cursor beyond hash size', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1']);
+    const result = hash.hscan(db, ['k', '100']);
+    expect(result).toEqual(arr(bulk('0'), EMPTY_ARRAY));
+  });
+
+  it('returns only field names with NOVALUES', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1', 'f2', 'v2']);
+    const result = hash.hscan(db, ['k', '0', 'NOVALUES']);
+    expect(result).toEqual(arr(bulk('0'), arr(bulk('f1'), bulk('f2'))));
+  });
+
+  it('NOVALUES is case-insensitive', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1']);
+    const result = hash.hscan(db, ['k', '0', 'novalues']);
+    expect(result).toEqual(arr(bulk('0'), arr(bulk('f1'))));
+  });
+
+  it('NOVALUES combined with MATCH', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'alpha', '1', 'beta', '2']);
+    const result = hash.hscan(db, ['k', '0', 'MATCH', 'a*', 'NOVALUES']);
+    expect(result).toEqual(arr(bulk('0'), arr(bulk('alpha'))));
   });
 });

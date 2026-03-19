@@ -4,6 +4,7 @@ import {
   bulkReply,
   integerReply,
   arrayReply,
+  errorReply,
   wrongArityError,
   OK,
   NIL,
@@ -11,7 +12,14 @@ import {
   ONE,
   EMPTY_ARRAY,
   WRONGTYPE_ERR,
+  NOT_INTEGER_ERR,
+  NOT_FLOAT_ERR,
+  INF_NAN_ERR,
+  OVERFLOW_ERR,
+  SYNTAX_ERR,
 } from '../types.ts';
+import { parseInteger, parseFloat64, formatFloat } from './incr.ts';
+import { matchGlob } from '../glob-pattern.ts';
 
 const textEncoder = new TextEncoder();
 
@@ -282,4 +290,220 @@ export function hsetnx(db: Database, args: string[]): Reply {
   hash.set(field, value);
   updateEncoding(db, key);
   return ONE;
+}
+
+// --- HINCRBY ---
+
+const INT64_MAX = BigInt('9223372036854775807');
+const INT64_MIN = BigInt('-9223372036854775808');
+
+const HASH_NOT_INTEGER_ERR = errorReply('ERR', 'hash value is not an integer');
+const HASH_NOT_FLOAT_ERR = errorReply('ERR', 'hash value is not a valid float');
+
+export function hincrby(db: Database, args: string[]): Reply {
+  const key = args[0] ?? '';
+  const field = args[1] ?? '';
+  const incrStr = args[2] ?? '';
+
+  const delta = parseInteger(incrStr);
+  if (delta === null) return NOT_INTEGER_ERR;
+
+  const { hash, error } = getOrCreateHash(db, key);
+  if (error) return error;
+
+  const currentStr = hash.get(field) ?? '0';
+  const current = parseInteger(currentStr);
+  if (current === null) return HASH_NOT_INTEGER_ERR;
+
+  const result = current + delta;
+  if (result > INT64_MAX || result < INT64_MIN) return OVERFLOW_ERR;
+
+  hash.set(field, result.toString());
+  updateEncoding(db, key);
+
+  const replyValue =
+    result >= -9007199254740991n && result <= 9007199254740991n
+      ? Number(result)
+      : result;
+  return integerReply(replyValue);
+}
+
+// --- HINCRBYFLOAT ---
+
+export function hincrbyfloat(db: Database, args: string[]): Reply {
+  const key = args[0] ?? '';
+  const field = args[1] ?? '';
+  const incrStr = args[2] ?? '';
+
+  const incrParsed = parseFloat64(incrStr);
+  if (incrParsed === null) return NOT_FLOAT_ERR;
+  if (incrParsed.isInf) return INF_NAN_ERR;
+
+  const { hash, error } = getOrCreateHash(db, key);
+  if (error) return error;
+
+  const currentStr = hash.get(field) ?? '0';
+  const currentParsed = parseFloat64(currentStr);
+  if (currentParsed === null) return HASH_NOT_FLOAT_ERR;
+  if (currentParsed.isInf) return HASH_NOT_FLOAT_ERR;
+
+  const result = currentParsed.value + incrParsed.value;
+  if (!isFinite(result)) return INF_NAN_ERR;
+
+  const strResult = formatFloat(result);
+  hash.set(field, strResult);
+  updateEncoding(db, key);
+
+  return bulkReply(strResult);
+}
+
+// --- HRANDFIELD ---
+
+export function hrandfield(
+  db: Database,
+  args: string[],
+  rng: () => number
+): Reply {
+  const key = args[0] ?? '';
+
+  const { hash, error } = getExistingHash(db, key);
+  if (error) return error;
+
+  // No count argument — return single field or nil
+  if (args.length === 1) {
+    if (!hash || hash.size === 0) return NIL;
+    const fields = Array.from(hash.keys());
+    const idx = Math.floor(rng() * fields.length);
+    return bulkReply(fields[idx] ?? '');
+  }
+
+  // Parse count
+  const countStr = args[1] ?? '';
+  const countParsed = parseInteger(countStr);
+  if (countParsed === null) return NOT_INTEGER_ERR;
+  const count = Number(countParsed);
+
+  // Check for WITHVALUES
+  let withValues = false;
+  if (args.length > 2) {
+    const flag = (args[2] ?? '').toUpperCase();
+    if (flag !== 'WITHVALUES') return SYNTAX_ERR;
+    if (args.length > 3) return SYNTAX_ERR;
+    withValues = true;
+  }
+
+  if (!hash || hash.size === 0) return EMPTY_ARRAY;
+
+  if (count === 0) return EMPTY_ARRAY;
+
+  const fields = Array.from(hash.keys());
+  const results: Reply[] = [];
+
+  if (count > 0) {
+    // Positive count: unique elements, at most hash size
+    const actual = Math.min(count, fields.length);
+    // Fisher-Yates partial shuffle
+    const shuffled = [...fields];
+    for (let i = 0; i < actual; i++) {
+      const j = i + Math.floor(rng() * (shuffled.length - i));
+      const tmp = shuffled[i] ?? '';
+      shuffled[i] = shuffled[j] ?? '';
+      shuffled[j] = tmp;
+    }
+    for (let i = 0; i < actual; i++) {
+      const f = shuffled[i] ?? '';
+      results.push(bulkReply(f));
+      if (withValues) {
+        results.push(bulkReply(hash.get(f) ?? ''));
+      }
+    }
+  } else {
+    // Negative count: |count| elements, may repeat
+    const absCount = Math.abs(count);
+    for (let i = 0; i < absCount; i++) {
+      const idx = Math.floor(rng() * fields.length);
+      const f = fields[idx] ?? '';
+      results.push(bulkReply(f));
+      if (withValues) {
+        results.push(bulkReply(hash.get(f) ?? ''));
+      }
+    }
+  }
+
+  return arrayReply(results);
+}
+
+// --- HSCAN ---
+
+export function hscan(db: Database, args: string[]): Reply {
+  const key = args[0] ?? '';
+  const cursorStr = args[1] ?? '0';
+
+  const cursor = parseInt(cursorStr, 10);
+  if (isNaN(cursor) || cursor < 0) {
+    return errorReply('ERR', 'invalid cursor');
+  }
+
+  // Check key type before parsing options
+  const entry = db.get(key);
+  if (entry && entry.type !== 'hash') return WRONGTYPE_ERR;
+
+  let matchPattern: string | null = null;
+  let count = 10;
+  let noValues = false;
+
+  let i = 2;
+  while (i < args.length) {
+    const flag = (args[i] ?? '').toUpperCase();
+    if (flag === 'MATCH') {
+      i++;
+      matchPattern = args[i] ?? '*';
+    } else if (flag === 'COUNT') {
+      i++;
+      count = parseInt(args[i] ?? '10', 10);
+      if (isNaN(count)) {
+        return NOT_INTEGER_ERR;
+      }
+      if (count < 1) {
+        return SYNTAX_ERR;
+      }
+    } else if (flag === 'NOVALUES') {
+      noValues = true;
+    } else {
+      return SYNTAX_ERR;
+    }
+    i++;
+  }
+
+  if (!entry) {
+    return arrayReply([bulkReply('0'), EMPTY_ARRAY]);
+  }
+
+  const hash = entry.value as Map<string, string>;
+  const allFields = Array.from(hash.keys());
+
+  if (allFields.length === 0) {
+    return arrayReply([bulkReply('0'), EMPTY_ARRAY]);
+  }
+
+  const results: Reply[] = [];
+  let position = cursor;
+  let scanned = 0;
+
+  while (position < allFields.length && scanned < count) {
+    const field = allFields[position] ?? '';
+    position++;
+    scanned++;
+
+    if (matchPattern && !matchGlob(matchPattern, field)) continue;
+
+    results.push(bulkReply(field));
+    if (!noValues) {
+      results.push(bulkReply(hash.get(field) ?? ''));
+    }
+  }
+
+  const nextCursor = position >= allFields.length ? 0 : position;
+
+  return arrayReply([bulkReply(String(nextCursor)), arrayReply(results)]);
 }
