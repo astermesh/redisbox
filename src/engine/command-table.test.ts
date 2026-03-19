@@ -298,6 +298,15 @@ describe('createCommandTable (registry)', () => {
       'hincrbyfloat',
       'hrandfield',
       'hscan',
+      'hexpire',
+      'hpexpire',
+      'hexpireat',
+      'hpexpireat',
+      'httl',
+      'hpttl',
+      'hpersist',
+      'hexpiretime',
+      'hpexpiretime',
       'command',
     ];
 
@@ -389,6 +398,15 @@ describe('createCommandTable (registry)', () => {
       ['hincrbyfloat', 4],
       ['hrandfield', -2],
       ['hscan', -3],
+      ['hexpire', -6],
+      ['hpexpire', -6],
+      ['hexpireat', -6],
+      ['hpexpireat', -6],
+      ['httl', -5],
+      ['hpttl', -5],
+      ['hpersist', -5],
+      ['hexpiretime', -5],
+      ['hpexpiretime', -5],
     ];
 
     for (const [name, expectedArity] of arityTests) {
