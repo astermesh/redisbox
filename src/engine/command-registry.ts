@@ -4,6 +4,7 @@ import type {
   CommandFlag,
   CommandHandler,
 } from './command-table.ts';
+import * as connection from './commands/connection.ts';
 import * as generic from './commands/generic.ts';
 import * as ttl from './commands/ttl.ts';
 import * as scan from './commands/scan.ts';
@@ -50,6 +51,48 @@ function toDefinition(spec: CommandSpec): CommandDefinition {
  * Positive = exact, negative = minimum.
  */
 const commandSpecs: CommandSpec[] = [
+  // --- Connection commands ---
+  {
+    name: 'ping',
+    handler: (_ctx, args) => connection.ping(args),
+    arity: -1,
+    flags: ['fast', 'stale', 'loading'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@fast', '@connection'],
+  },
+  {
+    name: 'echo',
+    handler: (_ctx, args) => connection.echo(args),
+    arity: 2,
+    flags: ['fast', 'stale', 'loading'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@fast', '@connection'],
+  },
+  {
+    name: 'quit',
+    handler: () => connection.quit(),
+    arity: -1,
+    flags: ['fast', 'noscript', 'stale', 'loading', 'noauth'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@fast', '@connection'],
+  },
+  {
+    name: 'reset',
+    handler: () => connection.reset(),
+    arity: 1,
+    flags: ['fast', 'noscript', 'loading', 'stale', 'noauth'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@fast', '@connection'],
+  },
+
   // --- Generic (keyspace) commands ---
   {
     name: 'del',
