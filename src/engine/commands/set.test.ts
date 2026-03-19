@@ -271,11 +271,18 @@ describe('SMOVE', () => {
     expect(set.smove(db, ['src', 'dst', 'a'])).toEqual(WRONGTYPE);
   });
 
-  it('returns WRONGTYPE for non-set destination', () => {
+  it('returns WRONGTYPE for non-set destination when member exists in source', () => {
     const { db } = createDb();
     set.sadd(db, ['src', 'a']);
     db.set('dst', 'string', 'raw', 'val');
     expect(set.smove(db, ['src', 'dst', 'a'])).toEqual(WRONGTYPE);
+  });
+
+  it('returns 0 when member absent from source even if destination is wrong type', () => {
+    const { db } = createDb();
+    set.sadd(db, ['src', 'a']);
+    db.set('dst', 'string', 'raw', 'val');
+    expect(set.smove(db, ['src', 'dst', 'x'])).toEqual(ZERO);
   });
 
   it('handles move to same key (member already exists)', () => {

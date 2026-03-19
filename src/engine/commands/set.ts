@@ -266,12 +266,13 @@ export function smove(db: Database, args: string[]): Reply {
   if (srcResult.error) return srcResult.error;
   if (!srcResult.set) return ZERO;
 
+  // Check if member exists in source (must come before destination type check —
+  // real Redis returns 0 for absent member even if destination is wrong type)
+  if (!srcResult.set.has(member)) return ZERO;
+
   // Check destination type before modifying source
   const dstEntry = db.get(destination);
   if (dstEntry && dstEntry.type !== 'set') return WRONGTYPE_ERR;
-
-  // Check if member exists in source
-  if (!srcResult.set.has(member)) return ZERO;
 
   // Same key — member already exists, nothing to do
   if (source === destination) return ONE;
