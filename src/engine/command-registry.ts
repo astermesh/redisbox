@@ -18,6 +18,7 @@ import * as list from './commands/list.ts';
 import * as set from './commands/set.ts';
 import * as database from './commands/database.ts';
 import * as cmd from './commands/command.ts';
+import * as transaction from './commands/transaction.ts';
 import type { CommandContext } from './types.ts';
 
 function getTable(ctx: CommandContext): CommandTable {
@@ -359,6 +360,18 @@ const commandSpecs: CommandSpec[] = [
         categories: ['@slow', '@connection'],
       },
     ],
+  },
+
+  // --- Transaction commands ---
+  {
+    name: 'multi',
+    handler: () => transaction.multi(),
+    arity: 1,
+    flags: ['fast'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@fast', '@transaction'],
   },
 
   // --- Generic (keyspace) commands ---
