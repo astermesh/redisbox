@@ -1,5 +1,7 @@
 # T03: Hash Field Expiration
 
+**Status:** done
+
 Implement HEXPIRE, HPEXPIRE, HEXPIREAT, HPEXPIREAT, HTTL, HPTTL, HPERSIST, HEXPIRETIME, HPEXPIRETIME (Redis 7.4+). Per-field TTL requires a two-level expiry index: (key, field) to timestamp. Lazy expiration checks per field on access.
 
 ## Acceptance Criteria

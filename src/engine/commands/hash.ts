@@ -129,6 +129,9 @@ export function hget(db: Database, args: string[]): Reply {
   if (error) return error;
   if (!hash) return NIL;
 
+  // Lazy field expiration
+  db.tryExpireField(key, field);
+
   const value = hash.get(field);
   return value !== undefined ? bulkReply(value) : NIL;
 }
@@ -166,6 +169,8 @@ export function hmget(db: Database, args: string[]): Reply {
   for (let i = 1; i < args.length; i++) {
     const field = args[i] ?? '';
     if (hash) {
+      // Lazy field expiration
+      db.tryExpireField(key, field);
       const value = hash.get(field);
       results.push(value !== undefined ? bulkReply(value) : NIL);
     } else {
@@ -183,6 +188,10 @@ export function hgetall(db: Database, args: string[]): Reply {
   const { hash, error } = getExistingHash(db, key);
   if (error) return error;
   if (!hash || hash.size === 0) return EMPTY_ARRAY;
+
+  // Lazy field expiration for all fields
+  db.expireHashFields(key);
+  if (hash.size === 0) return EMPTY_ARRAY;
 
   const results: Reply[] = [];
   for (const [field, value] of hash) {
@@ -228,6 +237,9 @@ export function hexists(db: Database, args: string[]): Reply {
   if (error) return error;
   if (!hash) return ZERO;
 
+  // Lazy field expiration
+  db.tryExpireField(key, field);
+
   return hash.has(field) ? ONE : ZERO;
 }
 
@@ -240,6 +252,9 @@ export function hlen(db: Database, args: string[]): Reply {
   if (error) return error;
   if (!hash) return ZERO;
 
+  // Lazy field expiration for all fields
+  db.expireHashFields(key);
+
   return integerReply(hash.size);
 }
 
@@ -251,6 +266,10 @@ export function hkeys(db: Database, args: string[]): Reply {
   const { hash, error } = getExistingHash(db, key);
   if (error) return error;
   if (!hash || hash.size === 0) return EMPTY_ARRAY;
+
+  // Lazy field expiration for all fields
+  db.expireHashFields(key);
+  if (hash.size === 0) return EMPTY_ARRAY;
 
   const results: Reply[] = [];
   for (const field of hash.keys()) {
@@ -267,6 +286,10 @@ export function hvals(db: Database, args: string[]): Reply {
   const { hash, error } = getExistingHash(db, key);
   if (error) return error;
   if (!hash || hash.size === 0) return EMPTY_ARRAY;
+
+  // Lazy field expiration for all fields
+  db.expireHashFields(key);
+  if (hash.size === 0) return EMPTY_ARRAY;
 
   const results: Reply[] = [];
   for (const value of hash.values()) {

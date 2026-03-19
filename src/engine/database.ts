@@ -292,6 +292,48 @@ export class Database {
   }
 
   /**
+   * Expire all expired fields for a given hash key.
+   * Returns the number of fields expired.
+   * If the hash becomes empty after expiration, deletes the key.
+   */
+  expireHashFields(key: string): number {
+    const fields = this.fieldExpiry.get(key);
+    if (!fields || fields.size === 0) return 0;
+
+    const now = this.clock();
+    const expired: string[] = [];
+    for (const [field, expiryTime] of fields) {
+      if (now >= expiryTime) {
+        expired.push(field);
+      }
+    }
+
+    if (expired.length === 0) return 0;
+
+    const entry = this.store.get(key);
+    if (!entry || entry.type !== 'hash') return 0;
+    const hash = entry.value as Map<string, string>;
+
+    for (const field of expired) {
+      hash.delete(field);
+      fields.delete(field);
+    }
+
+    if (fields.size === 0) {
+      this.fieldExpiry.delete(key);
+    }
+
+    if (hash.size === 0) {
+      this.store.delete(key);
+      this.expiry.delete(key);
+      this.fieldExpiry.delete(key);
+    }
+
+    this.bumpVersion(key);
+    return expired.length;
+  }
+
+  /**
    * Try to expire a single field of a hash. Returns true if the field was expired.
    * If the hash becomes empty after field deletion, deletes the key.
    */

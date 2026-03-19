@@ -13,6 +13,7 @@ import * as sort from './commands/sort.ts';
 import * as string from './commands/string.ts';
 import * as incr from './commands/incr.ts';
 import * as hash from './commands/hash.ts';
+import * as hashTtl from './commands/hash-ttl.ts';
 import * as database from './commands/database.ts';
 import * as cmd from './commands/command.ts';
 import type { CommandContext } from './types.ts';
@@ -1053,6 +1054,99 @@ const commandSpecs: CommandSpec[] = [
     lastKey: 1,
     keyStep: 1,
     categories: ['@read', '@hash'],
+  },
+
+  // --- Hash field TTL commands (Redis 7.4+) ---
+  {
+    name: 'hexpire',
+    handler: (ctx, args) => hashTtl.hexpire(ctx.db, ctx.engine.clock, args),
+    arity: -6,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@hash', '@fast'],
+  },
+  {
+    name: 'hpexpire',
+    handler: (ctx, args) => hashTtl.hpexpire(ctx.db, ctx.engine.clock, args),
+    arity: -6,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@hash', '@fast'],
+  },
+  {
+    name: 'hexpireat',
+    handler: (ctx, args) => hashTtl.hexpireat(ctx.db, ctx.engine.clock, args),
+    arity: -6,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@hash', '@fast'],
+  },
+  {
+    name: 'hpexpireat',
+    handler: (ctx, args) => hashTtl.hpexpireat(ctx.db, ctx.engine.clock, args),
+    arity: -6,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@hash', '@fast'],
+  },
+  {
+    name: 'httl',
+    handler: (ctx, args) => hashTtl.httl(ctx.db, ctx.engine.clock, args),
+    arity: -5,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@hash', '@fast'],
+  },
+  {
+    name: 'hpttl',
+    handler: (ctx, args) => hashTtl.hpttl(ctx.db, ctx.engine.clock, args),
+    arity: -5,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@hash', '@fast'],
+  },
+  {
+    name: 'hpersist',
+    handler: (ctx, args) => hashTtl.hpersist(ctx.db, ctx.engine.clock, args),
+    arity: -5,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@hash', '@fast'],
+  },
+  {
+    name: 'hexpiretime',
+    handler: (ctx, args) => hashTtl.hexpiretime(ctx.db, ctx.engine.clock, args),
+    arity: -5,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@hash', '@fast'],
+  },
+  {
+    name: 'hpexpiretime',
+    handler: (ctx, args) =>
+      hashTtl.hpexpiretime(ctx.db, ctx.engine.clock, args),
+    arity: -5,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@hash', '@fast'],
   },
 
   // --- Command introspection ---
