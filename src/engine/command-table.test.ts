@@ -235,6 +235,7 @@ describe('createCommandTable (registry)', () => {
       'flushall',
       'swapdb',
       'client',
+      'multi',
       'del',
       'unlink',
       'exists',
@@ -349,6 +350,7 @@ describe('createCommandTable (registry)', () => {
       ['flushall', -1],
       ['swapdb', 3],
       ['client', -2],
+      ['multi', 1],
       ['del', -2],
       ['unlink', -2],
       ['exists', -2],
@@ -529,6 +531,14 @@ describe('createCommandTable (registry)', () => {
       expect(def.flags.has('loading')).toBe(true);
       expect(def.flags.has('stale')).toBe(true);
       expect(def.flags.has('noauth')).toBe(true);
+    });
+
+    it('multi is noscript, loading, stale, fast', () => {
+      const def = getDef(table, 'multi');
+      expect(def.flags.has('noscript')).toBe(true);
+      expect(def.flags.has('loading')).toBe(true);
+      expect(def.flags.has('stale')).toBe(true);
+      expect(def.flags.has('fast')).toBe(true);
     });
   });
 
