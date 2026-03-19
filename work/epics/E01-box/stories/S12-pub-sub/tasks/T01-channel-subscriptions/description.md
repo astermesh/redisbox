@@ -1,5 +1,7 @@
 # T01: Channel Subscriptions
 
+**Status:** done
+
 Implement SUBSCRIBE, UNSUBSCRIBE. Server-wide channel-to-subscribers index. Per-client subscription tracking.
 
 ## Response Format

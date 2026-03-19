@@ -382,18 +382,15 @@ describe('CommandDispatcher', () => {
     });
 
     it('allows SUBSCRIBE in subscribe mode', () => {
-      // SUBSCRIBE is not registered yet, so it will be unknown command
-      // but it should NOT be blocked by subscribe mode check
       const result = dispatcher.dispatch(state, ctx, ['SUBSCRIBE', 'ch']);
-      // Will be unknown command error, not subscribe mode error
-      const err = result as { kind: 'error'; message: string };
-      expect(err.message).not.toContain("Can't execute");
+      // Should not be blocked — returns a multi reply, not subscribe mode error
+      expect(result.kind).not.toBe('error');
     });
 
     it('allows UNSUBSCRIBE in subscribe mode', () => {
       const result = dispatcher.dispatch(state, ctx, ['UNSUBSCRIBE', 'ch']);
-      const err = result as { kind: 'error'; message: string };
-      expect(err.message).not.toContain("Can't execute");
+      // Should not be blocked — returns a multi reply, not subscribe mode error
+      expect(result.kind).not.toBe('error');
     });
 
     it('allows PSUBSCRIBE in subscribe mode', () => {

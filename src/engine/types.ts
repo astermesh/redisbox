@@ -38,7 +38,8 @@ export type Reply =
   | { kind: 'integer'; value: number | bigint }
   | { kind: 'bulk'; value: string | null }
   | { kind: 'array'; value: Reply[] }
-  | { kind: 'error'; prefix: string; message: string };
+  | { kind: 'error'; prefix: string; message: string }
+  | { kind: 'multi'; value: Reply[] };
 
 export function statusReply(value: string): Reply {
   return { kind: 'status', value };
@@ -58,6 +59,10 @@ export function arrayReply(value: Reply[]): Reply {
 
 export function errorReply(prefix: string, message: string): Reply {
   return { kind: 'error', prefix, message };
+}
+
+export function multiReply(value: Reply[]): Reply {
+  return { kind: 'multi', value };
 }
 
 export const OK = statusReply('OK');
@@ -156,4 +161,5 @@ export interface CommandContext {
   config?: import('../config-store.ts').ConfigStore;
   clientStore?: import('../server/client-state.ts').ClientStateStore;
   commandTable?: import('./command-table.ts').CommandTable;
+  pubsub?: import('./pubsub-manager.ts').PubSubManager;
 }

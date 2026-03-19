@@ -191,6 +191,13 @@ export class CommandDispatcher {
     }
 
     // Execute handler
-    return def.handler(ctx, args);
+    const result = def.handler(ctx, args);
+
+    // Sync subscriber mode from client state (set by SUBSCRIBE/UNSUBSCRIBE handlers)
+    if (ctx.client) {
+      state.subscribed = ctx.client.flagSubscribed;
+    }
+
+    return result;
   }
 }
