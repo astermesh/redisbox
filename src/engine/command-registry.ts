@@ -93,6 +93,26 @@ const commandSpecs: CommandSpec[] = [
     keyStep: 0,
     categories: ['@fast', '@connection'],
   },
+  {
+    name: 'hello',
+    handler: (ctx, args) => connection.hello(ctx, args),
+    arity: -1,
+    flags: ['fast', 'loading', 'stale', 'noauth'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@fast', '@connection'],
+  },
+  {
+    name: 'auth',
+    handler: (ctx, args) => connection.auth(ctx, args),
+    arity: -2,
+    flags: ['fast', 'loading', 'stale', 'noauth', 'noscript'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@fast', '@connection'],
+  },
 
   // --- Database commands ---
   {

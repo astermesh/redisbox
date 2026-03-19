@@ -27,10 +27,7 @@ function parseDbIndex(value: string): number | null {
  * Validate optional ASYNC|SYNC flag for FLUSHDB/FLUSHALL.
  * Returns null on success, error reply on failure.
  */
-function validateFlushArgs(
-  commandName: string,
-  args: string[]
-): Reply | null {
+function validateFlushArgs(commandName: string, args: string[]): Reply | null {
   if (args.length === 0) return null;
   if (args.length > 1) return wrongArityError(commandName);
   const flag = (args[0] ?? '').toUpperCase();

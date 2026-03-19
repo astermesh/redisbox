@@ -16,6 +16,7 @@ import type { RespValue } from '../resp/types.ts';
 import * as serializer from '../resp/resp-serializer.ts';
 import type { ClientState } from './client-state.ts';
 import type { RedisEngine } from '../engine/engine.ts';
+import type { ConfigStore } from '../config-store.ts';
 
 /** Convert an engine Reply to a RESP wire-format RespValue. */
 function replyToRespValue(reply: Reply): RespValue {
@@ -45,6 +46,7 @@ export interface ClientConnectionOptions {
   clientState: ClientState;
   engine: RedisEngine;
   dispatcher: CommandDispatcher;
+  config?: ConfigStore;
 }
 
 export class ClientConnection {
@@ -54,6 +56,7 @@ export class ClientConnection {
   private readonly clientState: ClientState;
   private readonly dispatcherState: DispatcherClientState;
   private readonly engine: RedisEngine;
+  private readonly config?: ConfigStore;
   private paused = false;
   private closed = false;
 
@@ -62,6 +65,7 @@ export class ClientConnection {
     this.clientState = options.clientState;
     this.engine = options.engine;
     this.dispatcher = options.dispatcher;
+    this.config = options.config;
     this.dispatcherState = createDispatcherState();
 
     this.reader = new CommandReader((args) => this.handleCommand(args));
@@ -90,6 +94,7 @@ export class ClientConnection {
       db: this.engine.db(this.clientState.dbIndex),
       engine: this.engine,
       client: this.clientState,
+      config: this.config,
     };
 
     const reply = this.dispatcher.dispatch(this.dispatcherState, ctx, args);
