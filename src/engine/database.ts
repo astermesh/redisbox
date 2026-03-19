@@ -128,6 +128,14 @@ export class Database {
     return this.store.size;
   }
 
+  flush(): void {
+    this.store.clear();
+    this.expiry.clear();
+    this.fieldExpiry.clear();
+    this.versions.clear();
+    this.globalVersion = 0;
+  }
+
   randomKey(): string | null {
     if (this.store.size === 0) return null;
     const allKeys = Array.from(this.store.keys());
