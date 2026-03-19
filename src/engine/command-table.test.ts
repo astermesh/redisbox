@@ -322,6 +322,8 @@ describe('createCommandTable (registry)', () => {
       'smembers',
       'scard',
       'smove',
+      'subscribe',
+      'unsubscribe',
       'command',
     ];
 
@@ -437,6 +439,8 @@ describe('createCommandTable (registry)', () => {
       ['smembers', 2],
       ['scard', 2],
       ['smove', 4],
+      ['subscribe', -2],
+      ['unsubscribe', -1],
     ];
 
     for (const [name, expectedArity] of arityTests) {
