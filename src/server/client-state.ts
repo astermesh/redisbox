@@ -1,3 +1,5 @@
+export type TrackingMode = 'normal' | 'bcast' | 'optin' | 'optout';
+
 export class ClientState {
   readonly id: number;
   readonly createdAt: number;
@@ -12,6 +14,15 @@ export class ClientState {
   flagSubscribed = false;
   authenticated = false;
 
+  noEvict = false;
+  noTouch = false;
+
+  tracking = false;
+  trackingMode: TrackingMode | null = null;
+  trackingRedirect = 0;
+  trackingPrefixes: string[] = [];
+  trackingNoloop = false;
+
   constructor(id: number, createdAt: number) {
     this.id = id;
     this.createdAt = createdAt;
@@ -23,6 +34,7 @@ export class ClientState {
     if (this.flagMulti) flags += 'x';
     if (this.flagBlocked) flags += 'b';
     if (this.flagSubscribed) flags += 'P';
+    if (this.tracking) flags += 't';
     return flags || 'N';
   }
 }
