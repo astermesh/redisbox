@@ -179,12 +179,12 @@ describe('FLUSHDB', () => {
     });
   });
 
-  it('returns syntax error for too many args', () => {
+  it('returns wrong number of arguments error for too many args', () => {
     const ctx = createCtx();
     expect(cmd.flushdb(ctx, ['ASYNC', 'extra'])).toEqual({
       kind: 'error',
       prefix: 'ERR',
-      message: 'syntax error',
+      message: "wrong number of arguments for 'flushdb' command",
     });
   });
 
@@ -243,12 +243,12 @@ describe('FLUSHALL', () => {
     });
   });
 
-  it('returns syntax error for too many args', () => {
+  it('returns wrong number of arguments error for too many args', () => {
     const ctx = createCtx();
     expect(cmd.flushall(ctx, ['ASYNC', 'extra'])).toEqual({
       kind: 'error',
       prefix: 'ERR',
-      message: 'syntax error',
+      message: "wrong number of arguments for 'flushall' command",
     });
   });
 

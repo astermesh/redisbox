@@ -4,9 +4,9 @@ import type { Reply, CommandContext } from '../types.ts';
 import {
   integerReply,
   errorReply,
+  wrongArityError,
   OK,
   NOT_INTEGER_ERR,
-  SYNTAX_ERR,
 } from '../types.ts';
 
 const DB_OUT_OF_RANGE_ERR = errorReply('ERR', 'DB index is out of range');
@@ -27,9 +27,12 @@ function parseDbIndex(value: string): number | null {
  * Validate optional ASYNC|SYNC flag for FLUSHDB/FLUSHALL.
  * Returns null on success, error reply on failure.
  */
-function validateFlushArgs(args: string[]): Reply | null {
+function validateFlushArgs(
+  commandName: string,
+  args: string[]
+): Reply | null {
   if (args.length === 0) return null;
-  if (args.length > 1) return SYNTAX_ERR;
+  if (args.length > 1) return wrongArityError(commandName);
   const flag = (args[0] ?? '').toUpperCase();
   if (flag === 'ASYNC' || flag === 'SYNC') return null;
   return FLUSH_ARG_ERR;
@@ -56,14 +59,14 @@ export function dbsize(db: Database): Reply {
 }
 
 export function flushdb(ctx: CommandContext, args: string[]): Reply {
-  const err = validateFlushArgs(args);
+  const err = validateFlushArgs('flushdb', args);
   if (err) return err;
   ctx.db.flush();
   return OK;
 }
 
 export function flushall(ctx: CommandContext, args: string[]): Reply {
-  const err = validateFlushArgs(args);
+  const err = validateFlushArgs('flushall', args);
   if (err) return err;
   for (const db of ctx.engine.databases) {
     db.flush();

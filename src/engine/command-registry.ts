@@ -113,13 +113,13 @@ const commandSpecs: CommandSpec[] = [
     firstKey: 0,
     lastKey: 0,
     keyStep: 0,
-    categories: ['@keyspace', '@read'],
+    categories: ['@keyspace', '@read', '@fast'],
   },
   {
     name: 'flushdb',
     handler: (ctx, args) => database.flushdb(ctx, args),
     arity: -1,
-    flags: ['write'],
+    flags: ['write', 'loading', 'stale'],
     firstKey: 0,
     lastKey: 0,
     keyStep: 0,
@@ -129,7 +129,7 @@ const commandSpecs: CommandSpec[] = [
     name: 'flushall',
     handler: (ctx, args) => database.flushall(ctx, args),
     arity: -1,
-    flags: ['write'],
+    flags: ['write', 'loading', 'stale'],
     firstKey: 0,
     lastKey: 0,
     keyStep: 0,
@@ -143,7 +143,7 @@ const commandSpecs: CommandSpec[] = [
     firstKey: 0,
     lastKey: 0,
     keyStep: 0,
-    categories: ['@keyspace', '@write'],
+    categories: ['@keyspace', '@write', '@fast'],
   },
 
   // --- Generic (keyspace) commands ---
