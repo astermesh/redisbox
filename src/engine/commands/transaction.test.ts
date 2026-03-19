@@ -274,6 +274,39 @@ describe('MULTI command', () => {
     });
   });
 
+  describe('RESET clears transaction state', () => {
+    it('clears inMulti and queue on RESET', () => {
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['SET', 'k', 'v']);
+      expect(state.inMulti).toBe(true);
+      expect(state.multiQueue).toHaveLength(1);
+
+      dispatcher.dispatch(state, ctx, ['RESET']);
+      expect(state.inMulti).toBe(false);
+      expect(state.multiQueue).toHaveLength(0);
+      expect(state.multiDirty).toBe(false);
+    });
+
+    it('clears dirty flag on RESET', () => {
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['NOSUCHCMD']);
+      expect(state.multiDirty).toBe(true);
+
+      dispatcher.dispatch(state, ctx, ['RESET']);
+      expect(state.multiDirty).toBe(false);
+      expect(state.inMulti).toBe(false);
+    });
+  });
+
+  describe('subscribe mode blocks MULTI', () => {
+    it('rejects MULTI in subscribe mode', () => {
+      state.subscribed = true;
+      const result = dispatcher.dispatch(state, ctx, ['MULTI']);
+      expect(result.kind).toBe('error');
+      expect(state.inMulti).toBe(false);
+    });
+  });
+
   describe('MULTI visibility in COMMAND introspection', () => {
     it('MULTI is listed in COMMAND COUNT', () => {
       const before = dispatcher.dispatch(state, ctx, ['COMMAND', 'COUNT']);

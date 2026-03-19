@@ -367,7 +367,7 @@ const commandSpecs: CommandSpec[] = [
     name: 'multi',
     handler: () => transaction.multi(),
     arity: 1,
-    flags: ['fast'],
+    flags: ['noscript', 'loading', 'stale', 'fast'],
     firstKey: 0,
     lastKey: 0,
     keyStep: 0,
