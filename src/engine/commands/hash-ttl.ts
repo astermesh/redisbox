@@ -185,6 +185,9 @@ function hexpireGeneric(
   const timeStr = args[1] ?? '';
   const timeValue = parseInt(timeStr, 10);
   if (isNaN(timeValue)) return NOT_INTEGER_ERR;
+  if (timeValue < 0) {
+    return errorReply('ERR', 'invalid expire time, must be >= 0');
+  }
 
   const flagsParsed = parseExpireFlags(args, 2);
   if (flagsParsed.error) return flagsParsed.error;
@@ -322,7 +325,7 @@ export function httl(db: Database, clock: () => number, args: string[]): Reply {
   return hfieldReadGeneric(db, clock, args, (_hash, _field, expiryMs, now) => {
     if (expiryMs === undefined) return -1;
     const remaining = Math.max(0, expiryMs - now);
-    return Math.floor(remaining / 1000);
+    return Math.ceil(remaining / 1000);
   });
 }
 
@@ -383,7 +386,7 @@ export function hexpiretime(
 ): Reply {
   return hfieldReadGeneric(db, clock, args, (_hash, _field, expiryMs) => {
     if (expiryMs === undefined) return -1;
-    return Math.floor(expiryMs / 1000);
+    return Math.ceil(expiryMs / 1000);
   });
 }
 

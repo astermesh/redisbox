@@ -85,13 +85,18 @@ describe('HEXPIRE', () => {
     expect(hash.hget(db, ['k', 'f1'])).toEqual(bulk(null));
   });
 
-  it('deletes field when seconds is negative and returns 2', () => {
+  it('returns error for negative seconds', () => {
     const { db, clock } = createDb(1000);
     setupHash(db);
-    expect(
-      hashTtl.hexpire(db, clock, ['k', '-5', 'FIELDS', '1', 'f1'])
-    ).toEqual(arr(integer(2)));
-    expect(hash.hexists(db, ['k', 'f1'])).toEqual(integer(0));
+    const result = hashTtl.hexpire(db, clock, [
+      'k',
+      '-5',
+      'FIELDS',
+      '1',
+      'f1',
+    ]);
+    expect(result.kind).toBe('error');
+    expect(hash.hexists(db, ['k', 'f1'])).toEqual(integer(1));
   });
 
   it('NX flag: sets only if no field expiry exists', () => {
@@ -417,11 +422,9 @@ describe('HTTL', () => {
     const { db, clock } = createDb(1000);
     setupHash(db);
     db.setFieldExpiry('k', 'f1', 11500); // 10.5s remaining
-    // Redis rounds: ceil(10500/1000) = 11? No, Redis actually truncates.
-    // TTL in Redis: floor((expiryMs - now) / 1000) when > 0
-    // 10500 / 1000 = 10.5, floor = 10
+    // Redis uses ceiling: ceil(10500/1000) = 11
     expect(hashTtl.httl(db, clock, ['k', 'FIELDS', '1', 'f1'])).toEqual(
-      arr(integer(10))
+      arr(integer(11))
     );
   });
 });
@@ -559,13 +562,13 @@ describe('HEXPIRETIME', () => {
     );
   });
 
-  it('converts ms to seconds correctly', () => {
+  it('converts ms to seconds correctly (ceiling)', () => {
     const { db, clock } = createDb(1000);
     setupHash(db);
     db.setFieldExpiry('k', 'f1', 20500);
-    // floor(20500 / 1000) = 20
+    // Redis uses ceiling: ceil(20500 / 1000) = 21
     expect(hashTtl.hexpiretime(db, clock, ['k', 'FIELDS', '1', 'f1'])).toEqual(
-      arr(integer(20))
+      arr(integer(21))
     );
   });
 });
@@ -646,12 +649,13 @@ describe('lazy field expiration', () => {
     expect(hash.hgetall(db, ['k'])).toEqual(arr(bulk('f3'), bulk('v3')));
   });
 
-  it('HLEN excludes expired fields', () => {
+  it('HLEN does not subtract expired fields (O(1) like Redis)', () => {
     const { db, setTime } = createDb(1000);
     setupHash(db);
     db.setFieldExpiry('k', 'f1', 2000);
     setTime(3000);
-    expect(hash.hlen(db, ['k'])).toEqual(integer(2));
+    // Redis HLEN is O(1) and does NOT trigger lazy field expiration
+    expect(hash.hlen(db, ['k'])).toEqual(integer(3));
   });
 
   it('HKEYS skips expired fields', () => {
@@ -686,6 +690,128 @@ describe('lazy field expiration', () => {
     setTime(3000);
     hash.hget(db, ['k', 'f1']);
     expect(db.getFieldExpiry('k', 'f1')).toBeUndefined();
+  });
+
+  it('HSET clears field TTL', () => {
+    const { db } = createDb(1000);
+    setupHash(db);
+    db.setFieldExpiry('k', 'f1', 5000);
+    hash.hset(db, ['k', 'f1', 'newval']);
+    expect(db.getFieldExpiry('k', 'f1')).toBeUndefined();
+  });
+
+  it('HMSET clears field TTL', () => {
+    const { db } = createDb(1000);
+    setupHash(db);
+    db.setFieldExpiry('k', 'f1', 5000);
+    hash.hmset(db, ['k', 'f1', 'newval']);
+    expect(db.getFieldExpiry('k', 'f1')).toBeUndefined();
+  });
+
+  it('HSETNX treats expired field as non-existent', () => {
+    const { db, setTime } = createDb(1000);
+    setupHash(db);
+    db.setFieldExpiry('k', 'f1', 2000);
+    setTime(3000);
+    // f1 expired — HSETNX should succeed
+    expect(hash.hsetnx(db, ['k', 'f1', 'newval'])).toEqual(integer(1));
+    expect(hash.hget(db, ['k', 'f1'])).toEqual(bulk('newval'));
+  });
+
+  it('HINCRBY treats expired field as 0', () => {
+    const { db, setTime } = createDb(1000);
+    setupHash(db);
+    db.setFieldExpiry('k', 'f1', 2000);
+    setTime(3000);
+    expect(hash.hincrby(db, ['k', 'f1', '5'])).toEqual(integer(5));
+    expect(db.getFieldExpiry('k', 'f1')).toBeUndefined();
+  });
+
+  it('HINCRBYFLOAT treats expired field as 0', () => {
+    const { db, setTime } = createDb(1000);
+    setupHash(db);
+    db.setFieldExpiry('k', 'f1', 2000);
+    setTime(3000);
+    expect(hash.hincrbyfloat(db, ['k', 'f1', '1.5'])).toEqual(bulk('1.5'));
+    expect(db.getFieldExpiry('k', 'f1')).toBeUndefined();
+  });
+
+  it('HINCRBY clears field TTL on existing field', () => {
+    const { db } = createDb(1000);
+    hash.hset(db, ['k', 'counter', '10']);
+    db.setFieldExpiry('k', 'counter', 5000);
+    hash.hincrby(db, ['k', 'counter', '1']);
+    expect(db.getFieldExpiry('k', 'counter')).toBeUndefined();
+  });
+
+  it('HRANDFIELD skips expired fields', () => {
+    const { db, setTime } = createDb(1000);
+    hash.hset(db, ['k', 'f1', 'v1', 'f2', 'v2']);
+    db.setFieldExpiry('k', 'f1', 2000);
+    setTime(3000);
+    // Only f2 should be returned
+    const result = hash.hrandfield(db, ['k', '10'], () => 0.5);
+    expect(result).toEqual(arr(bulk('f2')));
+  });
+
+  it('HSCAN skips expired fields', () => {
+    const { db, setTime } = createDb(1000);
+    hash.hset(db, ['k', 'f1', 'v1', 'f2', 'v2']);
+    db.setFieldExpiry('k', 'f1', 2000);
+    setTime(3000);
+    const result = hash.hscan(db, ['k', '0']);
+    // Should only return f2
+    expect(result).toEqual(
+      arr(bulk('0'), arr(bulk('f2'), bulk('v2')))
+    );
+  });
+
+  it('HSET counts expired field as new', () => {
+    const { db, setTime } = createDb(1000);
+    setupHash(db);
+    db.setFieldExpiry('k', 'f1', 2000);
+    setTime(3000);
+    // f1 is expired, HSET should count it as a new field
+    expect(hash.hset(db, ['k', 'f1', 'newval'])).toEqual(integer(1));
+  });
+
+  it('HPEXPIRE returns error for negative milliseconds', () => {
+    const { db, clock } = createDb(1000);
+    setupHash(db);
+    const result = hashTtl.hpexpire(db, clock, [
+      'k',
+      '-100',
+      'FIELDS',
+      '1',
+      'f1',
+    ]);
+    expect(result.kind).toBe('error');
+  });
+
+  it('HEXPIREAT returns error for negative timestamp', () => {
+    const { db, clock } = createDb(1000);
+    setupHash(db);
+    const result = hashTtl.hexpireat(db, clock, [
+      'k',
+      '-1',
+      'FIELDS',
+      '1',
+      'f1',
+    ]);
+    expect(result.kind).toBe('error');
+  });
+
+  it('HPEXPIREAT returns error for negative timestamp', () => {
+    const { db, clock } = createDb(1000);
+    setupHash(db);
+    const result = hashTtl.hpexpireat(db, clock, [
+      'k',
+      '-1',
+      'FIELDS',
+      '1',
+      'f1',
+    ]);
+    expect(result.kind).toBe('error');
   });
 });
 

@@ -111,8 +111,10 @@ export function hset(db: Database, args: string[]): Reply {
   for (let i = 1; i < args.length; i += 2) {
     const field = args[i] ?? '';
     const value = args[i + 1] ?? '';
+    db.tryExpireField(key, field);
     if (!hash.has(field)) added++;
     hash.set(field, value);
+    db.removeFieldExpiry(key, field);
   }
 
   updateEncoding(db, key);
@@ -151,6 +153,7 @@ export function hmset(db: Database, args: string[]): Reply {
     const field = args[i] ?? '';
     const value = args[i + 1] ?? '';
     hash.set(field, value);
+    db.removeFieldExpiry(key, field);
   }
 
   updateEncoding(db, key);
@@ -252,9 +255,6 @@ export function hlen(db: Database, args: string[]): Reply {
   if (error) return error;
   if (!hash) return ZERO;
 
-  // Lazy field expiration for all fields
-  db.expireHashFields(key);
-
   return integerReply(hash.size);
 }
 
@@ -308,6 +308,7 @@ export function hsetnx(db: Database, args: string[]): Reply {
   const { hash, error } = getOrCreateHash(db, key);
   if (error) return error;
 
+  db.tryExpireField(key, field);
   if (hash.has(field)) return ZERO;
 
   hash.set(field, value);
@@ -334,6 +335,7 @@ export function hincrby(db: Database, args: string[]): Reply {
   const { hash, error } = getOrCreateHash(db, key);
   if (error) return error;
 
+  db.tryExpireField(key, field);
   const currentStr = hash.get(field) ?? '0';
   const current = parseInteger(currentStr);
   if (current === null) return HASH_NOT_INTEGER_ERR;
@@ -342,6 +344,7 @@ export function hincrby(db: Database, args: string[]): Reply {
   if (result > INT64_MAX || result < INT64_MIN) return OVERFLOW_ERR;
 
   hash.set(field, result.toString());
+  db.removeFieldExpiry(key, field);
   updateEncoding(db, key);
 
   const replyValue =
@@ -365,6 +368,7 @@ export function hincrbyfloat(db: Database, args: string[]): Reply {
   const { hash, error } = getOrCreateHash(db, key);
   if (error) return error;
 
+  db.tryExpireField(key, field);
   const currentStr = hash.get(field) ?? '0';
   const currentParsed = parseFloat64(currentStr);
   if (currentParsed === null) return HASH_NOT_FLOAT_ERR;
@@ -375,6 +379,7 @@ export function hincrbyfloat(db: Database, args: string[]): Reply {
 
   const strResult = formatFloat(result);
   hash.set(field, strResult);
+  db.removeFieldExpiry(key, field);
   updateEncoding(db, key);
 
   return bulkReply(strResult);
@@ -391,6 +396,9 @@ export function hrandfield(
 
   const { hash, error } = getExistingHash(db, key);
   if (error) return error;
+
+  // Bulk-expire all expired fields before random selection (Redis behavior)
+  if (hash) db.expireHashFields(key);
 
   // No count argument — return single field or nil
   if (args.length === 1) {
@@ -517,6 +525,9 @@ export function hscan(db: Database, args: string[]): Reply {
     const field = allFields[position] ?? '';
     position++;
     scanned++;
+
+    // Skip expired fields (lazy field expiration)
+    if (db.tryExpireField(key, field)) continue;
 
     if (matchPattern && !matchGlob(matchPattern, field)) continue;
 
