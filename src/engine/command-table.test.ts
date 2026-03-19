@@ -307,6 +307,13 @@ describe('createCommandTable (registry)', () => {
       'hpersist',
       'hexpiretime',
       'hpexpiretime',
+      'lpush',
+      'rpush',
+      'lpushx',
+      'rpushx',
+      'lpop',
+      'rpop',
+      'llen',
       'command',
     ];
 
