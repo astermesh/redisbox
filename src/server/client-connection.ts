@@ -14,7 +14,7 @@ import type { ClientState as DispatcherClientState } from '../engine/command-dis
 import type { Reply, CommandContext } from '../engine/types.ts';
 import type { RespValue } from '../resp/types.ts';
 import * as serializer from '../resp/resp-serializer.ts';
-import type { ClientState } from './client-state.ts';
+import type { ClientState, ClientStateStore } from './client-state.ts';
 import type { RedisEngine } from '../engine/engine.ts';
 import type { ConfigStore } from '../config-store.ts';
 
@@ -44,6 +44,7 @@ export function serializeReply(reply: Reply): Buffer {
 export interface ClientConnectionOptions {
   socket: net.Socket;
   clientState: ClientState;
+  clientStore?: ClientStateStore;
   engine: RedisEngine;
   dispatcher: CommandDispatcher;
   config?: ConfigStore;
@@ -54,6 +55,7 @@ export class ClientConnection {
   private readonly reader: CommandReader;
   private readonly dispatcher: CommandDispatcher;
   private readonly clientState: ClientState;
+  private readonly clientStore?: ClientStateStore;
   private readonly dispatcherState: DispatcherClientState;
   private readonly engine: RedisEngine;
   private readonly config?: ConfigStore;
@@ -63,6 +65,7 @@ export class ClientConnection {
   constructor(options: ClientConnectionOptions) {
     this.socket = options.socket;
     this.clientState = options.clientState;
+    this.clientStore = options.clientStore;
     this.engine = options.engine;
     this.dispatcher = options.dispatcher;
     this.config = options.config;
@@ -95,6 +98,7 @@ export class ClientConnection {
       engine: this.engine,
       client: this.clientState,
       config: this.config,
+      clientStore: this.clientStore,
     };
 
     const reply = this.dispatcher.dispatch(this.dispatcherState, ctx, args);

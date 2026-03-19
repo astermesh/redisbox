@@ -20,6 +20,9 @@ describe('ClientState', () => {
       expect(state.flagMulti).toBe(false);
       expect(state.flagBlocked).toBe(false);
       expect(state.flagSubscribed).toBe(false);
+      expect(state.noEvict).toBe(false);
+      expect(state.noTouch).toBe(false);
+      expect(state.tracking).toBe(false);
     });
   });
 
@@ -121,6 +124,19 @@ describe('ClientState', () => {
       state.flagBlocked = true;
       state.flagSubscribed = true;
       expect(state.flagsString()).toBe('xbP');
+    });
+
+    it('returns t for tracking', () => {
+      const state = new ClientState(1, 0);
+      state.tracking = true;
+      expect(state.flagsString()).toBe('t');
+    });
+
+    it('combines tracking with other flags', () => {
+      const state = new ClientState(1, 0);
+      state.flagMulti = true;
+      state.tracking = true;
+      expect(state.flagsString()).toBe('xt');
     });
   });
 });
