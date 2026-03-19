@@ -16,10 +16,12 @@ import type {
 
 // --- CLIENT SETNAME validation ---
 
-const INVALID_NAME_CHARS = /\s/;
-
 function isValidClientName(name: string): boolean {
-  return !INVALID_NAME_CHARS.test(name);
+  for (let i = 0; i < name.length; i++) {
+    const code = name.charCodeAt(i);
+    if (code < 33 || code > 126) return false;
+  }
+  return true;
 }
 
 // --- CLIENT LIST format ---
@@ -40,6 +42,9 @@ function formatClientInfo(client: ClientState, clock: () => number): string {
     ` laddr=127.0.0.1:0` +
     ` fd=0` +
     ` name=${client.name}` +
+    ` age=${age}` +
+    ` idle=${idle}` +
+    ` flags=${client.flagsString()}` +
     ` db=${client.dbIndex}` +
     ` sub=0` +
     ` psub=0` +
@@ -50,18 +55,19 @@ function formatClientInfo(client: ClientState, clock: () => number): string {
     ` qbuf-free=0` +
     ` argv-mem=0` +
     ` multi-mem=0` +
+    ` rbs=0` +
+    ` rbp=0` +
+    ` obl=0` +
+    ` oll=0` +
+    ` omem=0` +
     ` tot-mem=0` +
-    ` net-i=0` +
-    ` net-o=0` +
-    ` age=${age}` +
-    ` idle=${idle}` +
-    ` flags=${client.flagsString()}` +
     ` events=r` +
     ` cmd=${client.lastCommand || 'NULL'}` +
     ` user=default` +
+    ` redir=${client.trackingRedirect}` +
+    ` resp=2` +
     ` lib-name=` +
-    ` lib-ver=` +
-    ` redir=${client.trackingRedirect}`
+    ` lib-ver=`
   );
 }
 
@@ -118,7 +124,7 @@ export function clientList(
         lower !== 'pubsub' &&
         lower !== 'slave'
       ) {
-        return errorReply('ERR', "Unknown client type 'unknown'");
+        return errorReply('ERR', `Unknown client type '${val}'`);
       }
       typeFilter = lower;
       i++; // skip value
@@ -270,7 +276,7 @@ export function clientUnpause(): Reply {
 export function clientReply(args: string[]): Reply {
   const mode = (args[0] ?? '').toUpperCase();
   if (mode !== 'ON' && mode !== 'OFF' && mode !== 'SKIP') {
-    return errorReply('ERR', 'CLIENT REPLY only accepts ON, OFF, or SKIP');
+    return errorReply('ERR', 'syntax error');
   }
   return OK;
 }
@@ -281,7 +287,7 @@ export function clientNoEvict(
 ): Reply {
   const flag = (args[0] ?? '').toUpperCase();
   if (flag !== 'ON' && flag !== 'OFF') {
-    return errorReply('ERR', "argument must be 'on' or 'off'");
+    return errorReply('ERR', 'syntax error');
   }
   if (client) {
     client.noEvict = flag === 'ON';
@@ -295,7 +301,7 @@ export function clientNoTouch(
 ): Reply {
   const flag = (args[0] ?? '').toUpperCase();
   if (flag !== 'ON' && flag !== 'OFF') {
-    return errorReply('ERR', "argument must be 'on' or 'off'");
+    return errorReply('ERR', 'syntax error');
   }
   if (client) {
     client.noTouch = flag === 'ON';
@@ -428,20 +434,27 @@ export function clientCaching(
 ): Reply {
   const mode = (args[0] ?? '').toUpperCase();
   if (mode !== 'YES' && mode !== 'NO') {
-    return errorReply('ERR', "argument must be 'yes' or 'no'");
+    return errorReply('ERR', 'syntax error');
   }
 
   if (!client || !client.tracking) {
     return errorReply(
       'ERR',
-      'CLIENT CACHING can be called only after the CLIENT TRACKING command with the OPTIN or OPTOUT mode enabled'
+      'CLIENT CACHING can be called only when the client is in tracking mode with OPTIN or OPTOUT mode enabled'
     );
   }
 
-  if (client.trackingMode !== 'optin' && client.trackingMode !== 'optout') {
+  if (mode === 'YES' && client.trackingMode !== 'optin') {
     return errorReply(
       'ERR',
-      'CLIENT CACHING can be called only after the CLIENT TRACKING command with the OPTIN or OPTOUT mode enabled'
+      'CLIENT CACHING YES is only valid when tracking is enabled in OPTIN mode.'
+    );
+  }
+
+  if (mode === 'NO' && client.trackingMode !== 'optout') {
+    return errorReply(
+      'ERR',
+      'CLIENT CACHING NO is only valid when tracking is enabled in OPTOUT mode.'
     );
   }
 

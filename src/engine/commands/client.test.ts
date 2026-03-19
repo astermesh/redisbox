@@ -125,6 +125,18 @@ describe('CLIENT SETNAME', () => {
     });
   });
 
+  it('rejects names with control characters', () => {
+    const { ctx } = createCtx();
+    const reply = cmd.clientSetname(ctx.client, ['bad\x01name']);
+    expect(reply.kind).toBe('error');
+  });
+
+  it('rejects names with characters above ASCII 126', () => {
+    const { ctx } = createCtx();
+    const reply = cmd.clientSetname(ctx.client, ['café']);
+    expect(reply.kind).toBe('error');
+  });
+
   it('accepts names with hyphens and underscores', () => {
     const { ctx, client } = createCtx();
     cmd.clientSetname(ctx.client, ['my_client-name']);
@@ -221,6 +233,36 @@ describe('CLIENT INFO', () => {
     const reply = cmd.clientInfo(ctx.client, ctx.engine.clock);
     if (reply.kind === 'bulk' && reply.value) {
       expect(reply.value).toContain('redir=42');
+    }
+  });
+
+  it('includes resp version', () => {
+    const { ctx } = createCtx();
+    const reply = cmd.clientInfo(ctx.client, ctx.engine.clock);
+    if (reply.kind === 'bulk' && reply.value) {
+      expect(reply.value).toContain('resp=2');
+    }
+  });
+
+  it('has correct field order matching Redis', () => {
+    const { ctx } = createCtx({ time: 1000 });
+    const reply = cmd.clientInfo(ctx.client, ctx.engine.clock);
+    if (reply.kind === 'bulk' && reply.value) {
+      const line = reply.value.trim();
+      // Verify key fields appear in correct Redis order
+      const idPos = line.indexOf('id=');
+      const namePos = line.indexOf('name=');
+      const agePos = line.indexOf('age=');
+      const idlePos = line.indexOf('idle=');
+      const flagsPos = line.indexOf('flags=');
+      const dbPos = line.indexOf('db=');
+      const cmdPos = line.indexOf('cmd=');
+      expect(idPos).toBeLessThan(namePos);
+      expect(namePos).toBeLessThan(agePos);
+      expect(agePos).toBeLessThan(idlePos);
+      expect(idlePos).toBeLessThan(flagsPos);
+      expect(flagsPos).toBeLessThan(dbPos);
+      expect(dbPos).toBeLessThan(cmdPos);
     }
   });
 });
@@ -393,9 +435,13 @@ describe('CLIENT REPLY', () => {
     expect(cmd.clientReply(['SKIP'])).toEqual({ kind: 'status', value: 'OK' });
   });
 
-  it('rejects invalid mode', () => {
+  it('rejects invalid mode with syntax error', () => {
     const reply = cmd.clientReply(['INVALID']);
-    expect(reply.kind).toBe('error');
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
   });
 });
 
@@ -427,10 +473,14 @@ describe('CLIENT NO-EVICT', () => {
     expect(client.noEvict).toBe(true);
   });
 
-  it('rejects invalid argument', () => {
+  it('rejects invalid argument with syntax error', () => {
     const { ctx } = createCtx();
     const reply = cmd.clientNoEvict(ctx.client, ['MAYBE']);
-    expect(reply.kind).toBe('error');
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
   });
 
   it('works without client', () => {
@@ -460,10 +510,14 @@ describe('CLIENT NO-TOUCH', () => {
     expect(client.noTouch).toBe(false);
   });
 
-  it('rejects invalid argument', () => {
+  it('rejects invalid argument with syntax error', () => {
     const { ctx } = createCtx();
     const reply = cmd.clientNoTouch(ctx.client, ['MAYBE']);
-    expect(reply.kind).toBe('error');
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
   });
 });
 
@@ -615,23 +669,76 @@ describe('CLIENT CACHING', () => {
   it('rejects when tracking is off', () => {
     const { ctx } = createCtx();
     const reply = cmd.clientCaching(ctx.client, ['YES']);
-    expect(reply.kind).toBe('error');
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message:
+        'CLIENT CACHING can be called only when the client is in tracking mode with OPTIN or OPTOUT mode enabled',
+    });
   });
 
-  it('rejects when tracking is in normal mode', () => {
+  it('rejects YES when tracking is in normal mode', () => {
     const { ctx, client } = createCtx();
     client.tracking = true;
     client.trackingMode = 'normal';
     const reply = cmd.clientCaching(ctx.client, ['YES']);
-    expect(reply.kind).toBe('error');
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message:
+        'CLIENT CACHING YES is only valid when tracking is enabled in OPTIN mode.',
+    });
   });
 
-  it('rejects invalid argument', () => {
+  it('rejects NO when tracking is in normal mode', () => {
+    const { ctx, client } = createCtx();
+    client.tracking = true;
+    client.trackingMode = 'normal';
+    const reply = cmd.clientCaching(ctx.client, ['NO']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message:
+        'CLIENT CACHING NO is only valid when tracking is enabled in OPTOUT mode.',
+    });
+  });
+
+  it('rejects YES when tracking is OPTOUT (wrong mode)', () => {
+    const { ctx, client } = createCtx();
+    client.tracking = true;
+    client.trackingMode = 'optout';
+    const reply = cmd.clientCaching(ctx.client, ['YES']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message:
+        'CLIENT CACHING YES is only valid when tracking is enabled in OPTIN mode.',
+    });
+  });
+
+  it('rejects NO when tracking is OPTIN (wrong mode)', () => {
+    const { ctx, client } = createCtx();
+    client.tracking = true;
+    client.trackingMode = 'optin';
+    const reply = cmd.clientCaching(ctx.client, ['NO']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message:
+        'CLIENT CACHING NO is only valid when tracking is enabled in OPTOUT mode.',
+    });
+  });
+
+  it('rejects invalid argument with syntax error', () => {
     const { ctx, client } = createCtx();
     client.tracking = true;
     client.trackingMode = 'optin';
     const reply = cmd.clientCaching(ctx.client, ['MAYBE']);
-    expect(reply.kind).toBe('error');
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
   });
 });
 
