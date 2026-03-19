@@ -388,6 +388,7 @@ export function hrandfield(
   if (args.length > 2) {
     const flag = (args[2] ?? '').toUpperCase();
     if (flag !== 'WITHVALUES') return SYNTAX_ERR;
+    if (args.length > 3) return SYNTAX_ERR;
     withValues = true;
   }
 
@@ -449,6 +450,7 @@ export function hscan(db: Database, args: string[]): Reply {
 
   let matchPattern: string | null = null;
   let count = 10;
+  let noValues = false;
 
   let i = 2;
   while (i < args.length) {
@@ -459,9 +461,14 @@ export function hscan(db: Database, args: string[]): Reply {
     } else if (flag === 'COUNT') {
       i++;
       count = parseInt(args[i] ?? '10', 10);
-      if (isNaN(count) || count <= 0) {
+      if (isNaN(count)) {
         return NOT_INTEGER_ERR;
       }
+      if (count < 1) {
+        return SYNTAX_ERR;
+      }
+    } else if (flag === 'NOVALUES') {
+      noValues = true;
     } else {
       return SYNTAX_ERR;
     }
@@ -491,7 +498,9 @@ export function hscan(db: Database, args: string[]): Reply {
     if (matchPattern && !matchGlob(matchPattern, field)) continue;
 
     results.push(bulkReply(field));
-    results.push(bulkReply(hash.get(field) ?? ''));
+    if (!noValues) {
+      results.push(bulkReply(hash.get(field) ?? ''));
+    }
   }
 
   const nextCursor = position >= allFields.length ? 0 : position;

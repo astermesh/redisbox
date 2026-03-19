@@ -740,6 +740,18 @@ describe('HRANDFIELD', () => {
       message: 'syntax error',
     });
   });
+
+  it('returns syntax error for extra args after WITHVALUES', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1']);
+    expect(
+      hash.hrandfield(db, ['k', '1', 'WITHVALUES', 'EXTRA'], () => 0.5)
+    ).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
+  });
 });
 
 // --- HSCAN ---
@@ -855,6 +867,26 @@ describe('HSCAN', () => {
     });
   });
 
+  it('returns syntax error for COUNT 0', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1']);
+    expect(hash.hscan(db, ['k', '0', 'COUNT', '0'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
+  });
+
+  it('returns syntax error for negative COUNT', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1']);
+    expect(hash.hscan(db, ['k', '0', 'COUNT', '-5'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
+  });
+
   it('MATCH is case-insensitive option name', () => {
     const { db } = createDb();
     hash.hset(db, ['k', 'f1', 'v1', 'g1', 'v2']);
@@ -867,5 +899,26 @@ describe('HSCAN', () => {
     hash.hset(db, ['k', 'f1', 'v1']);
     const result = hash.hscan(db, ['k', '100']);
     expect(result).toEqual(arr(bulk('0'), EMPTY_ARRAY));
+  });
+
+  it('returns only field names with NOVALUES', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1', 'f2', 'v2']);
+    const result = hash.hscan(db, ['k', '0', 'NOVALUES']);
+    expect(result).toEqual(arr(bulk('0'), arr(bulk('f1'), bulk('f2'))));
+  });
+
+  it('NOVALUES is case-insensitive', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'f1', 'v1']);
+    const result = hash.hscan(db, ['k', '0', 'novalues']);
+    expect(result).toEqual(arr(bulk('0'), arr(bulk('f1'))));
+  });
+
+  it('NOVALUES combined with MATCH', () => {
+    const { db } = createDb();
+    hash.hset(db, ['k', 'alpha', '1', 'beta', '2']);
+    const result = hash.hscan(db, ['k', '0', 'MATCH', 'a*', 'NOVALUES']);
+    expect(result).toEqual(arr(bulk('0'), arr(bulk('alpha'))));
   });
 });
