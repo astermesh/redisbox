@@ -223,6 +223,10 @@ describe('createCommandTable (registry)', () => {
 
   describe('all commands are registered', () => {
     const expectedCommands = [
+      'ping',
+      'echo',
+      'quit',
+      'reset',
       'del',
       'unlink',
       'exists',
@@ -297,6 +301,10 @@ describe('createCommandTable (registry)', () => {
 
   describe('arity values match Redis', () => {
     const arityTests: [string, number][] = [
+      ['ping', -1],
+      ['echo', 2],
+      ['quit', -1],
+      ['reset', 1],
       ['del', -2],
       ['unlink', -2],
       ['exists', -2],
@@ -418,6 +426,38 @@ describe('createCommandTable (registry)', () => {
       const def = getDef(table, 'set');
       expect(def.flags.has('write')).toBe(true);
       expect(def.flags.has('denyoom')).toBe(true);
+    });
+
+    it('ping is fast, stale, loading', () => {
+      const def = getDef(table, 'ping');
+      expect(def.flags.has('fast')).toBe(true);
+      expect(def.flags.has('stale')).toBe(true);
+      expect(def.flags.has('loading')).toBe(true);
+    });
+
+    it('echo is fast, stale, loading', () => {
+      const def = getDef(table, 'echo');
+      expect(def.flags.has('fast')).toBe(true);
+      expect(def.flags.has('stale')).toBe(true);
+      expect(def.flags.has('loading')).toBe(true);
+    });
+
+    it('quit is fast, noscript, stale, loading, noauth', () => {
+      const def = getDef(table, 'quit');
+      expect(def.flags.has('fast')).toBe(true);
+      expect(def.flags.has('noscript')).toBe(true);
+      expect(def.flags.has('stale')).toBe(true);
+      expect(def.flags.has('loading')).toBe(true);
+      expect(def.flags.has('noauth')).toBe(true);
+    });
+
+    it('reset is fast, noscript, loading, stale, noauth', () => {
+      const def = getDef(table, 'reset');
+      expect(def.flags.has('fast')).toBe(true);
+      expect(def.flags.has('noscript')).toBe(true);
+      expect(def.flags.has('loading')).toBe(true);
+      expect(def.flags.has('stale')).toBe(true);
+      expect(def.flags.has('noauth')).toBe(true);
     });
   });
 
