@@ -7,6 +7,8 @@ import type { CommandDefinition, CommandHandler } from './command-table.ts';
 import { RedisEngine } from './engine.ts';
 import type { CommandContext, Reply } from './types.ts';
 import { statusReply, errorReply } from './types.ts';
+import { ClientState as ClientStateObj } from '../server/client-state.ts';
+import { ConfigStore } from '../config-store.ts';
 
 function createCtx(clock = 1000): {
   ctx: CommandContext;
@@ -597,6 +599,33 @@ describe('CommandDispatcher', () => {
       expect(receivedArgs).toEqual(['a', 'b', 'c']);
     });
 
+    it('allows noauth commands when unauthenticated', () => {
+      // HELLO and AUTH have the noauth flag — they should work even when
+      // the client is not yet authenticated.
+      const config = new ConfigStore();
+      config.set('requirepass', 'secret');
+      const client = new ClientStateObj(1, 100);
+      client.authenticated = false;
+      const authCtx: CommandContext = {
+        db: ctx.db,
+        engine: ctx.engine,
+        client,
+        config,
+      };
+
+      // HELLO (noauth) should succeed
+      const helloResult = dispatcher.dispatch(state, authCtx, ['HELLO']);
+      expect(helloResult.kind).toBe('array');
+
+      // AUTH (noauth) should succeed
+      const authResult = dispatcher.dispatch(state, authCtx, [
+        'AUTH',
+        'secret',
+      ]);
+      expect(authResult).toEqual({ kind: 'status', value: 'OK' });
+      expect(client.authenticated).toBe(true);
+    });
+
     it('handler receives correct CommandContext', () => {
       const custom = new CommandTable();
       let receivedCtx: CommandContext | null = null;
@@ -613,6 +642,107 @@ describe('CommandDispatcher', () => {
       const d = new CommandDispatcher(custom);
       d.dispatch(state, ctx, ['CHECK']);
       expect(receivedCtx).toBe(ctx);
+    });
+  });
+
+  describe('auth enforcement', () => {
+    let config: ConfigStore;
+    let client: ClientStateObj;
+    let authCtx: CommandContext;
+
+    beforeEach(() => {
+      config = new ConfigStore();
+      config.set('requirepass', 'secret');
+      client = new ClientStateObj(1, 100);
+      client.authenticated = false;
+      authCtx = {
+        db: ctx.db,
+        engine: ctx.engine,
+        client,
+        config,
+      };
+    });
+
+    it('rejects non-noauth commands when unauthenticated', () => {
+      const result = dispatcher.dispatch(state, authCtx, ['GET', 'k']);
+      expect(result).toEqual({
+        kind: 'error',
+        prefix: 'NOAUTH',
+        message: 'Authentication required.',
+      });
+    });
+
+    it('allows commands after authentication', () => {
+      client.authenticated = true;
+      authCtx.db.set('k', 'string', 'raw', 'val');
+      const result = dispatcher.dispatch(state, authCtx, ['GET', 'k']);
+      expect(result).toEqual({ kind: 'bulk', value: 'val' });
+    });
+
+    it('allows PING (noauth flag) when unauthenticated', () => {
+      // PING has noauth via loading+stale but not noauth flag
+      // Actually check: PING has flags ['fast', 'stale', 'loading']
+      // It does NOT have 'noauth'. So PING should be rejected.
+      const result = dispatcher.dispatch(state, authCtx, ['PING']);
+      expect(result).toEqual({
+        kind: 'error',
+        prefix: 'NOAUTH',
+        message: 'Authentication required.',
+      });
+    });
+
+    it('allows HELLO (has noauth flag) when unauthenticated', () => {
+      const result = dispatcher.dispatch(state, authCtx, ['HELLO']);
+      expect(result.kind).toBe('array');
+    });
+
+    it('allows AUTH (has noauth flag) when unauthenticated', () => {
+      const result = dispatcher.dispatch(state, authCtx, ['AUTH', 'secret']);
+      expect(result).toEqual({ kind: 'status', value: 'OK' });
+      expect(client.authenticated).toBe(true);
+    });
+
+    it('allows QUIT (has noauth flag) when unauthenticated', () => {
+      const result = dispatcher.dispatch(state, authCtx, ['QUIT']);
+      expect(result).toEqual({ kind: 'status', value: 'OK' });
+    });
+
+    it('allows RESET (has noauth flag) when unauthenticated', () => {
+      const result = dispatcher.dispatch(state, authCtx, ['RESET']);
+      expect(result).toEqual({ kind: 'status', value: 'RESET' });
+    });
+
+    it('skips auth check when no requirepass is set', () => {
+      const noPassConfig = new ConfigStore();
+      const noPassCtx: CommandContext = {
+        db: ctx.db,
+        engine: ctx.engine,
+        client,
+        config: noPassConfig,
+      };
+      authCtx.db.set('k', 'string', 'raw', 'val');
+      const result = dispatcher.dispatch(state, noPassCtx, ['GET', 'k']);
+      expect(result).toEqual({ kind: 'bulk', value: 'val' });
+    });
+
+    it('skips auth check when no config is provided', () => {
+      const noConfigCtx: CommandContext = {
+        db: ctx.db,
+        engine: ctx.engine,
+        client,
+      };
+      const result = dispatcher.dispatch(state, noConfigCtx, ['PING']);
+      expect(result).toEqual({ kind: 'status', value: 'PONG' });
+    });
+
+    it('skips auth check when no client is provided', () => {
+      const noClientCtx: CommandContext = {
+        db: ctx.db,
+        engine: ctx.engine,
+        config,
+      };
+      const result = dispatcher.dispatch(state, noClientCtx, ['PING']);
+      expect(result).toEqual({ kind: 'status', value: 'PONG' });
     });
   });
 });

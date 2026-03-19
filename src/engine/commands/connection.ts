@@ -85,7 +85,7 @@ function buildHelloResponse(clientId: number): Reply {
     bulkReply('server'),
     bulkReply('redis'),
     bulkReply('version'),
-    bulkReply('7.0.0'),
+    bulkReply('7.2.0'),
     bulkReply('proto'),
     integerReply(2),
     bulkReply('id'),
@@ -102,34 +102,31 @@ function buildHelloResponse(clientId: number): Reply {
 export function hello(ctx: CommandContext, args: string[]): Reply {
   let i = 0;
 
-  // Parse optional protocol version
+  // Parse optional protocol version — if any args are present, the first
+  // one MUST be a protocol version number (Redis 7.x behaviour).
   if (i < args.length) {
     const versionStr = args[i] ?? '';
-    const upper = versionStr.toUpperCase();
+    const version = Number(versionStr);
 
-    // If first arg is not AUTH or SETNAME, treat it as version
-    if (upper !== 'AUTH' && upper !== 'SETNAME') {
-      const version = Number(versionStr);
-      if (!Number.isInteger(version)) {
-        return errorReply(
-          'ERR',
-          'Protocol version is not an integer or out of range'
-        );
-      }
-
-      if (version === 3) {
-        return errorReply(
-          'NOPROTO',
-          'sorry, this protocol version is not supported'
-        );
-      }
-
-      if (version !== 2) {
-        return errorReply('NOPROTO', 'unsupported protocol version');
-      }
-
-      i++;
+    if (!Number.isInteger(version) || versionStr === '') {
+      return errorReply(
+        'ERR',
+        'Protocol version is not an integer or out of range'
+      );
     }
+
+    if (version === 3) {
+      return errorReply(
+        'NOPROTO',
+        'sorry, this protocol version is not supported'
+      );
+    }
+
+    if (version !== 2) {
+      return errorReply('NOPROTO', 'unsupported protocol version');
+    }
+
+    i++;
   }
 
   // Parse options: AUTH and SETNAME

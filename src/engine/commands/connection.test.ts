@@ -84,7 +84,7 @@ describe('HELLO', () => {
         { kind: 'bulk', value: 'server' },
         { kind: 'bulk', value: 'redis' },
         { kind: 'bulk', value: 'version' },
-        { kind: 'bulk', value: '7.0.0' },
+        { kind: 'bulk', value: '7.2.0' },
         { kind: 'bulk', value: 'proto' },
         { kind: 'integer', value: 2 },
         { kind: 'bulk', value: 'id' },
@@ -282,6 +282,48 @@ describe('HELLO', () => {
       kind: 'error',
       prefix: 'NOPROTO',
       message: 'unsupported protocol version',
+    });
+  });
+
+  it('HELLO with AUTH as first arg returns version parse error', () => {
+    const config = new ConfigStore();
+    config.set('requirepass', 'secret');
+    const { ctx } = createCtx({ config });
+    const result = cmd.hello(ctx, ['AUTH', 'default', 'secret']);
+    expect(result).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'Protocol version is not an integer or out of range',
+    });
+  });
+
+  it('HELLO with SETNAME as first arg returns version parse error', () => {
+    const { ctx } = createCtx();
+    const result = cmd.hello(ctx, ['SETNAME', 'myconn']);
+    expect(result).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'Protocol version is not an integer or out of range',
+    });
+  });
+
+  it('HELLO with empty string arg returns version parse error', () => {
+    const { ctx } = createCtx();
+    const result = cmd.hello(ctx, ['']);
+    expect(result).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'Protocol version is not an integer or out of range',
+    });
+  });
+
+  it('HELLO with float version returns version parse error', () => {
+    const { ctx } = createCtx();
+    const result = cmd.hello(ctx, ['2.5']);
+    expect(result).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'Protocol version is not an integer or out of range',
     });
   });
 });
