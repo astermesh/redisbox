@@ -12,6 +12,7 @@ import * as sort from './commands/sort.ts';
 import * as string from './commands/string.ts';
 import * as incr from './commands/incr.ts';
 import * as hash from './commands/hash.ts';
+import * as database from './commands/database.ts';
 
 interface CommandSpec {
   name: string;
@@ -91,6 +92,58 @@ const commandSpecs: CommandSpec[] = [
     lastKey: 0,
     keyStep: 0,
     categories: ['@fast', '@connection'],
+  },
+
+  // --- Database commands ---
+  {
+    name: 'select',
+    handler: (ctx, args) => database.select(ctx, args),
+    arity: 2,
+    flags: ['fast', 'loading', 'stale'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@fast', '@connection'],
+  },
+  {
+    name: 'dbsize',
+    handler: (ctx) => database.dbsize(ctx.db),
+    arity: 1,
+    flags: ['readonly', 'fast', 'loading', 'stale'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@keyspace', '@read', '@fast'],
+  },
+  {
+    name: 'flushdb',
+    handler: (ctx, args) => database.flushdb(ctx, args),
+    arity: -1,
+    flags: ['write', 'loading', 'stale'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@keyspace', '@write'],
+  },
+  {
+    name: 'flushall',
+    handler: (ctx, args) => database.flushall(ctx, args),
+    arity: -1,
+    flags: ['write', 'loading', 'stale'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@keyspace', '@write'],
+  },
+  {
+    name: 'swapdb',
+    handler: (ctx, args) => database.swapdb(ctx.engine, args),
+    arity: 3,
+    flags: ['write', 'fast'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@keyspace', '@write', '@fast'],
   },
 
   // --- Generic (keyspace) commands ---
