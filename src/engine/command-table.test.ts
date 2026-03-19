@@ -271,6 +271,17 @@ describe('createCommandTable (registry)', () => {
       'incrby',
       'decrby',
       'incrbyfloat',
+      'hset',
+      'hget',
+      'hmset',
+      'hmget',
+      'hgetall',
+      'hdel',
+      'hexists',
+      'hlen',
+      'hkeys',
+      'hvals',
+      'hsetnx',
     ];
 
     for (const name of expectedCommands) {
@@ -334,6 +345,17 @@ describe('createCommandTable (registry)', () => {
       ['incrby', 3],
       ['decrby', 3],
       ['incrbyfloat', 3],
+      ['hset', -4],
+      ['hget', 3],
+      ['hmset', -4],
+      ['hmget', -3],
+      ['hgetall', 2],
+      ['hdel', -3],
+      ['hexists', 3],
+      ['hlen', 2],
+      ['hkeys', 2],
+      ['hvals', 2],
+      ['hsetnx', 4],
     ];
 
     for (const [name, expectedArity] of arityTests) {
