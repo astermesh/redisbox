@@ -314,6 +314,13 @@ describe('createCommandTable (registry)', () => {
       'lpop',
       'rpop',
       'llen',
+      'sadd',
+      'srem',
+      'sismember',
+      'smismember',
+      'smembers',
+      'scard',
+      'smove',
       'command',
     ];
 

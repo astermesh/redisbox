@@ -15,6 +15,7 @@ import * as incr from './commands/incr.ts';
 import * as hash from './commands/hash.ts';
 import * as hashTtl from './commands/hash-ttl.ts';
 import * as list from './commands/list.ts';
+import * as set from './commands/set.ts';
 import * as database from './commands/database.ts';
 import * as cmd from './commands/command.ts';
 import type { CommandContext } from './types.ts';
@@ -1220,6 +1221,78 @@ const commandSpecs: CommandSpec[] = [
     lastKey: 1,
     keyStep: 1,
     categories: ['@read', '@list', '@fast'],
+  },
+
+  // --- Set commands ---
+  {
+    name: 'sadd',
+    handler: (ctx, args) => set.sadd(ctx.db, args),
+    arity: -3,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@set', '@fast'],
+  },
+  {
+    name: 'srem',
+    handler: (ctx, args) => set.srem(ctx.db, args),
+    arity: -3,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@set', '@fast'],
+  },
+  {
+    name: 'sismember',
+    handler: (ctx, args) => set.sismember(ctx.db, args),
+    arity: 3,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@set', '@fast'],
+  },
+  {
+    name: 'smismember',
+    handler: (ctx, args) => set.smismember(ctx.db, args),
+    arity: -3,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@set', '@fast'],
+  },
+  {
+    name: 'smembers',
+    handler: (ctx, args) => set.smembers(ctx.db, args),
+    arity: 2,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@set'],
+  },
+  {
+    name: 'scard',
+    handler: (ctx, args) => set.scard(ctx.db, args),
+    arity: 2,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@set', '@fast'],
+  },
+  {
+    name: 'smove',
+    handler: (ctx, args) => set.smove(ctx.db, args),
+    arity: 4,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 2,
+    keyStep: 1,
+    categories: ['@write', '@set', '@fast'],
   },
 
   // --- Command introspection ---
