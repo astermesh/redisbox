@@ -14,6 +14,7 @@ import * as string from './commands/string.ts';
 import * as incr from './commands/incr.ts';
 import * as hash from './commands/hash.ts';
 import * as hashTtl from './commands/hash-ttl.ts';
+import * as list from './commands/list.ts';
 import * as database from './commands/database.ts';
 import * as cmd from './commands/command.ts';
 import type { CommandContext } from './types.ts';
@@ -1147,6 +1148,78 @@ const commandSpecs: CommandSpec[] = [
     lastKey: 1,
     keyStep: 1,
     categories: ['@read', '@hash', '@fast'],
+  },
+
+  // --- List commands ---
+  {
+    name: 'lpush',
+    handler: (ctx, args) => list.lpush(ctx.db, args),
+    arity: -3,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@list', '@fast'],
+  },
+  {
+    name: 'rpush',
+    handler: (ctx, args) => list.rpush(ctx.db, args),
+    arity: -3,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@list', '@fast'],
+  },
+  {
+    name: 'lpushx',
+    handler: (ctx, args) => list.lpushx(ctx.db, args),
+    arity: -3,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@list', '@fast'],
+  },
+  {
+    name: 'rpushx',
+    handler: (ctx, args) => list.rpushx(ctx.db, args),
+    arity: -3,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@list', '@fast'],
+  },
+  {
+    name: 'lpop',
+    handler: (ctx, args) => list.lpop(ctx.db, args),
+    arity: -2,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@list', '@fast'],
+  },
+  {
+    name: 'rpop',
+    handler: (ctx, args) => list.rpop(ctx.db, args),
+    arity: -2,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@list', '@fast'],
+  },
+  {
+    name: 'llen',
+    handler: (ctx, args) => list.llen(ctx.db, args),
+    arity: 2,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@list', '@fast'],
   },
 
   // --- Command introspection ---

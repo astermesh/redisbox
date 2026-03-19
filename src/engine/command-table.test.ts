@@ -307,6 +307,13 @@ describe('createCommandTable (registry)', () => {
       'hpersist',
       'hexpiretime',
       'hpexpiretime',
+      'lpush',
+      'rpush',
+      'lpushx',
+      'rpushx',
+      'lpop',
+      'rpop',
+      'llen',
       'command',
     ];
 
@@ -407,6 +414,13 @@ describe('createCommandTable (registry)', () => {
       ['hpersist', -5],
       ['hexpiretime', -5],
       ['hpexpiretime', -5],
+      ['lpush', -3],
+      ['rpush', -3],
+      ['lpushx', -3],
+      ['rpushx', -3],
+      ['lpop', -2],
+      ['rpop', -2],
+      ['llen', 2],
     ];
 
     for (const [name, expectedArity] of arityTests) {
