@@ -30,6 +30,7 @@ export function createClientState(): ClientState {
 }
 
 const QUEUED: Reply = statusReply('QUEUED');
+const NOAUTH_ERR: Reply = errorReply('NOAUTH', 'Authentication required.');
 
 /**
  * Commands allowed in subscribe mode (Redis 7.0+).
@@ -57,6 +58,14 @@ function checkArity(def: CommandDefinition, argc: number): boolean {
     return argc === def.arity;
   }
   return argc >= Math.abs(def.arity);
+}
+
+function requiresAuth(ctx: CommandContext): boolean {
+  if (!ctx.client || ctx.client.authenticated) return false;
+  if (!ctx.config) return false;
+  const result = ctx.config.get('requirepass');
+  const pass = result[1] ?? '';
+  return pass.length > 0;
 }
 
 export class CommandDispatcher {
@@ -97,6 +106,7 @@ export class CommandDispatcher {
         ctx.client.dbIndex = 0;
         ctx.client.flagMulti = false;
         ctx.client.flagSubscribed = false;
+        ctx.client.authenticated = false;
         ctx.db = ctx.engine.db(0);
       }
 
@@ -154,6 +164,11 @@ export class CommandDispatcher {
         );
       }
       return wrongArityError(def.name.toLowerCase());
+    }
+
+    // Auth check: reject commands without noauth flag when not authenticated
+    if (!def.flags.has('noauth') && requiresAuth(ctx)) {
+      return NOAUTH_ERR;
     }
 
     // MULTI mode: queue non-passthrough commands

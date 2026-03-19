@@ -10,6 +10,7 @@ export class ClientState {
   flagMulti = false;
   flagBlocked = false;
   flagSubscribed = false;
+  authenticated = false;
 
   constructor(id: number, createdAt: number) {
     this.id = id;

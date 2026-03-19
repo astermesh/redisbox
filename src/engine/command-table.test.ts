@@ -232,6 +232,8 @@ describe('createCommandTable (registry)', () => {
       'flushdb',
       'flushall',
       'swapdb',
+      'hello',
+      'auth',
       'del',
       'unlink',
       'exists',
