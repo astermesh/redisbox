@@ -294,6 +294,7 @@ describe('createCommandTable (registry)', () => {
       'hkeys',
       'hvals',
       'hsetnx',
+      'command',
     ];
 
     for (const name of expectedCommands) {
