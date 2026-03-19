@@ -1,5 +1,7 @@
 # T03: HELLO and AUTH
 
+**Status:** done
+
 Connection setup commands.
 
 ## HELLO
