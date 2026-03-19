@@ -4,13 +4,13 @@ import {
   bulkReply,
   integerReply,
   arrayReply,
-  errorReply,
+  wrongArityError,
   OK,
   NIL,
   ZERO,
   ONE,
   EMPTY_ARRAY,
-  wrongTypeError,
+  WRONGTYPE_ERR,
 } from '../types.ts';
 
 const textEncoder = new TextEncoder();
@@ -52,7 +52,7 @@ function getOrCreateHash(
 ): { hash: Map<string, string>; error: null } | { hash: null; error: Reply } {
   const entry = db.get(key);
   if (entry) {
-    if (entry.type !== 'hash') return { hash: null, error: wrongTypeError() };
+    if (entry.type !== 'hash') return { hash: null, error: WRONGTYPE_ERR };
     return { hash: entry.value as Map<string, string>, error: null };
   }
   const hash = new Map<string, string>();
@@ -69,20 +69,21 @@ function getExistingHash(
 ): { hash: Map<string, string> | null; error: Reply | null } {
   const entry = db.get(key);
   if (!entry) return { hash: null, error: null };
-  if (entry.type !== 'hash') return { hash: null, error: wrongTypeError() };
+  if (entry.type !== 'hash') return { hash: null, error: WRONGTYPE_ERR };
   return { hash: entry.value as Map<string, string>, error: null };
 }
 
 /**
- * Update encoding after modification. Must be called after any write to the hash.
+ * Promote encoding from listpack to hashtable if needed.
+ * Redis only transitions in one direction: listpack → hashtable.
+ * Once promoted, it never reverts back — even if the hash shrinks.
  */
 function updateEncoding(db: Database, key: string): void {
   const entry = db.get(key);
   if (!entry || entry.type !== 'hash') return;
+  if (entry.encoding === 'hashtable') return; // never demote
   const hash = entry.value as Map<string, string>;
-  if (fitsListpack(hash)) {
-    entry.encoding = 'listpack';
-  } else {
+  if (!fitsListpack(hash)) {
     entry.encoding = 'hashtable';
   }
 }
@@ -91,7 +92,7 @@ function updateEncoding(db: Database, key: string): void {
 
 export function hset(db: Database, args: string[]): Reply {
   if (args.length < 3 || (args.length - 1) % 2 !== 0) {
-    return errorReply('ERR', "wrong number of arguments for 'hset' command");
+    return wrongArityError('hset');
   }
 
   const key = args[0] ?? '';
@@ -128,7 +129,7 @@ export function hget(db: Database, args: string[]): Reply {
 
 export function hmset(db: Database, args: string[]): Reply {
   if (args.length < 3 || (args.length - 1) % 2 !== 0) {
-    return errorReply('ERR', "wrong number of arguments for 'hmset' command");
+    return wrongArityError('hmset');
   }
 
   const key = args[0] ?? '';
@@ -204,8 +205,6 @@ export function hdel(db: Database, args: string[]): Reply {
   // If hash is now empty, delete the key
   if (hash.size === 0) {
     db.delete(key);
-  } else {
-    updateEncoding(db, key);
   }
 
   return integerReply(deleted);

@@ -406,7 +406,18 @@ describe('encoding transitions', () => {
     expect(entry?.encoding).toBe('listpack');
   });
 
-  it('transitions back to listpack after HDEL reduces size', () => {
+  it('stays hashtable after replacing long value with short one', () => {
+    const { db } = createDb();
+    const longValue = 'x'.repeat(65);
+    hash.hset(db, ['k', 'f1', longValue]);
+    expect(db.get('k')?.encoding).toBe('hashtable');
+
+    // Replace with short value — encoding stays hashtable (Redis never demotes)
+    hash.hset(db, ['k', 'f1', 'short']);
+    expect(db.get('k')?.encoding).toBe('hashtable');
+  });
+
+  it('stays hashtable after HDEL reduces size below threshold', () => {
     const { db } = createDb();
     // Create 129 entries (exceeds threshold)
     const fields: string[] = ['k'];
@@ -416,9 +427,9 @@ describe('encoding transitions', () => {
     hash.hset(db, fields);
     expect(db.get('k')?.encoding).toBe('hashtable');
 
-    // Delete one to go back to 128
+    // Delete one to go back to 128 — encoding stays hashtable (Redis never demotes)
     hash.hdel(db, ['k', 'f0']);
-    expect(db.get('k')?.encoding).toBe('listpack');
+    expect(db.get('k')?.encoding).toBe('hashtable');
   });
 });
 
