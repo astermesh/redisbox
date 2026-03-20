@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { RedisEngine } from './engine.ts';
+import { BlockingManager } from './blocking-manager.ts';
 
 describe('RedisEngine', () => {
   it('creates 16 databases', () => {
@@ -66,5 +67,10 @@ describe('RedisEngine', () => {
     engine.db(1).set('k', 'string', 'raw', 'v1');
     expect(engine.db(0).get('k')?.value).toBe('v0');
     expect(engine.db(1).get('k')?.value).toBe('v1');
+  });
+
+  it('exposes a BlockingManager instance', () => {
+    const engine = new RedisEngine();
+    expect(engine.blocking).toBeInstanceOf(BlockingManager);
   });
 });
