@@ -280,6 +280,20 @@ export class CommandDispatcher {
       return errorReply('ERR', 'DISCARD without MULTI');
     }
 
+    // WATCH: record current version of each key
+    if (upperName === 'WATCH') {
+      for (const key of args) {
+        state.watchedKeys.set(key, ctx.db.getVersion(key));
+      }
+      return def.handler(ctx, args);
+    }
+
+    // UNWATCH: clear all watched keys
+    if (upperName === 'UNWATCH') {
+      state.watchedKeys.clear();
+      return def.handler(ctx, args);
+    }
+
     // Execute handler
     const result = def.handler(ctx, args);
 

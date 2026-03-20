@@ -14,6 +14,7 @@ import {
   bulkReply,
   integerReply,
   NIL_ARRAY,
+  OK,
 } from '../types.ts';
 import { ClientState as ServerClientState } from '../../server/client-state.ts';
 
@@ -711,6 +712,307 @@ describe('DISCARD command', () => {
         'COMMAND',
         'INFO',
         'DISCARD',
+      ]);
+      expect(result.kind).toBe('array');
+      const arr = result as { kind: 'array'; value: Reply[] };
+      expect(arr.value[0]).not.toEqual({ kind: 'bulk', value: null });
+    });
+  });
+});
+
+describe('WATCH command', () => {
+  let dispatcher: CommandDispatcher;
+  let state: TransactionState;
+  let ctx: CommandContext;
+
+  beforeEach(() => {
+    const table = createCommandTable();
+    dispatcher = new CommandDispatcher(table);
+    state = createTransactionState();
+    const setup = createCtx();
+    ctx = setup.ctx;
+  });
+
+  describe('basic behavior', () => {
+    it('returns OK', () => {
+      const result = dispatcher.dispatch(state, ctx, ['WATCH', 'k']);
+      expect(result).toEqual(OK);
+    });
+
+    it('records version for existing key', () => {
+      ctx.db.set('k', 'string', 'embstr', 'val');
+      const version = ctx.db.getVersion('k');
+      dispatcher.dispatch(state, ctx, ['WATCH', 'k']);
+      expect(state.watchedKeys.get('k')).toBe(version);
+    });
+
+    it('records version 0 for non-existent key', () => {
+      dispatcher.dispatch(state, ctx, ['WATCH', 'nokey']);
+      expect(state.watchedKeys.get('nokey')).toBe(0);
+    });
+
+    it('watches multiple keys at once', () => {
+      ctx.db.set('a', 'string', 'embstr', 'v1');
+      ctx.db.set('b', 'string', 'embstr', 'v2');
+      dispatcher.dispatch(state, ctx, ['WATCH', 'a', 'b', 'c']);
+      expect(state.watchedKeys.size).toBe(3);
+      expect(state.watchedKeys.has('a')).toBe(true);
+      expect(state.watchedKeys.has('b')).toBe(true);
+      expect(state.watchedKeys.has('c')).toBe(true);
+    });
+
+    it('accumulates keys across multiple WATCH calls', () => {
+      dispatcher.dispatch(state, ctx, ['WATCH', 'a']);
+      dispatcher.dispatch(state, ctx, ['WATCH', 'b']);
+      expect(state.watchedKeys.size).toBe(2);
+      expect(state.watchedKeys.has('a')).toBe(true);
+      expect(state.watchedKeys.has('b')).toBe(true);
+    });
+
+    it('re-watching same key updates version', () => {
+      dispatcher.dispatch(state, ctx, ['WATCH', 'k']);
+      const v1 = state.watchedKeys.get('k');
+      // Modify the key
+      ctx.db.set('k', 'string', 'embstr', 'changed');
+      // Re-WATCH captures the new version
+      dispatcher.dispatch(state, ctx, ['WATCH', 'k']);
+      const v2 = state.watchedKeys.get('k');
+      expect(v2).not.toBe(v1);
+    });
+
+    it('is case-insensitive for command name', () => {
+      const result = dispatcher.dispatch(state, ctx, ['watch', 'k']);
+      expect(result).toEqual(OK);
+      expect(state.watchedKeys.has('k')).toBe(true);
+    });
+  });
+
+  describe('inside MULTI', () => {
+    it('returns error when used inside MULTI', () => {
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      const result = dispatcher.dispatch(state, ctx, ['WATCH', 'k']);
+      expect(result).toEqual(
+        errorReply('ERR', 'WATCH inside MULTI is not allowed')
+      );
+    });
+
+    it('does not add key to watchedKeys inside MULTI', () => {
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['WATCH', 'k']);
+      expect(state.watchedKeys.has('k')).toBe(false);
+    });
+  });
+
+  describe('interaction with EXEC', () => {
+    it('EXEC succeeds when watched key unchanged', () => {
+      ctx.db.set('k', 'string', 'embstr', 'original');
+      dispatcher.dispatch(state, ctx, ['WATCH', 'k']);
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['GET', 'k']);
+      const result = dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(result).toEqual(arrayReply([bulkReply('original')]));
+    });
+
+    it('EXEC returns nil array when watched key changed by SET', () => {
+      ctx.db.set('k', 'string', 'embstr', 'original');
+      dispatcher.dispatch(state, ctx, ['WATCH', 'k']);
+      // Simulate another client modifying the key
+      ctx.db.set('k', 'string', 'embstr', 'modified');
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['GET', 'k']);
+      const result = dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(result).toEqual(NIL_ARRAY);
+    });
+
+    it('EXEC returns nil array when watched key deleted', () => {
+      ctx.db.set('k', 'string', 'embstr', 'val');
+      dispatcher.dispatch(state, ctx, ['WATCH', 'k']);
+      ctx.db.delete('k');
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['SET', 'k', 'new']);
+      const result = dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(result).toEqual(NIL_ARRAY);
+    });
+
+    it('EXEC returns nil array when non-existent watched key is created', () => {
+      dispatcher.dispatch(state, ctx, ['WATCH', 'k']);
+      // Key didn't exist, now it does
+      ctx.db.set('k', 'string', 'embstr', 'created');
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['GET', 'k']);
+      const result = dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(result).toEqual(NIL_ARRAY);
+    });
+
+    it('EXEC succeeds when non-existent watched key stays non-existent', () => {
+      dispatcher.dispatch(state, ctx, ['WATCH', 'nokey']);
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['SET', 'x', 'val']);
+      const result = dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(result).toEqual(arrayReply([statusReply('OK')]));
+    });
+
+    it('EXEC clears watched keys', () => {
+      dispatcher.dispatch(state, ctx, ['WATCH', 'k']);
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(state.watchedKeys.size).toBe(0);
+    });
+
+    it('only one watched key needs to change for EXEC to fail', () => {
+      ctx.db.set('a', 'string', 'embstr', 'v1');
+      ctx.db.set('b', 'string', 'embstr', 'v2');
+      dispatcher.dispatch(state, ctx, ['WATCH', 'a', 'b']);
+      // Only modify 'b'
+      ctx.db.set('b', 'string', 'embstr', 'changed');
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['GET', 'a']);
+      const result = dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(result).toEqual(NIL_ARRAY);
+    });
+
+    it('commands not executed on WATCH failure', () => {
+      ctx.db.set('k', 'string', 'embstr', 'val');
+      dispatcher.dispatch(state, ctx, ['WATCH', 'k']);
+      ctx.db.set('k', 'string', 'embstr', 'changed');
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['SET', 'other', 'something']);
+      dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(ctx.db.get('other')).toBeNull();
+    });
+
+    it('EXECABORT takes priority over WATCH failure', () => {
+      ctx.db.set('k', 'string', 'embstr', 'val');
+      dispatcher.dispatch(state, ctx, ['WATCH', 'k']);
+      ctx.db.set('k', 'string', 'embstr', 'changed');
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['NOSUCHCMD']); // marks dirty
+      const result = dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(result).toEqual(
+        errorReply(
+          'EXECABORT',
+          'Transaction discarded because of previous errors.'
+        )
+      );
+    });
+  });
+
+  describe('interaction with DISCARD', () => {
+    it('DISCARD clears watched keys', () => {
+      dispatcher.dispatch(state, ctx, ['WATCH', 'k']);
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['DISCARD']);
+      expect(state.watchedKeys.size).toBe(0);
+    });
+  });
+
+  describe('expiration triggers WATCH', () => {
+    it('expired key triggers WATCH failure', () => {
+      const setup = createCtx(1000);
+      ctx = setup.ctx;
+      ctx.db.set('k', 'string', 'embstr', 'val');
+      dispatcher.dispatch(state, ctx, ['WATCH', 'k']);
+      // Set expiry and advance time
+      ctx.db.setExpiry('k', 1500);
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['GET', 'k']);
+      const result = dispatcher.dispatch(state, ctx, ['EXEC']);
+      // setExpiry bumps version, so WATCH detects the change
+      expect(result).toEqual(NIL_ARRAY);
+    });
+  });
+
+  describe('arity', () => {
+    it('rejects WATCH with no keys', () => {
+      const result = dispatcher.dispatch(state, ctx, ['WATCH']);
+      expect(result).toEqual(
+        errorReply('ERR', "wrong number of arguments for 'watch' command")
+      );
+    });
+  });
+
+  describe('COMMAND introspection', () => {
+    it('WATCH is found via COMMAND INFO', () => {
+      const result = dispatcher.dispatch(state, ctx, [
+        'COMMAND',
+        'INFO',
+        'WATCH',
+      ]);
+      expect(result.kind).toBe('array');
+      const arr = result as { kind: 'array'; value: Reply[] };
+      expect(arr.value[0]).not.toEqual({ kind: 'bulk', value: null });
+    });
+  });
+});
+
+describe('UNWATCH command', () => {
+  let dispatcher: CommandDispatcher;
+  let state: TransactionState;
+  let ctx: CommandContext;
+
+  beforeEach(() => {
+    const table = createCommandTable();
+    dispatcher = new CommandDispatcher(table);
+    state = createTransactionState();
+    const setup = createCtx();
+    ctx = setup.ctx;
+  });
+
+  describe('basic behavior', () => {
+    it('returns OK', () => {
+      const result = dispatcher.dispatch(state, ctx, ['UNWATCH']);
+      expect(result).toEqual(OK);
+    });
+
+    it('clears all watched keys', () => {
+      dispatcher.dispatch(state, ctx, ['WATCH', 'a', 'b', 'c']);
+      expect(state.watchedKeys.size).toBe(3);
+      dispatcher.dispatch(state, ctx, ['UNWATCH']);
+      expect(state.watchedKeys.size).toBe(0);
+    });
+
+    it('is safe to call with no watches', () => {
+      const result = dispatcher.dispatch(state, ctx, ['UNWATCH']);
+      expect(result).toEqual(OK);
+      expect(state.watchedKeys.size).toBe(0);
+    });
+
+    it('is case-insensitive', () => {
+      dispatcher.dispatch(state, ctx, ['WATCH', 'k']);
+      const result = dispatcher.dispatch(state, ctx, ['unwatch']);
+      expect(result).toEqual(OK);
+      expect(state.watchedKeys.size).toBe(0);
+    });
+  });
+
+  describe('UNWATCH allows EXEC to succeed after key change', () => {
+    it('EXEC succeeds after UNWATCH even if key changed', () => {
+      ctx.db.set('k', 'string', 'embstr', 'val');
+      dispatcher.dispatch(state, ctx, ['WATCH', 'k']);
+      ctx.db.set('k', 'string', 'embstr', 'changed');
+      dispatcher.dispatch(state, ctx, ['UNWATCH']);
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['GET', 'k']);
+      const result = dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(result).toEqual(arrayReply([bulkReply('changed')]));
+    });
+  });
+
+  describe('arity', () => {
+    it('rejects extra arguments', () => {
+      const result = dispatcher.dispatch(state, ctx, ['UNWATCH', 'extra']);
+      expect(result).toEqual(
+        errorReply('ERR', "wrong number of arguments for 'unwatch' command")
+      );
+    });
+  });
+
+  describe('COMMAND introspection', () => {
+    it('UNWATCH is found via COMMAND INFO', () => {
+      const result = dispatcher.dispatch(state, ctx, [
+        'COMMAND',
+        'INFO',
+        'UNWATCH',
       ]);
       expect(result.kind).toBe('array');
       const arr = result as { kind: 'array'; value: Reply[] };
