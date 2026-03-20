@@ -5,7 +5,7 @@ import {
   statusReply,
   errorReply,
   arrayReply,
-  bulkReply,
+  NIL_ARRAY,
   unknownCommandError,
   wrongArityError,
 } from './types.ts';
@@ -102,10 +102,10 @@ export class CommandDispatcher {
       );
     }
 
-    // Check watched key versions — if any changed, return nil
+    // Check watched key versions — if any changed, return null array
     for (const [key, version] of watched) {
       if (ctx.db.getVersion(key) !== version) {
-        return bulkReply(null);
+        return NIL_ARRAY;
       }
     }
 

@@ -10,6 +10,7 @@ import {
   arrayReply,
   bulkReply,
   integerReply,
+  NIL_ARRAY,
 } from '../types.ts';
 import { ClientState as ServerClientState } from '../../server/client-state.ts';
 
@@ -510,7 +511,7 @@ describe('EXEC command', () => {
       dispatcher.dispatch(state, ctx, ['GET', 'k']);
       const result = dispatcher.dispatch(state, ctx, ['EXEC']);
       // Redis returns a null array (*-1) on WATCH failure
-      expect(result).toEqual(bulkReply(null));
+      expect(result).toEqual(NIL_ARRAY);
     });
 
     it('does not execute commands on WATCH failure', () => {

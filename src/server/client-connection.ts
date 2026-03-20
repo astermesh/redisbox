@@ -33,6 +33,8 @@ function replyToRespValue(reply: Reply): RespValue {
         : { type: 'bulk', value: Buffer.from(reply.value) };
     case 'array':
       return { type: 'array', value: reply.value.map(replyToRespValue) };
+    case 'nil-array':
+      return { type: 'array', value: null };
     case 'multi':
       // multi replies are handled in serializeReply; this branch should not be reached
       return { type: 'array', value: reply.value.map(replyToRespValue) };
