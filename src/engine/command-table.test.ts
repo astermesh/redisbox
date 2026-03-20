@@ -249,6 +249,7 @@ describe('createCommandTable (registry)', () => {
       'touch',
       'copy',
       'object',
+      'memory',
       'wait',
       'dump',
       'restore',
@@ -392,6 +393,7 @@ describe('createCommandTable (registry)', () => {
       ['touch', -2],
       ['copy', -3],
       ['object', -2],
+      ['memory', -2],
       ['wait', 3],
       ['dump', 2],
       ['restore', -4],
@@ -695,6 +697,23 @@ describe('createCommandTable (registry)', () => {
       expect(sub).toBeDefined();
       expect(sub?.arity).toBe(3);
       expect(sub?.name).toBe('encoding');
+    });
+
+    it('memory has subcommands', () => {
+      const def = getDef(table, 'memory');
+      expect(def.subcommands).toBeDefined();
+      expect(def.subcommands?.size).toBe(6);
+    });
+
+    it('memory subcommands include usage, doctor, malloc-stats, purge, stats, help', () => {
+      const def = getDef(table, 'memory');
+      const subs = def.subcommands;
+      expect(subs?.has('usage')).toBe(true);
+      expect(subs?.has('doctor')).toBe(true);
+      expect(subs?.has('malloc-stats')).toBe(true);
+      expect(subs?.has('purge')).toBe(true);
+      expect(subs?.has('stats')).toBe(true);
+      expect(subs?.has('help')).toBe(true);
     });
   });
 

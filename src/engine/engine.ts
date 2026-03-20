@@ -2,6 +2,7 @@ import { Database } from './database.ts';
 import type { EngineDeps } from './types.ts';
 import { PubSubManager } from './pubsub-manager.ts';
 import { BlockingManager } from './blocking-manager.ts';
+import { estimateKeyMemory } from './memory.ts';
 
 const NUM_DATABASES = 16;
 
@@ -36,5 +37,20 @@ export class RedisEngine {
       throw new Error(`Database index out of range: ${index}`);
     }
     return d;
+  }
+
+  /**
+   * Estimate total memory used by all databases in bytes.
+   * Iterates all keys and sums per-key memory estimates.
+   */
+  usedMemory(): number {
+    let total = 0;
+    for (const db of this.databases) {
+      for (const [key, entry] of db.entriesIterator()) {
+        const hasExpiry = db.getExpiry(key) !== undefined;
+        total += estimateKeyMemory(key, entry, hasExpiry);
+      }
+    }
+    return total;
   }
 }
