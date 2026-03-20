@@ -826,6 +826,7 @@ export function zrange(
   let byLex = false;
   let rev = false;
   let withScores = false;
+  let hasLimit = false;
   let offset = 0;
   let count = -1;
   let i = 3;
@@ -845,6 +846,7 @@ export function zrange(
       withScores = true;
       i++;
     } else if (opt === 'LIMIT') {
+      hasLimit = true;
       i++;
       const lim = parseLimit(args, i);
       if ('kind' in lim) return lim;
@@ -854,6 +856,18 @@ export function zrange(
     } else {
       return SYNTAX_ERR;
     }
+  }
+
+  // Validate incompatible options
+  if (byScore && byLex) {
+    return SYNTAX_ERR;
+  }
+
+  if (hasLimit && !byScore && !byLex) {
+    return errorReply(
+      'ERR',
+      'syntax error, LIMIT is only supported in combination with either BYSCORE or BYLEX'
+    );
   }
 
   const { zset, error } = getExistingZset(db, key);
@@ -935,8 +949,11 @@ export function zrangestore(
   }
 
   const dst = args[0] as string;
-  // Run ZRANGE on source (args[1..])
+  // ZRANGESTORE does not support WITHSCORES
   const rangeArgs = args.slice(1);
+  if (rangeArgs.some((a) => a.toUpperCase() === 'WITHSCORES')) {
+    return SYNTAX_ERR;
+  }
   const rangeResult = zrange(db, rangeArgs, rng);
 
   if (rangeResult.kind === 'error') return rangeResult;

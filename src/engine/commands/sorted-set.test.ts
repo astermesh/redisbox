@@ -1210,6 +1210,27 @@ describe('ZRANGE', () => {
       err('ERR', "wrong number of arguments for 'zrange' command")
     );
   });
+
+  it('LIMIT without BYSCORE or BYLEX returns error', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a', '2', 'b', '3', 'c'], rng);
+    expect(
+      sortedSet.zrange(db, ['k', '0', '-1', 'LIMIT', '0', '2'], rng)
+    ).toEqual(
+      err(
+        'ERR',
+        'syntax error, LIMIT is only supported in combination with either BYSCORE or BYLEX'
+      )
+    );
+  });
+
+  it('BYSCORE and BYLEX together returns syntax error', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a'], rng);
+    expect(
+      sortedSet.zrange(db, ['k', '0', '-1', 'BYSCORE', 'BYLEX'], rng)
+    ).toEqual(err('ERR', 'syntax error'));
+  });
 });
 
 // --- ZRANGESTORE ---
@@ -1277,6 +1298,14 @@ describe('ZRANGESTORE', () => {
       rng
     );
     expect(result).toEqual(integer(2));
+  });
+
+  it('rejects WITHSCORES option', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['src', '1', 'a', '2', 'b'], rng);
+    expect(
+      sortedSet.zrangestore(db, ['dst', 'src', '0', '-1', 'WITHSCORES'], rng)
+    ).toEqual(err('ERR', 'syntax error'));
   });
 
   it('WRONGTYPE error on source', () => {
