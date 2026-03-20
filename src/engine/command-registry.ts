@@ -25,6 +25,7 @@ import * as sortedSet from './commands/sorted-set.ts';
 import * as streamCmd from './commands/stream.ts';
 import * as mem from './commands/memory.ts';
 import * as infoCmd from './commands/info.ts';
+import * as cluster from './commands/cluster.ts';
 import type { CommandContext } from './types.ts';
 
 function getTable(ctx: CommandContext): CommandTable {
@@ -1662,6 +1663,132 @@ const commandSpecs: CommandSpec[] = [
     lastKey: 0,
     keyStep: 0,
     categories: ['@slow', '@dangerous'],
+  },
+
+  // --- Cluster commands ---
+  {
+    name: 'cluster',
+    handler: (ctx, args) => cluster.cluster(ctx, args),
+    arity: -2,
+    flags: ['admin'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@admin', '@slow'],
+    subcommands: [
+      {
+        name: 'info',
+        handler: () => cluster.clusterInfo(),
+        arity: 2,
+        flags: ['stale', 'loading'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow'],
+      },
+      {
+        name: 'myid',
+        handler: () => cluster.clusterMyid(),
+        arity: 2,
+        flags: ['stale', 'loading'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow'],
+      },
+      {
+        name: 'keyslot',
+        handler: (_ctx, args) => cluster.clusterKeyslot(args.slice(1)),
+        arity: 3,
+        flags: ['stale', 'loading'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow'],
+      },
+      {
+        name: 'nodes',
+        handler: () => cluster.clusterNodes(),
+        arity: 2,
+        flags: ['stale', 'loading'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow'],
+      },
+      {
+        name: 'slots',
+        handler: () => cluster.clusterSlots(),
+        arity: 2,
+        flags: ['stale', 'loading'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow'],
+      },
+      {
+        name: 'shards',
+        handler: () => cluster.clusterShards(),
+        arity: 2,
+        flags: ['stale', 'loading'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow'],
+      },
+      {
+        name: 'countkeysinslot',
+        handler: (ctx, args) =>
+          cluster.clusterCountkeysinslot(ctx, args.slice(1)),
+        arity: 3,
+        flags: ['stale', 'loading'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow'],
+      },
+      {
+        name: 'getkeysinslot',
+        handler: (ctx, args) =>
+          cluster.clusterGetkeysinslot(ctx, args.slice(1)),
+        arity: 4,
+        flags: ['stale', 'loading'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow'],
+      },
+      {
+        name: 'reset',
+        handler: (_ctx, args) => cluster.clusterReset(args.slice(1)),
+        arity: -2,
+        flags: ['admin'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@admin', '@slow'],
+      },
+      {
+        name: 'help',
+        handler: () => cluster.clusterHelp(),
+        arity: 2,
+        flags: ['stale', 'loading'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow'],
+      },
+      {
+        name: 'links',
+        handler: () => cluster.clusterLinks(),
+        arity: 2,
+        flags: ['stale', 'loading'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow'],
+      },
+    ],
   },
 
   // --- Command introspection ---

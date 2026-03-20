@@ -353,6 +353,7 @@ describe('createCommandTable (registry)', () => {
       'command',
       'xadd',
       'xlen',
+      'cluster',
     ];
 
     for (const name of expectedCommands) {
