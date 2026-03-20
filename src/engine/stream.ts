@@ -30,6 +30,14 @@ export function parseStreamId(id: string): StreamId | null {
   return { ms, seq };
 }
 
+/**
+ * Parse an entry ID that is known to be valid (was validated on insert).
+ * Falls back to 0-0 if somehow invalid (should never happen).
+ */
+function parseEntryId(id: string): StreamId {
+  return parseStreamId(id) ?? { ms: 0, seq: 0 };
+}
+
 function parseNonNegativeInt(s: string): number | null {
   if (s === '' || s.length > 15) return null;
   const n = Number(s);
@@ -198,6 +206,59 @@ export class RedisStream {
     this.entries.splice(0, removeCount);
     this._length = this.entries.length;
     return removeCount;
+  }
+
+  /**
+   * Return entries with IDs in [start, end] inclusive, in ascending order.
+   * Optionally limited by count.
+   */
+  range(start: StreamId, end: StreamId, count?: number): StreamEntry[] {
+    const result: StreamEntry[] = [];
+    if (count === 0) return result;
+    for (const entry of this.entries) {
+      const eid = parseEntryId(entry.id);
+      if (compareStreamIds(eid, end) > 0) break;
+      if (compareStreamIds(eid, start) >= 0) {
+        result.push(entry);
+        if (count !== undefined && result.length >= count) break;
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Return entries with IDs in [start, end] inclusive, in descending order.
+   * Note: start >= end (start is the higher ID).
+   * Optionally limited by count.
+   */
+  revrange(start: StreamId, end: StreamId, count?: number): StreamEntry[] {
+    const result: StreamEntry[] = [];
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      const entry = this.entries[i] as StreamEntry;
+      const eid = parseEntryId(entry.id);
+      if (compareStreamIds(eid, end) < 0) break;
+      if (compareStreamIds(eid, start) <= 0) {
+        result.push(entry);
+        if (count !== undefined && result.length >= count) break;
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Return entries with IDs strictly greater than the given ID.
+   * Used by XREAD.
+   */
+  entriesAfter(id: StreamId, count?: number): StreamEntry[] {
+    const result: StreamEntry[] = [];
+    for (const entry of this.entries) {
+      const eid = parseEntryId(entry.id);
+      if (compareStreamIds(eid, id) > 0) {
+        result.push(entry);
+        if (count !== undefined && result.length >= count) break;
+      }
+    }
+    return result;
   }
 
   /**
