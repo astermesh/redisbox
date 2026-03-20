@@ -19,6 +19,7 @@ import * as set from './commands/set.ts';
 import * as database from './commands/database.ts';
 import * as cmd from './commands/command.ts';
 import * as transaction from './commands/transaction.ts';
+import * as bitmap from './commands/bitmap.ts';
 import * as pubsub from './commands/pubsub.ts';
 import * as sortedSet from './commands/sorted-set.ts';
 import type { CommandContext } from './types.ts';
@@ -939,6 +940,78 @@ const commandSpecs: CommandSpec[] = [
     lastKey: 1,
     keyStep: 1,
     categories: ['@write', '@string', '@fast'],
+  },
+
+  // --- Bitmap commands ---
+  {
+    name: 'setbit',
+    handler: (ctx, args) => bitmap.setbit(ctx.db, args),
+    arity: 4,
+    flags: ['write', 'denyoom'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@bitmap'],
+  },
+  {
+    name: 'getbit',
+    handler: (ctx, args) => bitmap.getbit(ctx.db, args),
+    arity: 3,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@bitmap', '@fast'],
+  },
+  {
+    name: 'bitcount',
+    handler: (ctx, args) => bitmap.bitcount(ctx.db, args),
+    arity: -2,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@bitmap'],
+  },
+  {
+    name: 'bitpos',
+    handler: (ctx, args) => bitmap.bitpos(ctx.db, args),
+    arity: -3,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@bitmap'],
+  },
+  {
+    name: 'bitop',
+    handler: (ctx, args) => bitmap.bitop(ctx.db, args),
+    arity: -4,
+    flags: ['write', 'denyoom'],
+    firstKey: 2,
+    lastKey: -1,
+    keyStep: 1,
+    categories: ['@write', '@bitmap'],
+  },
+  {
+    name: 'bitfield',
+    handler: (ctx, args) => bitmap.bitfield(ctx.db, args),
+    arity: -2,
+    flags: ['write', 'denyoom'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@bitmap'],
+  },
+  {
+    name: 'bitfield_ro',
+    handler: (ctx, args) => bitmap.bitfield(ctx.db, args),
+    arity: -2,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@bitmap', '@fast'],
   },
 
   // --- Hash commands ---
