@@ -366,6 +366,8 @@ describe('createCommandTable (registry)', () => {
       'zrangestore',
       'subscribe',
       'unsubscribe',
+      'psubscribe',
+      'punsubscribe',
       'publish',
       'info',
       'command',
