@@ -83,6 +83,18 @@ describe('PFADD', () => {
       message: 'Key is not a valid HyperLogLog string value.',
     });
   });
+
+  it('handles empty string elements', () => {
+    const { ctx } = createDb();
+    const result = hll.pfadd(ctx, ['mykey', '']);
+    expect(result).toEqual({ kind: 'integer', value: 1 });
+    const count = hll.pfcount(ctx, ['mykey']) as {
+      kind: string;
+      value: number;
+    };
+    expect(count.kind).toBe('integer');
+    expect(count.value).toBeGreaterThanOrEqual(1);
+  });
 });
 
 // --- PFCOUNT ---
@@ -148,6 +160,23 @@ describe('PFCOUNT', () => {
     });
   });
 
+  it('returns error for invalid HLL string', () => {
+    const { ctx, db } = createDb();
+    db.set('mykey', 'string', 'raw', 'notanhll');
+    const result = hll.pfcount(ctx, ['mykey']);
+    expect(result).toEqual({
+      kind: 'error',
+      prefix: 'WRONGTYPE',
+      message: 'Key is not a valid HyperLogLog string value.',
+    });
+  });
+
+  it('returns 0 when all keys are non-existent (multi-key)', () => {
+    const { ctx } = createDb();
+    const result = hll.pfcount(ctx, ['a', 'b', 'c']);
+    expect(result).toEqual({ kind: 'integer', value: 0 });
+  });
+
   it('TYPE returns string for HLL keys', () => {
     const { ctx, db } = createDb();
     hll.pfadd(ctx, ['mykey', 'a']);
@@ -209,6 +238,26 @@ describe('PFMERGE', () => {
     });
   });
 
+  it('returns WRONGTYPE for non-string destination', () => {
+    const { ctx, db } = createDb();
+    db.set('dest', 'list', 'quicklist', []);
+    hll.pfadd(ctx, ['src', 'a']);
+    const result = hll.pfmerge(ctx, ['dest', 'src']);
+    expect(result).toEqual({
+      kind: 'error',
+      prefix: 'WRONGTYPE',
+      message: 'Operation against a key holding the wrong kind of value',
+    });
+  });
+
+  it('creates empty HLL with dest-only (no sources)', () => {
+    const { ctx } = createDb();
+    const result = hll.pfmerge(ctx, ['dest']);
+    expect(result).toEqual({ kind: 'status', value: 'OK' });
+    const count = hll.pfcount(ctx, ['dest']);
+    expect(count).toEqual({ kind: 'integer', value: 0 });
+  });
+
   it('can merge with self as source', () => {
     const { ctx } = createDb();
     hll.pfadd(ctx, ['mykey', 'a', 'b', 'c']);
@@ -250,6 +299,58 @@ describe('PFDEBUG', () => {
     expect(result.kind).toBe('error');
   });
 
+  it('ENCODING returns sparse for new HLL', () => {
+    const { ctx } = createDb();
+    hll.pfadd(ctx, ['mykey', 'a']);
+    const result = hll.pfdebug(ctx, ['ENCODING', 'mykey']);
+    expect(result).toEqual({ kind: 'bulk', value: 'sparse' });
+  });
+
+  it('ENCODING returns dense after promotion', () => {
+    const { ctx } = createDb();
+    const elements = [];
+    for (let i = 0; i < 2000; i++) {
+      elements.push(`element${i}`);
+    }
+    hll.pfadd(ctx, ['mykey', ...elements]);
+    const result = hll.pfdebug(ctx, ['ENCODING', 'mykey']);
+    expect(result).toEqual({ kind: 'bulk', value: 'dense' });
+  });
+
+  it('TODENSE converts sparse to dense and returns 1', () => {
+    const { ctx } = createDb();
+    hll.pfadd(ctx, ['mykey', 'a']);
+    expect(hll.pfdebug(ctx, ['ENCODING', 'mykey'])).toEqual({
+      kind: 'bulk',
+      value: 'sparse',
+    });
+
+    const result = hll.pfdebug(ctx, ['TODENSE', 'mykey']);
+    expect(result).toEqual({ kind: 'integer', value: 1 });
+
+    expect(hll.pfdebug(ctx, ['ENCODING', 'mykey'])).toEqual({
+      kind: 'bulk',
+      value: 'dense',
+    });
+  });
+
+  it('TODENSE returns 0 for already dense HLL', () => {
+    const { ctx } = createDb();
+    hll.pfadd(ctx, ['mykey', 'a']);
+    hll.pfdebug(ctx, ['TODENSE', 'mykey']);
+    const result = hll.pfdebug(ctx, ['TODENSE', 'mykey']);
+    expect(result).toEqual({ kind: 'integer', value: 0 });
+  });
+
+  it('TODENSE preserves cardinality', () => {
+    const { ctx } = createDb();
+    hll.pfadd(ctx, ['mykey', 'a', 'b', 'c', 'd', 'e']);
+    const countBefore = hll.pfcount(ctx, ['mykey']);
+    hll.pfdebug(ctx, ['TODENSE', 'mykey']);
+    const countAfter = hll.pfcount(ctx, ['mykey']);
+    expect(countBefore).toEqual(countAfter);
+  });
+
   it('returns error for unknown subcommand', () => {
     const { ctx } = createDb();
     hll.pfadd(ctx, ['mykey', 'a']);
@@ -274,24 +375,19 @@ describe('Sparse/Dense transition', () => {
   it('starts in sparse encoding', () => {
     const { ctx } = createDb();
     hll.pfadd(ctx, ['mykey', 'a']);
-    const result = hll.pfdebug(ctx, ['DECODE', 'mykey']);
-    // For sparse, DECODE returns a string description
-    expect(result.kind).toBe('bulk');
+    const result = hll.pfdebug(ctx, ['ENCODING', 'mykey']);
+    expect(result).toEqual({ kind: 'bulk', value: 'sparse' });
   });
 
   it('transitions to dense with many unique elements', () => {
     const { ctx } = createDb();
-    // Add enough elements to force sparse-to-dense transition
     const elements = [];
     for (let i = 0; i < 2000; i++) {
       elements.push(`element${i}`);
     }
     hll.pfadd(ctx, ['mykey', ...elements]);
-    // After many elements, should be dense
-    const result = hll.pfdebug(ctx, ['DECODE', 'mykey']);
-    if (result.kind === 'bulk') {
-      expect((result as { value: string }).value).toContain('dense');
-    }
+    const result = hll.pfdebug(ctx, ['ENCODING', 'mykey']);
+    expect(result).toEqual({ kind: 'bulk', value: 'dense' });
   });
 });
 

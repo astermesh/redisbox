@@ -547,7 +547,7 @@ function hllAdd(
   bytes: Uint8Array,
   element: string,
   sparseMaxBytes: number
-): { bytes: Uint8Array; changed: boolean } | null {
+): { bytes: Uint8Array; changed: boolean } {
   const [index, count] = hllPatLen(element);
 
   if (hllEncoding(bytes) === HLL_SPARSE) {
@@ -661,9 +661,6 @@ export function pfadd(ctx: CommandContext, args: string[]): Reply {
 
   for (const elem of elements) {
     const result = hllAdd(hllBytes, elem, sparseMaxBytes);
-    if (result === null) {
-      continue;
-    }
     hllBytes = result.bytes;
     if (result.changed) anyChanged = true;
   }
@@ -778,6 +775,19 @@ export function pfdebug(ctx: CommandContext, args: string[]): Reply {
       replies[i] = integerReply(regs[i] ?? 0);
     }
     return arrayReply(replies);
+  }
+
+  if (subcmd === 'ENCODING') {
+    return bulkReply(hllEncoding(bytes) === HLL_DENSE ? 'dense' : 'sparse');
+  }
+
+  if (subcmd === 'TODENSE') {
+    if (hllEncoding(bytes) === HLL_SPARSE) {
+      const dense = sparseToDense(bytes);
+      saveHll(ctx.db, key, dense);
+      return integerReply(1);
+    }
+    return integerReply(0);
   }
 
   if (subcmd === 'DECODE') {
