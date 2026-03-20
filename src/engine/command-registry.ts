@@ -22,6 +22,7 @@ import * as transaction from './commands/transaction.ts';
 import * as bitmap from './commands/bitmap.ts';
 import * as pubsub from './commands/pubsub.ts';
 import * as sortedSet from './commands/sorted-set.ts';
+import * as streamCmd from './commands/stream.ts';
 import type { CommandContext } from './types.ts';
 
 function getTable(ctx: CommandContext): CommandTable {
@@ -1649,6 +1650,27 @@ const commandSpecs: CommandSpec[] = [
         categories: ['@slow', '@connection'],
       },
     ],
+  },
+  // --- Stream commands ---
+  {
+    name: 'xadd',
+    handler: (ctx, args) => streamCmd.xadd(ctx.db, ctx.engine.clock(), args),
+    arity: -5,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@stream', '@fast'],
+  },
+  {
+    name: 'xlen',
+    handler: (ctx, args) => streamCmd.xlen(ctx.db, args),
+    arity: 2,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@stream', '@fast'],
   },
 ];
 
