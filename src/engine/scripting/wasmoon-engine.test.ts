@@ -114,6 +114,11 @@ describe('WasmoonEngine', () => {
       expect(result.values).toEqual([1]);
     });
 
+    it('runs Lua 5.1', async () => {
+      const result = await engine.execute('return _VERSION');
+      expect(result.values).toEqual(['Lua 5.1']);
+    });
+
     it('has Lua 5.1 unpack (not table.unpack)', async () => {
       const result = await engine.execute(`
         local t = {10, 20, 30}
