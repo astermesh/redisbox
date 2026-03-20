@@ -66,6 +66,19 @@ function checkArity(def: CommandDefinition, argc: number): boolean {
 
 function requiresAuth(ctx: CommandContext): boolean {
   if (!ctx.client || ctx.client.authenticated) return false;
+
+  // When an ACL store is available, check if the default user requires a
+  // password.  Sync with requirepass first so the two stay consistent.
+  if (ctx.acl) {
+    if (ctx.config) {
+      const result = ctx.config.get('requirepass');
+      ctx.acl.syncRequirePass(result[1] ?? '');
+    }
+    const defaultUser = ctx.acl.getDefaultUser();
+    return !defaultUser.nopass;
+  }
+
+  // Legacy path (no ACL store)
   if (!ctx.config) return false;
   const result = ctx.config.get('requirepass');
   const pass = result[1] ?? '';

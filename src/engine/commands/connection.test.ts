@@ -17,6 +17,7 @@ function createCtx(opts?: { clientId?: number; config?: ConfigStore }): {
       engine,
       client,
       config: opts?.config,
+      acl: engine.acl,
     },
     client,
   };
@@ -174,17 +175,14 @@ describe('HELLO', () => {
     expect(client.authenticated).toBe(false);
   });
 
-  it('HELLO with AUTH when no password is set returns error', () => {
+  it('HELLO with AUTH when no password is set succeeds (nopass user)', () => {
     const config = new ConfigStore();
-    const { ctx } = createCtx({ config, clientId: 5 });
+    const { ctx, client } = createCtx({ config, clientId: 5 });
+    client.authenticated = false;
 
     const result = cmd.hello(ctx, ['2', 'AUTH', 'default', 'pass']);
-    expect(result).toEqual({
-      kind: 'error',
-      prefix: 'ERR',
-      message:
-        'Client sent AUTH, but no password is set. Did you mean ACL SETUSER with >password?',
-    });
+    expect(result.kind).toBe('array');
+    expect(client.authenticated).toBe(true);
   });
 
   it('HELLO with SETNAME option sets client name', () => {
@@ -424,9 +422,56 @@ describe('AUTH', () => {
       db: engine.db(0),
       engine,
       config,
+      acl: engine.acl,
     };
 
     const result = cmd.auth(ctx, ['secret']);
     expect(result).toEqual({ kind: 'status', value: 'OK' });
+  });
+
+  it('AUTH username password succeeds when user has nopass (2-arg form)', () => {
+    const { ctx, client } = createCtx();
+    client.authenticated = false;
+
+    // No requirepass → default user has nopass
+    // 2-arg form should succeed (real Redis: ACLAuthenticateUser succeeds)
+    const result = cmd.auth(ctx, ['default', 'anypass']);
+    expect(result).toEqual({ kind: 'status', value: 'OK' });
+    expect(client.authenticated).toBe(true);
+  });
+
+  it('AUTH password returns no-password error when default user has nopass (1-arg form)', () => {
+    const { ctx } = createCtx();
+
+    // No requirepass → default user has nopass
+    // 1-arg form should return "no password set" error (real Redis short-circuit)
+    const result = cmd.auth(ctx, ['anypass']);
+    expect(result).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message:
+        'Client sent AUTH, but no password is set. Did you mean ACL SETUSER with >password?',
+    });
+  });
+
+  it('rejects AUTH when default user is disabled', () => {
+    const config = new ConfigStore();
+    config.set('requirepass', 'secret');
+    const { ctx, client } = createCtx({ config });
+    client.authenticated = false;
+
+    // Disable the default user via ACL store
+    const acl = ctx.acl;
+    if (acl) {
+      acl.getDefaultUser().enabled = false;
+    }
+
+    const result = cmd.auth(ctx, ['secret']);
+    expect(result).toEqual({
+      kind: 'error',
+      prefix: 'WRONGPASS',
+      message: 'invalid username-password pair or user is disabled.',
+    });
+    expect(client.authenticated).toBe(false);
   });
 });
