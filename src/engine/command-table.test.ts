@@ -353,6 +353,7 @@ describe('createCommandTable (registry)', () => {
       'command',
       'xadd',
       'xlen',
+      'cluster',
     ];
 
     for (const name of expectedCommands) {
@@ -497,6 +498,7 @@ describe('createCommandTable (registry)', () => {
       ['xadd', -5],
       ['xlen', 2],
       ['info', -1],
+      ['cluster', -2],
     ];
 
     for (const [name, expectedArity] of arityTests) {
