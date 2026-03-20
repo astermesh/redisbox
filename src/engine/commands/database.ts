@@ -8,6 +8,7 @@ import {
   OK,
   NOT_INTEGER_ERR,
 } from '../types.ts';
+import type { CommandSpec } from '../command-table.ts';
 
 const DB_OUT_OF_RANGE_ERR = errorReply('ERR', 'DB index is out of range');
 const INVALID_DB_INDEX_ERR = errorReply('ERR', 'invalid DB index');
@@ -94,3 +95,56 @@ export function swapdb(engine: RedisEngine, args: string[]): Reply {
 
   return OK;
 }
+
+export const specs: CommandSpec[] = [
+  {
+    name: 'select',
+    handler: (ctx, args) => select(ctx, args),
+    arity: 2,
+    flags: ['fast', 'loading', 'stale'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@fast', '@connection'],
+  },
+  {
+    name: 'dbsize',
+    handler: (ctx) => dbsize(ctx.db),
+    arity: 1,
+    flags: ['readonly', 'fast', 'loading', 'stale'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@keyspace', '@read', '@fast'],
+  },
+  {
+    name: 'flushdb',
+    handler: (ctx, args) => flushdb(ctx, args),
+    arity: -1,
+    flags: ['write', 'loading', 'stale'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@keyspace', '@write'],
+  },
+  {
+    name: 'flushall',
+    handler: (ctx, args) => flushall(ctx, args),
+    arity: -1,
+    flags: ['write', 'loading', 'stale'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@keyspace', '@write'],
+  },
+  {
+    name: 'swapdb',
+    handler: (ctx, args) => swapdb(ctx.engine, args),
+    arity: 3,
+    flags: ['write', 'fast'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@keyspace', '@write', '@fast'],
+  },
+];

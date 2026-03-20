@@ -18,14 +18,10 @@ import {
   OVERFLOW_ERR,
   SYNTAX_ERR,
 } from '../types.ts';
+import type { CommandSpec } from '../command-table.ts';
 import { parseInteger, parseFloat64, formatFloat } from './incr.ts';
 import { matchGlob } from '../glob-pattern.ts';
-
-const textEncoder = new TextEncoder();
-
-function strByteLength(s: string): number {
-  return textEncoder.encode(s).length;
-}
+import { strByteLength, partialShuffle } from '../utils.ts';
 
 // Default thresholds — match Redis defaults.
 // TODO: read from ConfigStore when config is wired into CommandContext.
@@ -433,14 +429,7 @@ export function hrandfield(
   if (count > 0) {
     // Positive count: unique elements, at most hash size
     const actual = Math.min(count, fields.length);
-    // Fisher-Yates partial shuffle
-    const shuffled = [...fields];
-    for (let i = 0; i < actual; i++) {
-      const j = i + Math.floor(rng() * (shuffled.length - i));
-      const tmp = shuffled[i] ?? '';
-      shuffled[i] = shuffled[j] ?? '';
-      shuffled[j] = tmp;
-    }
+    const shuffled = partialShuffle([...fields], actual, rng);
     for (let i = 0; i < actual; i++) {
       const f = shuffled[i] ?? '';
       results.push(bulkReply(f));
@@ -541,3 +530,156 @@ export function hscan(db: Database, args: string[]): Reply {
 
   return arrayReply([bulkReply(String(nextCursor)), arrayReply(results)]);
 }
+
+export const specs: CommandSpec[] = [
+  {
+    name: 'hset',
+    handler: (ctx, args) => hset(ctx.db, args),
+    arity: -4,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@hash', '@fast'],
+  },
+  {
+    name: 'hget',
+    handler: (ctx, args) => hget(ctx.db, args),
+    arity: 3,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@hash', '@fast'],
+  },
+  {
+    name: 'hmset',
+    handler: (ctx, args) => hmset(ctx.db, args),
+    arity: -4,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@hash', '@fast'],
+  },
+  {
+    name: 'hmget',
+    handler: (ctx, args) => hmget(ctx.db, args),
+    arity: -3,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@hash', '@fast'],
+  },
+  {
+    name: 'hgetall',
+    handler: (ctx, args) => hgetall(ctx.db, args),
+    arity: 2,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@hash'],
+  },
+  {
+    name: 'hdel',
+    handler: (ctx, args) => hdel(ctx.db, args),
+    arity: -3,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@hash', '@fast'],
+  },
+  {
+    name: 'hexists',
+    handler: (ctx, args) => hexists(ctx.db, args),
+    arity: 3,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@hash', '@fast'],
+  },
+  {
+    name: 'hlen',
+    handler: (ctx, args) => hlen(ctx.db, args),
+    arity: 2,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@hash', '@fast'],
+  },
+  {
+    name: 'hkeys',
+    handler: (ctx, args) => hkeys(ctx.db, args),
+    arity: 2,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@hash'],
+  },
+  {
+    name: 'hvals',
+    handler: (ctx, args) => hvals(ctx.db, args),
+    arity: 2,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@hash'],
+  },
+  {
+    name: 'hsetnx',
+    handler: (ctx, args) => hsetnx(ctx.db, args),
+    arity: 4,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@hash', '@fast'],
+  },
+  {
+    name: 'hincrby',
+    handler: (ctx, args) => hincrby(ctx.db, args),
+    arity: 4,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@hash', '@fast'],
+  },
+  {
+    name: 'hincrbyfloat',
+    handler: (ctx, args) => hincrbyfloat(ctx.db, args),
+    arity: 4,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@hash', '@fast'],
+  },
+  {
+    name: 'hrandfield',
+    handler: (ctx, args) => hrandfield(ctx.db, args, ctx.engine.rng),
+    arity: -2,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@hash'],
+  },
+  {
+    name: 'hscan',
+    handler: (ctx, args) => hscan(ctx.db, args),
+    arity: -3,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@hash'],
+  },
+];

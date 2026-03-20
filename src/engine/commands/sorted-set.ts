@@ -12,6 +12,7 @@ import {
 } from '../types.ts';
 import { SkipList } from '../skip-list.ts';
 import { parseFloat64, formatFloat } from './incr.ts';
+import type { CommandSpec } from '../command-table.ts';
 
 function formatScore(n: number): string {
   if (n === Infinity) return 'inf';
@@ -338,3 +339,46 @@ export function zcard(db: Database, args: string[]): Reply {
 
   return integerReply(zset.dict.size);
 }
+
+export const specs: CommandSpec[] = [
+  {
+    name: 'zadd',
+    handler: (ctx, args) => zadd(ctx.db, args, ctx.engine.rng),
+    arity: -4,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@sortedset', '@fast'],
+  },
+  {
+    name: 'zrem',
+    handler: (ctx, args) => zrem(ctx.db, args),
+    arity: -3,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@sortedset', '@fast'],
+  },
+  {
+    name: 'zincrby',
+    handler: (ctx, args) => zincrby(ctx.db, args, ctx.engine.rng),
+    arity: 4,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@sortedset', '@fast'],
+  },
+  {
+    name: 'zcard',
+    handler: (ctx, args) => zcard(ctx.db, args),
+    arity: 2,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@sortedset', '@fast'],
+  },
+];

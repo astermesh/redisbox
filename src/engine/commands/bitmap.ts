@@ -10,6 +10,7 @@ import {
   SYNTAX_ERR,
   NOT_INTEGER_ERR,
 } from '../types.ts';
+import type { CommandSpec } from '../command-table.ts';
 
 // --- Error constants ---
 
@@ -693,3 +694,76 @@ function parseBigInt(s: string): bigint | null {
     return null;
   }
 }
+
+export const specs: CommandSpec[] = [
+  {
+    name: 'setbit',
+    handler: (ctx, args) => setbit(ctx.db, args),
+    arity: 4,
+    flags: ['write', 'denyoom'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@bitmap'],
+  },
+  {
+    name: 'getbit',
+    handler: (ctx, args) => getbit(ctx.db, args),
+    arity: 3,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@bitmap', '@fast'],
+  },
+  {
+    name: 'bitcount',
+    handler: (ctx, args) => bitcount(ctx.db, args),
+    arity: -2,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@bitmap'],
+  },
+  {
+    name: 'bitpos',
+    handler: (ctx, args) => bitpos(ctx.db, args),
+    arity: -3,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@bitmap'],
+  },
+  {
+    name: 'bitop',
+    handler: (ctx, args) => bitop(ctx.db, args),
+    arity: -4,
+    flags: ['write', 'denyoom'],
+    firstKey: 2,
+    lastKey: -1,
+    keyStep: 1,
+    categories: ['@write', '@bitmap'],
+  },
+  {
+    name: 'bitfield',
+    handler: (ctx, args) => bitfield(ctx.db, args),
+    arity: -2,
+    flags: ['write', 'denyoom'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@bitmap'],
+  },
+  {
+    name: 'bitfield_ro',
+    handler: (ctx, args) => bitfieldRo(ctx.db, args),
+    arity: -2,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@bitmap', '@fast'],
+  },
+];

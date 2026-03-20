@@ -7,6 +7,7 @@ import {
   ZERO,
   NOT_INTEGER_ERR,
 } from '../types.ts';
+import type { CommandSpec } from '../command-table.ts';
 
 const NO_TTL = integerReply(-1);
 const NO_KEY = integerReply(-2);
@@ -234,3 +235,86 @@ export function pexpiretime(db: Database, args: string[]): Reply {
   if (expiryMs === undefined) return NO_TTL;
   return integerReply(expiryMs);
 }
+
+export const specs: CommandSpec[] = [
+  {
+    name: 'expire',
+    handler: (ctx, args) => expire(ctx.db, ctx.engine.clock, args),
+    arity: -3,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@keyspace', '@write'],
+  },
+  {
+    name: 'pexpire',
+    handler: (ctx, args) => pexpire(ctx.db, ctx.engine.clock, args),
+    arity: -3,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@keyspace', '@write'],
+  },
+  {
+    name: 'expireat',
+    handler: (ctx, args) => expireat(ctx.db, ctx.engine.clock, args),
+    arity: -3,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@keyspace', '@write'],
+  },
+  {
+    name: 'pexpireat',
+    handler: (ctx, args) => pexpireat(ctx.db, ctx.engine.clock, args),
+    arity: -3,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@keyspace', '@write'],
+  },
+  {
+    name: 'ttl',
+    handler: (ctx, args) => ttl(ctx.db, ctx.engine.clock, args),
+    arity: 2,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@keyspace', '@read'],
+  },
+  {
+    name: 'pttl',
+    handler: (ctx, args) => pttl(ctx.db, ctx.engine.clock, args),
+    arity: 2,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@keyspace', '@read'],
+  },
+  {
+    name: 'expiretime',
+    handler: (ctx, args) => expiretime(ctx.db, args),
+    arity: 2,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@keyspace', '@read'],
+  },
+  {
+    name: 'pexpiretime',
+    handler: (ctx, args) => pexpiretime(ctx.db, args),
+    arity: 2,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@keyspace', '@read'],
+  },
+];

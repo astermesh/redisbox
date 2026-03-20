@@ -1,5 +1,6 @@
 import type { CommandContext, Reply } from '../types.ts';
 import { bulkReply } from '../types.ts';
+import type { CommandSpec } from '../command-table.ts';
 
 // ---------------------------------------------------------------------------
 // Section names
@@ -416,3 +417,16 @@ function dedupe(sections: string[]): string[] {
   }
   return result;
 }
+
+export const specs: CommandSpec[] = [
+  {
+    name: 'info',
+    handler: (ctx, args) => info(ctx, args),
+    arity: -1,
+    flags: ['loading', 'stale'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@slow', '@dangerous'],
+  },
+];

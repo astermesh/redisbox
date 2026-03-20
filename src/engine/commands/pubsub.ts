@@ -16,6 +16,7 @@ import {
   multiReply,
   ZERO,
 } from '../types.ts';
+import type { CommandSpec } from '../command-table.ts';
 
 /**
  * SUBSCRIBE channel [channel ...]
@@ -138,3 +139,36 @@ export function publish(ctx: CommandContext, args: string[]): Reply {
   const count = pubsub.publish(channel, message);
   return integerReply(count);
 }
+
+export const specs: CommandSpec[] = [
+  {
+    name: 'subscribe',
+    handler: (ctx, args) => subscribe(ctx, args),
+    arity: -2,
+    flags: ['pubsub', 'noscript', 'loading', 'stale'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@pubsub', '@slow'],
+  },
+  {
+    name: 'unsubscribe',
+    handler: (ctx, args) => unsubscribe(ctx, args),
+    arity: -1,
+    flags: ['pubsub', 'noscript', 'loading', 'stale'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@pubsub', '@slow'],
+  },
+  {
+    name: 'publish',
+    handler: (ctx, args) => publish(ctx, args),
+    arity: 3,
+    flags: ['pubsub', 'loading', 'stale', 'fast'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@pubsub', '@fast'],
+  },
+];

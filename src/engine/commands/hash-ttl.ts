@@ -7,6 +7,7 @@ import {
   NOT_INTEGER_ERR,
   WRONGTYPE_ERR,
 } from '../types.ts';
+import type { CommandSpec } from '../command-table.ts';
 
 /**
  * Parse the FIELDS numfields field... portion of hash TTL commands.
@@ -402,3 +403,96 @@ export function hpexpiretime(
     return expiryMs;
   });
 }
+
+export const specs: CommandSpec[] = [
+  {
+    name: 'hexpire',
+    handler: (ctx, args) => hexpire(ctx.db, ctx.engine.clock, args),
+    arity: -6,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@hash', '@fast'],
+  },
+  {
+    name: 'hpexpire',
+    handler: (ctx, args) => hpexpire(ctx.db, ctx.engine.clock, args),
+    arity: -6,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@hash', '@fast'],
+  },
+  {
+    name: 'hexpireat',
+    handler: (ctx, args) => hexpireat(ctx.db, ctx.engine.clock, args),
+    arity: -6,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@hash', '@fast'],
+  },
+  {
+    name: 'hpexpireat',
+    handler: (ctx, args) => hpexpireat(ctx.db, ctx.engine.clock, args),
+    arity: -6,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@hash', '@fast'],
+  },
+  {
+    name: 'httl',
+    handler: (ctx, args) => httl(ctx.db, ctx.engine.clock, args),
+    arity: -5,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@hash', '@fast'],
+  },
+  {
+    name: 'hpttl',
+    handler: (ctx, args) => hpttl(ctx.db, ctx.engine.clock, args),
+    arity: -5,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@hash', '@fast'],
+  },
+  {
+    name: 'hpersist',
+    handler: (ctx, args) => hpersist(ctx.db, ctx.engine.clock, args),
+    arity: -5,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@hash', '@fast'],
+  },
+  {
+    name: 'hexpiretime',
+    handler: (ctx, args) => hexpiretime(ctx.db, ctx.engine.clock, args),
+    arity: -5,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@hash', '@fast'],
+  },
+  {
+    name: 'hpexpiretime',
+    handler: (ctx, args) => hpexpiretime(ctx.db, ctx.engine.clock, args),
+    arity: -5,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@hash', '@fast'],
+  },
+];

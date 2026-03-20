@@ -15,11 +15,8 @@ import {
   SYNTAX_ERR,
 } from '../types.ts';
 
-const textEncoder = new TextEncoder();
-
-function strByteLength(s: string): number {
-  return textEncoder.encode(s).length;
-}
+import { strByteLength } from '../utils.ts';
+import type { CommandSpec } from '../command-table.ts';
 
 // Default thresholds — match Redis defaults.
 // TODO: read from ConfigStore when config is wired into CommandContext.
@@ -527,3 +524,146 @@ export function lpos(db: Database, args: string[]): Reply {
 
   return results.length > 0 ? integerReply(results[0] ?? 0) : NIL;
 }
+
+export const specs: CommandSpec[] = [
+  {
+    name: 'lpush',
+    handler: (ctx, args) => lpush(ctx.db, args),
+    arity: -3,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@list', '@fast'],
+  },
+  {
+    name: 'rpush',
+    handler: (ctx, args) => rpush(ctx.db, args),
+    arity: -3,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@list', '@fast'],
+  },
+  {
+    name: 'lpushx',
+    handler: (ctx, args) => lpushx(ctx.db, args),
+    arity: -3,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@list', '@fast'],
+  },
+  {
+    name: 'rpushx',
+    handler: (ctx, args) => rpushx(ctx.db, args),
+    arity: -3,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@list', '@fast'],
+  },
+  {
+    name: 'lpop',
+    handler: (ctx, args) => lpop(ctx.db, args),
+    arity: -2,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@list', '@fast'],
+  },
+  {
+    name: 'rpop',
+    handler: (ctx, args) => rpop(ctx.db, args),
+    arity: -2,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@list', '@fast'],
+  },
+  {
+    name: 'llen',
+    handler: (ctx, args) => llen(ctx.db, args),
+    arity: 2,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@list', '@fast'],
+  },
+  {
+    name: 'lrange',
+    handler: (ctx, args) => lrange(ctx.db, args),
+    arity: 4,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@list', '@slow'],
+  },
+  {
+    name: 'lindex',
+    handler: (ctx, args) => lindex(ctx.db, args),
+    arity: 3,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@list', '@slow'],
+  },
+  {
+    name: 'lset',
+    handler: (ctx, args) => lset(ctx.db, args),
+    arity: 4,
+    flags: ['write', 'denyoom'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@list', '@slow'],
+  },
+  {
+    name: 'linsert',
+    handler: (ctx, args) => linsert(ctx.db, args),
+    arity: 5,
+    flags: ['write', 'denyoom'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@list', '@slow'],
+  },
+  {
+    name: 'lrem',
+    handler: (ctx, args) => lrem(ctx.db, args),
+    arity: 4,
+    flags: ['write'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@list', '@slow'],
+  },
+  {
+    name: 'ltrim',
+    handler: (ctx, args) => ltrim(ctx.db, args),
+    arity: 4,
+    flags: ['write'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@list', '@slow'],
+  },
+  {
+    name: 'lpos',
+    handler: (ctx, args) => lpos(ctx.db, args),
+    arity: -3,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@list', '@slow'],
+  },
+];

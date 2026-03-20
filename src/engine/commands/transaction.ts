@@ -1,5 +1,6 @@
 import type { Reply } from '../types.ts';
 import { OK, errorReply } from '../types.ts';
+import type { CommandSpec } from '../command-table.ts';
 
 /**
  * MULTI
@@ -36,3 +37,36 @@ export function exec(): Reply {
 export function discard(): Reply {
   return errorReply('ERR', 'DISCARD without MULTI');
 }
+
+export const specs: CommandSpec[] = [
+  {
+    name: 'multi',
+    handler: () => multi(),
+    arity: 1,
+    flags: ['noscript', 'loading', 'stale', 'fast'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@fast', '@transaction'],
+  },
+  {
+    name: 'exec',
+    handler: () => exec(),
+    arity: 1,
+    flags: ['noscript', 'loading', 'stale'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@slow', '@transaction'],
+  },
+  {
+    name: 'discard',
+    handler: () => discard(),
+    arity: 1,
+    flags: ['noscript', 'loading', 'stale', 'fast'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@fast', '@transaction'],
+  },
+];

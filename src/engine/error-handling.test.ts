@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { CommandDispatcher, createClientState } from './command-dispatcher.ts';
-import type { ClientState } from './command-dispatcher.ts';
+import {
+  CommandDispatcher,
+  createTransactionState,
+} from './command-dispatcher.ts';
+import type { TransactionState } from './command-dispatcher.ts';
 import { createCommandTable } from './command-registry.ts';
 import { RedisEngine } from './engine.ts';
 import type { CommandContext, Reply } from './types.ts';
@@ -181,13 +184,13 @@ describe('error helpers match Redis format', () => {
 
 describe('error responses through command dispatcher', () => {
   let dispatcher: CommandDispatcher;
-  let state: ClientState;
+  let state: TransactionState;
   let ctx: CommandContext;
 
   beforeEach(() => {
     const table = createCommandTable();
     dispatcher = new CommandDispatcher(table);
-    state = createClientState();
+    state = createTransactionState();
     const now = 1000;
     const engine = new RedisEngine({ clock: () => now, rng: () => 0.5 });
     ctx = { db: engine.db(0), engine };

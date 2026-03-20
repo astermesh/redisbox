@@ -4,6 +4,7 @@ import {
   integerReply,
   bulkReply,
   arrayReply,
+  errorReply,
   wrongArityError,
   ZERO,
   ONE,
@@ -15,21 +16,19 @@ import {
 } from '../types.ts';
 import { parseInteger } from './incr.ts';
 import { matchGlob } from '../glob-pattern.ts';
-
-const textEncoder = new TextEncoder();
-
-function strByteLength(s: string): number {
-  return textEncoder.encode(s).length;
-}
+import {
+  strByteLength,
+  INT64_MIN,
+  INT64_MAX,
+  partialShuffle,
+} from '../utils.ts';
+import type { CommandSpec } from '../command-table.ts';
 
 // Default thresholds — match Redis defaults.
 // TODO: read from ConfigStore when config is wired into CommandContext.
 const DEFAULT_MAX_INTSET_ENTRIES = 512;
 const DEFAULT_MAX_LISTPACK_ENTRIES = 128;
 const DEFAULT_MAX_LISTPACK_VALUE = 64;
-
-const INT64_MIN = -9223372036854775808n;
-const INT64_MAX = 9223372036854775807n;
 
 /**
  * Check if a string represents a valid integer for intset encoding.
@@ -336,14 +335,7 @@ export function srandmember(
   if (count > 0) {
     // Positive count: unique elements, at most set size
     const actual = Math.min(count, members.length);
-    // Fisher-Yates partial shuffle
-    const shuffled = [...members];
-    for (let i = 0; i < actual; i++) {
-      const j = i + Math.floor(rng() * (shuffled.length - i));
-      const tmp = shuffled[i] ?? '';
-      shuffled[i] = shuffled[j] ?? '';
-      shuffled[j] = tmp;
-    }
+    const shuffled = partialShuffle([...members], actual, rng);
     for (let i = 0; i < actual; i++) {
       results.push(bulkReply(shuffled[i] ?? ''));
     }
@@ -385,11 +377,7 @@ export function spop(db: Database, args: string[], rng: () => number): Reply {
   const count = Number(countParsed);
 
   if (count < 0) {
-    return {
-      kind: 'error',
-      prefix: 'ERR',
-      message: 'value is out of range, must be positive',
-    };
+    return errorReply('ERR', 'value is out of range, must be positive');
   }
 
   if (!s || s.size === 0) return EMPTY_ARRAY;
@@ -398,14 +386,7 @@ export function spop(db: Database, args: string[], rng: () => number): Reply {
   const members = Array.from(s);
   const actual = Math.min(count, members.length);
 
-  // Fisher-Yates partial shuffle to select random members
-  const shuffled = [...members];
-  for (let i = 0; i < actual; i++) {
-    const j = i + Math.floor(rng() * (shuffled.length - i));
-    const tmp = shuffled[i] ?? '';
-    shuffled[i] = shuffled[j] ?? '';
-    shuffled[j] = tmp;
-  }
+  const shuffled = partialShuffle([...members], actual, rng);
 
   const results: Reply[] = [];
   for (let i = 0; i < actual; i++) {
@@ -427,7 +408,7 @@ export function sscan(db: Database, args: string[]): Reply {
 
   const cursor = parseInt(cursorStr, 10);
   if (isNaN(cursor) || cursor < 0) {
-    return { kind: 'error', prefix: 'ERR', message: 'invalid cursor' };
+    return errorReply('ERR', 'invalid cursor');
   }
 
   // Check key type before parsing options
@@ -487,3 +468,106 @@ export function sscan(db: Database, args: string[]): Reply {
 
   return arrayReply([bulkReply(String(nextCursor)), arrayReply(results)]);
 }
+
+export const specs: CommandSpec[] = [
+  {
+    name: 'sadd',
+    handler: (ctx, args) => sadd(ctx.db, args),
+    arity: -3,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@set', '@fast'],
+  },
+  {
+    name: 'srem',
+    handler: (ctx, args) => srem(ctx.db, args),
+    arity: -3,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@set', '@fast'],
+  },
+  {
+    name: 'sismember',
+    handler: (ctx, args) => sismember(ctx.db, args),
+    arity: 3,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@set', '@fast'],
+  },
+  {
+    name: 'smismember',
+    handler: (ctx, args) => smismember(ctx.db, args),
+    arity: -3,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@set', '@fast'],
+  },
+  {
+    name: 'smembers',
+    handler: (ctx, args) => smembers(ctx.db, args),
+    arity: 2,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@set'],
+  },
+  {
+    name: 'scard',
+    handler: (ctx, args) => scard(ctx.db, args),
+    arity: 2,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@set', '@fast'],
+  },
+  {
+    name: 'smove',
+    handler: (ctx, args) => smove(ctx.db, args),
+    arity: 4,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 2,
+    keyStep: 1,
+    categories: ['@write', '@set', '@fast'],
+  },
+  {
+    name: 'srandmember',
+    handler: (ctx, args) => srandmember(ctx.db, args, ctx.engine.rng),
+    arity: -2,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@set'],
+  },
+  {
+    name: 'spop',
+    handler: (ctx, args) => spop(ctx.db, args, ctx.engine.rng),
+    arity: -2,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@set', '@fast'],
+  },
+  {
+    name: 'sscan',
+    handler: (ctx, args) => sscan(ctx.db, args),
+    arity: -3,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@set'],
+  },
+];
