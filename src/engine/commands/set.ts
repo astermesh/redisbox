@@ -4,6 +4,7 @@ import {
   integerReply,
   bulkReply,
   arrayReply,
+  errorReply,
   wrongArityError,
   ZERO,
   ONE,
@@ -370,11 +371,7 @@ export function spop(db: Database, args: string[], rng: () => number): Reply {
   const count = Number(countParsed);
 
   if (count < 0) {
-    return {
-      kind: 'error',
-      prefix: 'ERR',
-      message: 'value is out of range, must be positive',
-    };
+    return errorReply('ERR', 'value is out of range, must be positive');
   }
 
   if (!s || s.size === 0) return EMPTY_ARRAY;
@@ -405,7 +402,7 @@ export function sscan(db: Database, args: string[]): Reply {
 
   const cursor = parseInt(cursorStr, 10);
   if (isNaN(cursor) || cursor < 0) {
-    return { kind: 'error', prefix: 'ERR', message: 'invalid cursor' };
+    return errorReply('ERR', 'invalid cursor');
   }
 
   // Check key type before parsing options

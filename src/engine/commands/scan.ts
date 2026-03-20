@@ -42,8 +42,11 @@ export function scan(db: Database, args: string[]): Reply {
     } else if (flag === 'COUNT') {
       i++;
       count = parseInt(args[i] ?? '10', 10);
-      if (isNaN(count) || count <= 0) {
+      if (isNaN(count)) {
         return NOT_INTEGER_ERR;
+      }
+      if (count < 1) {
+        return SYNTAX_ERR;
       }
     } else if (flag === 'TYPE') {
       i++;
