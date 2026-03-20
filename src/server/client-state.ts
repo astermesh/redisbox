@@ -6,6 +6,7 @@ export class ClientState {
 
   dbIndex = 0;
   name = '';
+  username = 'default';
   lastCommand = '';
   lastCommandTime = 0;
 

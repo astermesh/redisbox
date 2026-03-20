@@ -78,6 +78,7 @@ function validateAuth(
 
     if (ctx.client) {
       ctx.client.authenticated = true;
+      ctx.client.username = username;
     }
     return null;
   }
@@ -230,6 +231,7 @@ export function auth(ctx: CommandContext, args: string[]): Reply {
 
     if (ctx.client) {
       ctx.client.authenticated = true;
+      ctx.client.username = username;
     }
     return OK;
   }

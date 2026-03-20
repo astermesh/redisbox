@@ -379,6 +379,7 @@ describe('createCommandTable (registry)', () => {
       'xrevrange',
       'xread',
       'cluster',
+      'acl',
       'pfadd',
       'pfcount',
       'pfmerge',
