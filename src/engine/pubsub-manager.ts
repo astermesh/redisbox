@@ -157,4 +157,11 @@ export class PubSubManager {
 
     return count;
   }
+
+  /**
+   * Total number of active channels (channels with at least one subscriber).
+   */
+  get totalChannels(): number {
+    return this.channelSubscribers.size;
+  }
 }

@@ -95,6 +95,7 @@ function clientsSection(ctx: CommandContext): string {
   const maxclients = ctx.config
     ? (ctx.config.get('maxclients')[1] ?? '10000')
     : '10000';
+  const blockedClients = ctx.engine.blocking.blockedCount;
 
   return [
     '# Clients',
@@ -104,27 +105,44 @@ function clientsSection(ctx: CommandContext): string {
     'client_recent_max_input_buffer:0',
     'client_recent_max_output_buffer:0',
     'total_clients_connected_including_replicas:0',
-    'blocked_clients:0',
+    `blocked_clients:${blockedClients}`,
     'tracking_clients:0',
     'clients_in_timeout_table:0',
-    'total_blocking_clients:0',
+    `total_blocking_clients:${blockedClients}`,
     'total_blocking_clients_on_nokey:0',
   ].join('\r\n');
 }
 
-function memorySection(): string {
+function formatHumanBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)}K`;
+  if (bytes < 1024 * 1024 * 1024)
+    return `${(bytes / (1024 * 1024)).toFixed(2)}M`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)}G`;
+}
+
+function memorySection(ctx: CommandContext): string {
+  const usedMemory = ctx.engine.usedMemory();
+  const usedMemoryHuman = formatHumanBytes(usedMemory);
+  const maxmemory = ctx.config ? (ctx.config.get('maxmemory')[1] ?? '0') : '0';
+  const maxmemoryPolicy = ctx.config
+    ? (ctx.config.get('maxmemory-policy')[1] ?? 'noeviction')
+    : 'noeviction';
+  const maxmemoryNum = parseInt(maxmemory, 10) || 0;
+  const maxmemoryHuman = formatHumanBytes(maxmemoryNum);
+
   return [
     '# Memory',
-    'used_memory:0',
-    'used_memory_human:0B',
-    'used_memory_rss:0',
-    'used_memory_rss_human:0B',
-    'used_memory_peak:0',
-    'used_memory_peak_human:0B',
-    'used_memory_peak_perc:0.00%',
+    `used_memory:${usedMemory}`,
+    `used_memory_human:${usedMemoryHuman}`,
+    `used_memory_rss:${usedMemory}`,
+    `used_memory_rss_human:${usedMemoryHuman}`,
+    `used_memory_peak:${usedMemory}`,
+    `used_memory_peak_human:${usedMemoryHuman}`,
+    'used_memory_peak_perc:100.00%',
     'used_memory_overhead:0',
     'used_memory_startup:0',
-    'used_memory_dataset:0',
+    `used_memory_dataset:${usedMemory}`,
     'used_memory_dataset_perc:0.00%',
     'allocator_allocated:0',
     'allocator_active:0',
@@ -144,9 +162,9 @@ function memorySection(): string {
     'number_of_cached_scripts:0',
     'number_of_functions:0',
     'number_of_libraries:0',
-    'maxmemory:0',
-    'maxmemory_human:0B',
-    'maxmemory_policy:noeviction',
+    `maxmemory:${maxmemory}`,
+    `maxmemory_human:${maxmemoryHuman}`,
+    `maxmemory_policy:${maxmemoryPolicy}`,
     'allocator_frag_ratio:0.00',
     'allocator_frag_bytes:0',
     'allocator_rss_ratio:0.00',
@@ -169,7 +187,9 @@ function memorySection(): string {
   ].join('\r\n');
 }
 
-function statsSection(): string {
+function statsSection(ctx: CommandContext): string {
+  const pubsubChannels = ctx.engine.pubsub.totalChannels;
+
   return [
     '# Stats',
     'total_connections_received:0',
@@ -196,7 +216,7 @@ function statsSection(): string {
     'total_keys_fetched:0',
     'keyspace_hits:0',
     'keyspace_misses:0',
-    'pubsub_channels:0',
+    `pubsub_channels:${pubsubChannels}`,
     'pubsub_patterns:0',
     'pubsub_shardchannels:0',
     'latest_fork_usec:0',

@@ -139,6 +139,19 @@ describe('INFO', () => {
       const text = getBulkValue(info(ctx, ['clients']));
       expect(text).toContain('connected_clients:1');
     });
+
+    it('reports blocked_clients from blocking manager', () => {
+      const ctx = createCtx();
+      ctx.engine.blocking.blockClient({
+        clientId: 1,
+        dbIndex: 0,
+        keys: ['key1'],
+        timeout: 0,
+        tryServe: () => null,
+      });
+      const text = getBulkValue(info(ctx, ['clients']));
+      expect(text).toContain('blocked_clients:1');
+    });
   });
 
   describe('memory section', () => {
@@ -148,7 +161,39 @@ describe('INFO', () => {
       expect(text).toContain('used_memory:');
     });
 
-    it('contains maxmemory_policy', () => {
+    it('reports non-zero used_memory when keys exist', () => {
+      const ctx = createCtx();
+      ctx.db.set('key1', 'string', 'raw', 'value1');
+      const text = getBulkValue(info(ctx, ['memory']));
+      const match = text.match(/used_memory:(\d+)/);
+      expect(match).toBeTruthy();
+      const usedMem = match ? parseInt(match[1] ?? '0', 10) : 0;
+      expect(usedMem).toBeGreaterThan(0);
+    });
+
+    it('formats used_memory_human correctly', () => {
+      const ctx = createCtx();
+      const text = getBulkValue(info(ctx, ['memory']));
+      expect(text).toMatch(/used_memory_human:\d+(\.\d+)?[BKMG]/);
+    });
+
+    it('contains maxmemory_policy from config', () => {
+      const config = new ConfigStore();
+      config.set('maxmemory-policy', 'allkeys-lru');
+      const ctx = createCtx({ config });
+      const text = getBulkValue(info(ctx, ['memory']));
+      expect(text).toContain('maxmemory_policy:allkeys-lru');
+    });
+
+    it('contains maxmemory from config', () => {
+      const config = new ConfigStore();
+      config.set('maxmemory', '1048576');
+      const ctx = createCtx({ config });
+      const text = getBulkValue(info(ctx, ['memory']));
+      expect(text).toContain('maxmemory:1048576');
+    });
+
+    it('defaults maxmemory_policy to noeviction', () => {
       const ctx = createCtx();
       const text = getBulkValue(info(ctx, ['memory']));
       expect(text).toContain('maxmemory_policy:noeviction');
@@ -316,6 +361,20 @@ describe('INFO', () => {
       expect(text).toContain('total_connections_received:');
       expect(text).toContain('keyspace_hits:');
       expect(text).toContain('keyspace_misses:');
+    });
+
+    it('reports pubsub_channels from pubsub manager', () => {
+      const ctx = createCtx();
+      ctx.engine.pubsub.subscribe(1, 'channel1');
+      ctx.engine.pubsub.subscribe(2, 'channel2');
+      const text = getBulkValue(info(ctx, ['stats']));
+      expect(text).toContain('pubsub_channels:2');
+    });
+
+    it('reports 0 pubsub_channels when none active', () => {
+      const ctx = createCtx();
+      const text = getBulkValue(info(ctx, ['stats']));
+      expect(text).toContain('pubsub_channels:0');
     });
   });
 });
