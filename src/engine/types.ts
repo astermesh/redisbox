@@ -38,6 +38,7 @@ export type Reply =
   | { kind: 'integer'; value: number | bigint }
   | { kind: 'bulk'; value: string | null }
   | { kind: 'array'; value: Reply[] }
+  | { kind: 'nil-array' }
   | { kind: 'error'; prefix: string; message: string }
   | { kind: 'multi'; value: Reply[] };
 
@@ -70,6 +71,7 @@ export const ZERO = integerReply(0);
 export const ONE = integerReply(1);
 export const NIL = bulkReply(null);
 export const EMPTY_ARRAY = arrayReply([]);
+export const NIL_ARRAY: Reply = { kind: 'nil-array' };
 
 // --- Standardized error constants (byte-identical to real Redis) ---
 
