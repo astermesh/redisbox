@@ -27,7 +27,7 @@ const BIT_ARG_ERR = errorReply('ERR', 'The bit argument must be 1 or 0.');
 
 const BITOP_NOT_ERR = errorReply(
   'ERR',
-  'BITOP NOT requires one and only one key.'
+  'BITOP NOT must be called with a single source key.'
 );
 
 const BITFIELD_TYPE_ERR = errorReply(
@@ -173,7 +173,7 @@ export function getbit(db: Database, args: string[]): Reply {
 export function bitcount(db: Database, args: string[]): Reply {
   const key = args[0] ?? '';
 
-  if (args.length === 2 || args.length > 5) {
+  if (args.length === 2 || args.length > 4) {
     return SYNTAX_ERR;
   }
 
@@ -632,11 +632,54 @@ export function bitfield(db: Database, args: string[]): Reply {
       continue;
     }
 
-    return errorReply('ERR', `Unknown BITFIELD subcommand '${args[i] ?? ''}'`);
+    return SYNTAX_ERR;
   }
 
   if (modified && currentBytes) {
     setStringFromBytes(db, key, currentBytes);
+  }
+
+  return arrayReply(results);
+}
+
+const BITFIELD_RO_ERR = errorReply(
+  'ERR',
+  'BITFIELD_RO only supports the GET subcommand'
+);
+
+export function bitfieldRo(db: Database, args: string[]): Reply {
+  const key = args[0] ?? '';
+
+  const entry = db.get(key);
+  if (entry && entry.type !== 'string') return WRONGTYPE_ERR;
+
+  const results: Reply[] = [];
+  const bytes = entry
+    ? stringToBytes(entry.value as string)
+    : new Uint8Array(0);
+
+  let i = 1;
+  while (i < args.length) {
+    const subcmd = (args[i] ?? '').toUpperCase();
+
+    if (subcmd !== 'GET') {
+      return BITFIELD_RO_ERR;
+    }
+
+    i++;
+    const typeStr = args[i] ?? '';
+    const type = parseBitfieldType(typeStr);
+    if (!type) return BITFIELD_TYPE_ERR;
+    i++;
+    const { value: offset, error: offsetErr } = parseBitfieldOffset(
+      args[i] ?? '',
+      type.width
+    );
+    if (offsetErr) return offsetErr;
+    i++;
+
+    const val = readBits(bytes, offset, type.width, type.signed);
+    results.push(integerReply(Number(val)));
   }
 
   return arrayReply(results);

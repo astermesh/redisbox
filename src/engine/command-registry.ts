@@ -1005,7 +1005,7 @@ const commandSpecs: CommandSpec[] = [
   },
   {
     name: 'bitfield_ro',
-    handler: (ctx, args) => bitmap.bitfield(ctx.db, args),
+    handler: (ctx, args) => bitmap.bitfieldRo(ctx.db, args),
     arity: -2,
     flags: ['readonly', 'fast'],
     firstKey: 1,

@@ -612,7 +612,7 @@ describe('BITOP', () => {
     expect(bitmap.bitop(db, ['NOT', 'dest', 'key1', 'key2'])).toEqual({
       kind: 'error',
       prefix: 'ERR',
-      message: 'BITOP NOT requires one and only one key.',
+      message: 'BITOP NOT must be called with a single source key.',
     });
   });
 
@@ -945,7 +945,7 @@ describe('BITFIELD', () => {
     expect(bitmap.bitfield(db, ['mykey', 'INVALID', 'u8', '0'])).toEqual({
       kind: 'error',
       prefix: 'ERR',
-      message: "Unknown BITFIELD subcommand 'INVALID'",
+      message: 'syntax error',
     });
   });
 
@@ -1037,6 +1037,110 @@ describe('BITFIELD', () => {
     expect(bitmap.bitfield(db, ['mykey', 'GET', 'u4', '8'])).toEqual({
       kind: 'array',
       value: [{ kind: 'integer', value: 15 }],
+    });
+  });
+});
+
+// --- BITFIELD_RO ---
+
+describe('BITFIELD_RO', () => {
+  it('GET works like BITFIELD GET', () => {
+    const { db } = createDb();
+    bitmap.bitfield(db, ['mykey', 'SET', 'u8', '0', '42']);
+    expect(bitmap.bitfieldRo(db, ['mykey', 'GET', 'u8', '0'])).toEqual({
+      kind: 'array',
+      value: [{ kind: 'integer', value: 42 }],
+    });
+  });
+
+  it('rejects SET subcommand', () => {
+    const { db } = createDb();
+    expect(bitmap.bitfieldRo(db, ['mykey', 'SET', 'u8', '0', '42'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'BITFIELD_RO only supports the GET subcommand',
+    });
+  });
+
+  it('rejects INCRBY subcommand', () => {
+    const { db } = createDb();
+    expect(bitmap.bitfieldRo(db, ['mykey', 'INCRBY', 'u8', '0', '1'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'BITFIELD_RO only supports the GET subcommand',
+    });
+  });
+
+  it('rejects OVERFLOW subcommand', () => {
+    const { db } = createDb();
+    expect(bitmap.bitfieldRo(db, ['mykey', 'OVERFLOW', 'WRAP'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'BITFIELD_RO only supports the GET subcommand',
+    });
+  });
+
+  it('returns 0 for non-existent key', () => {
+    const { db } = createDb();
+    expect(bitmap.bitfieldRo(db, ['nokey', 'GET', 'u8', '0'])).toEqual({
+      kind: 'array',
+      value: [{ kind: 'integer', value: 0 }],
+    });
+  });
+
+  it('returns WRONGTYPE for non-string key', () => {
+    const { db } = createDb();
+    db.set('mylist', 'list', 'quicklist', ['a']);
+    expect(bitmap.bitfieldRo(db, ['mylist', 'GET', 'u8', '0'])).toEqual({
+      kind: 'error',
+      prefix: 'WRONGTYPE',
+      message: 'Operation against a key holding the wrong kind of value',
+    });
+  });
+
+  it('supports multiple GET operations', () => {
+    const { db } = createDb();
+    bitmap.bitfield(db, [
+      'mykey',
+      'SET',
+      'u8',
+      '#0',
+      '10',
+      'SET',
+      'u8',
+      '#1',
+      '20',
+    ]);
+    expect(
+      bitmap.bitfieldRo(db, ['mykey', 'GET', 'u8', '#0', 'GET', 'u8', '#1'])
+    ).toEqual({
+      kind: 'array',
+      value: [
+        { kind: 'integer', value: 10 },
+        { kind: 'integer', value: 20 },
+      ],
+    });
+  });
+
+  it('returns empty array when no subcommands given', () => {
+    const { db } = createDb();
+    expect(bitmap.bitfieldRo(db, ['mykey'])).toEqual({
+      kind: 'array',
+      value: [],
+    });
+  });
+});
+
+// --- BITCOUNT extra args validation ---
+
+describe('BITCOUNT extra args', () => {
+  it('returns syntax error for 5 args (key + 4 range args)', () => {
+    const { db } = createDb();
+    str.set(db, () => 1000, ['mykey', 'foobar']);
+    expect(bitmap.bitcount(db, ['mykey', '0', '1', 'BYTE', 'extra'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
     });
   });
 });
