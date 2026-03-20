@@ -1131,7 +1131,7 @@ describe('SINTERCARD', () => {
     expect(result).toEqual({
       kind: 'error',
       prefix: 'ERR',
-      message: "numkeys can't be non-positive value",
+      message: 'numkeys should be greater than 0',
     });
   });
 
@@ -1141,11 +1141,11 @@ describe('SINTERCARD', () => {
     expect(result).toEqual({
       kind: 'error',
       prefix: 'ERR',
-      message: "numkeys can't be non-positive value",
+      message: 'numkeys should be greater than 0',
     });
   });
 
-  it('returns syntax error for wrong number of keys', () => {
+  it('returns error for wrong number of keys', () => {
     const { db } = createDb();
     set.sadd(db, ['s1', 'a']);
     // numkeys=2 but only 1 key provided, with no LIMIT
@@ -1153,7 +1153,7 @@ describe('SINTERCARD', () => {
     expect(result).toEqual({
       kind: 'error',
       prefix: 'ERR',
-      message: 'syntax error',
+      message: "Number of keys can't be greater than number of args",
     });
   });
 

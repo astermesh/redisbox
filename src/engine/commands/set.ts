@@ -671,20 +671,28 @@ export function sintercard(db: Database, args: string[]): Reply {
   const numkeys = Number(numkeysParsed);
 
   if (numkeys <= 0) {
-    return errorReply('ERR', "numkeys can't be non-positive value");
+    return errorReply('ERR', 'numkeys should be greater than 0');
   }
 
-  // Parse keys and optional LIMIT
-  let limit = 0;
-  const keys: string[] = [];
+  // Check that enough args remain for numkeys keys
+  const remaining = args.length - 1;
+  if (numkeys > remaining) {
+    return errorReply(
+      'ERR',
+      "Number of keys can't be greater than number of args"
+    );
+  }
 
+  // Parse keys
+  const keys: string[] = [];
   let i = 1;
-  while (i < args.length && keys.length < numkeys) {
+  for (let k = 0; k < numkeys; k++) {
     keys.push(args[i] ?? '');
     i++;
   }
 
   // Parse optional LIMIT
+  let limit = 0;
   if (i < args.length) {
     const flag = (args[i] ?? '').toUpperCase();
     if (flag !== 'LIMIT') {
@@ -699,11 +707,6 @@ export function sintercard(db: Database, args: string[]): Reply {
       return errorReply('ERR', "LIMIT can't be negative");
     }
     i++;
-  }
-
-  // Check we got the right number of keys
-  if (keys.length !== numkeys) {
-    return SYNTAX_ERR;
   }
 
   // Extra trailing args
@@ -849,7 +852,7 @@ export const specs: CommandSpec[] = [
     firstKey: 1,
     lastKey: -1,
     keyStep: 1,
-    categories: ['@read', '@set'],
+    categories: ['@read', '@set', '@slow'],
   },
   {
     name: 'sinter',
@@ -859,7 +862,7 @@ export const specs: CommandSpec[] = [
     firstKey: 1,
     lastKey: -1,
     keyStep: 1,
-    categories: ['@read', '@set'],
+    categories: ['@read', '@set', '@slow'],
   },
   {
     name: 'sdiff',
@@ -869,7 +872,7 @@ export const specs: CommandSpec[] = [
     firstKey: 1,
     lastKey: -1,
     keyStep: 1,
-    categories: ['@read', '@set'],
+    categories: ['@read', '@set', '@slow'],
   },
   {
     name: 'sunionstore',
@@ -879,7 +882,7 @@ export const specs: CommandSpec[] = [
     firstKey: 1,
     lastKey: -1,
     keyStep: 1,
-    categories: ['@write', '@set'],
+    categories: ['@write', '@set', '@slow'],
   },
   {
     name: 'sinterstore',
@@ -889,7 +892,7 @@ export const specs: CommandSpec[] = [
     firstKey: 1,
     lastKey: -1,
     keyStep: 1,
-    categories: ['@write', '@set'],
+    categories: ['@write', '@set', '@slow'],
   },
   {
     name: 'sdiffstore',
@@ -899,16 +902,16 @@ export const specs: CommandSpec[] = [
     firstKey: 1,
     lastKey: -1,
     keyStep: 1,
-    categories: ['@write', '@set'],
+    categories: ['@write', '@set', '@slow'],
   },
   {
     name: 'sintercard',
     handler: (ctx, args) => sintercard(ctx.db, args),
     arity: -3,
-    flags: ['readonly'],
-    firstKey: 2,
+    flags: ['readonly', 'movablekeys'],
+    firstKey: 0,
     lastKey: 0,
-    keyStep: 1,
-    categories: ['@read', '@set'],
+    keyStep: 0,
+    categories: ['@read', '@set', '@slow'],
   },
 ];
