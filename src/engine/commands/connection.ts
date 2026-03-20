@@ -52,14 +52,36 @@ function getRequirePass(ctx: CommandContext): string {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: validate auth credentials
+// Helper: sync ACL store with requirepass config and validate credentials
 // ---------------------------------------------------------------------------
+
+function syncAcl(ctx: CommandContext): void {
+  if (ctx.acl) {
+    ctx.acl.syncRequirePass(getRequirePass(ctx));
+  }
+}
 
 function validateAuth(
   ctx: CommandContext,
   username: string,
   password: string
 ): Reply | null {
+  syncAcl(ctx);
+
+  if (ctx.acl) {
+    const user = ctx.acl.getUser(username);
+
+    if (!user || !user.enabled || !user.validatePassword(password)) {
+      return WRONGPASS_ERR;
+    }
+
+    if (ctx.client) {
+      ctx.client.authenticated = true;
+    }
+    return null;
+  }
+
+  // Legacy fallback (no ACL store)
   const requirepass = getRequirePass(ctx);
 
   if (!requirepass) {
@@ -184,6 +206,34 @@ export function auth(ctx: CommandContext, args: string[]): Reply {
     password = args[1] ?? '';
   }
 
+  syncAcl(ctx);
+
+  if (ctx.acl) {
+    // Old-style AUTH <password>: if default user has nopass, return
+    // "no password set" error — matches real Redis short-circuit.
+    if (args.length === 1) {
+      const defaultUser = ctx.acl.getDefaultUser();
+      if (defaultUser.nopass) {
+        return NO_PASSWORD_ERR;
+      }
+    }
+
+    const user = ctx.acl.getUser(username);
+
+    if (!user || !user.enabled || !user.validatePassword(password)) {
+      if (ctx.client) {
+        ctx.client.authenticated = false;
+      }
+      return WRONGPASS_ERR;
+    }
+
+    if (ctx.client) {
+      ctx.client.authenticated = true;
+    }
+    return OK;
+  }
+
+  // Legacy fallback (no ACL store)
   const requirepass = getRequirePass(ctx);
 
   if (!requirepass) {

@@ -109,6 +109,7 @@ export class ClientConnection {
       clientStore: this.clientStore,
       pubsub: this.engine.pubsub,
       blocking: this.engine.blocking,
+      acl: this.engine.acl,
     };
 
     const reply = this.dispatcher.dispatch(this.dispatcherState, ctx, args);

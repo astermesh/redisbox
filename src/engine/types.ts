@@ -165,4 +165,5 @@ export interface CommandContext {
   commandTable?: import('./command-table.ts').CommandTable;
   pubsub?: import('./pubsub-manager.ts').PubSubManager;
   blocking?: import('./blocking-manager.ts').BlockingManager;
+  acl?: import('./acl-store.ts').AclStore;
 }
