@@ -1,6 +1,7 @@
 import { Database } from './database.ts';
 import type { EngineDeps } from './types.ts';
 import { PubSubManager } from './pubsub-manager.ts';
+import { BlockingManager } from './blocking-manager.ts';
 
 const NUM_DATABASES = 16;
 
@@ -14,6 +15,7 @@ export class RedisEngine {
   readonly clock: () => number;
   readonly rng: () => number;
   readonly pubsub = new PubSubManager();
+  readonly blocking = new BlockingManager();
 
   constructor(deps?: Partial<EngineDeps>) {
     const resolved = { ...defaultDeps, ...deps };

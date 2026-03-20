@@ -164,4 +164,5 @@ export interface CommandContext {
   clientStore?: import('../server/client-state.ts').ClientStateStore;
   commandTable?: import('./command-table.ts').CommandTable;
   pubsub?: import('./pubsub-manager.ts').PubSubManager;
+  blocking?: import('./blocking-manager.ts').BlockingManager;
 }

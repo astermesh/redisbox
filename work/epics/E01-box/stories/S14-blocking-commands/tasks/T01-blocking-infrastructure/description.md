@@ -1,5 +1,7 @@
 # T01: Blocking Infrastructure
 
+**Status:** done
+
 Build blocking command manager: per-key blocking queue (Map<key, BlockedClient[]>), signalKeyAsReady mechanism called after mutations (LPUSH, ZADD, XADD etc.), FIFO wakeup order. Process ready keys in beforeSleep phase. Re-evaluate blocking condition before serving (data may have been consumed).
 
 ## Acceptance Criteria
