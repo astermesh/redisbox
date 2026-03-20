@@ -7,9 +7,14 @@ import {
   wrongArityError,
   ZERO,
   ONE,
+  NIL,
   EMPTY_ARRAY,
   WRONGTYPE_ERR,
+  NOT_INTEGER_ERR,
+  SYNTAX_ERR,
 } from '../types.ts';
+import { parseInteger } from './incr.ts';
+import { matchGlob } from '../glob-pattern.ts';
 
 const textEncoder = new TextEncoder();
 
@@ -294,4 +299,187 @@ export function smove(db: Database, args: string[]): Reply {
   }
 
   return ONE;
+}
+
+// --- SRANDMEMBER ---
+
+export function srandmember(
+  db: Database,
+  args: string[],
+  rng: () => number
+): Reply {
+  const key = args[0] ?? '';
+
+  const { set: s, error } = getExistingSet(db, key);
+  if (error) return error;
+
+  // No count argument — return single member or nil
+  if (args.length === 1) {
+    if (!s || s.size === 0) return NIL;
+    const members = Array.from(s);
+    const idx = Math.floor(rng() * members.length);
+    return bulkReply(members[idx] ?? '');
+  }
+
+  // Parse count
+  const countStr = args[1] ?? '';
+  const countParsed = parseInteger(countStr);
+  if (countParsed === null) return NOT_INTEGER_ERR;
+  const count = Number(countParsed);
+
+  if (!s || s.size === 0) return EMPTY_ARRAY;
+  if (count === 0) return EMPTY_ARRAY;
+
+  const members = Array.from(s);
+  const results: Reply[] = [];
+
+  if (count > 0) {
+    // Positive count: unique elements, at most set size
+    const actual = Math.min(count, members.length);
+    // Fisher-Yates partial shuffle
+    const shuffled = [...members];
+    for (let i = 0; i < actual; i++) {
+      const j = i + Math.floor(rng() * (shuffled.length - i));
+      const tmp = shuffled[i] ?? '';
+      shuffled[i] = shuffled[j] ?? '';
+      shuffled[j] = tmp;
+    }
+    for (let i = 0; i < actual; i++) {
+      results.push(bulkReply(shuffled[i] ?? ''));
+    }
+  } else {
+    // Negative count: |count| elements, may repeat
+    const absCount = Math.abs(count);
+    for (let i = 0; i < absCount; i++) {
+      const idx = Math.floor(rng() * members.length);
+      results.push(bulkReply(members[idx] ?? ''));
+    }
+  }
+
+  return arrayReply(results);
+}
+
+// --- SPOP ---
+
+export function spop(db: Database, args: string[], rng: () => number): Reply {
+  const key = args[0] ?? '';
+
+  const { set: s, error } = getExistingSet(db, key);
+  if (error) return error;
+
+  // No count argument — return single member or nil
+  if (args.length === 1) {
+    if (!s || s.size === 0) return NIL;
+    const members = Array.from(s);
+    const idx = Math.floor(rng() * members.length);
+    const member = members[idx] ?? '';
+    s.delete(member);
+    if (s.size === 0) db.delete(key);
+    return bulkReply(member);
+  }
+
+  // Parse count
+  const countStr = args[1] ?? '';
+  const countParsed = parseInteger(countStr);
+  if (countParsed === null) return NOT_INTEGER_ERR;
+  const count = Number(countParsed);
+
+  if (count < 0) {
+    return { kind: 'error', prefix: 'ERR', message: 'index out of range' };
+  }
+
+  if (!s || s.size === 0) return EMPTY_ARRAY;
+  if (count === 0) return EMPTY_ARRAY;
+
+  const members = Array.from(s);
+  const actual = Math.min(count, members.length);
+
+  // Fisher-Yates partial shuffle to select random members
+  const shuffled = [...members];
+  for (let i = 0; i < actual; i++) {
+    const j = i + Math.floor(rng() * (shuffled.length - i));
+    const tmp = shuffled[i] ?? '';
+    shuffled[i] = shuffled[j] ?? '';
+    shuffled[j] = tmp;
+  }
+
+  const results: Reply[] = [];
+  for (let i = 0; i < actual; i++) {
+    const member = shuffled[i] ?? '';
+    s.delete(member);
+    results.push(bulkReply(member));
+  }
+
+  if (s.size === 0) db.delete(key);
+
+  return arrayReply(results);
+}
+
+// --- SSCAN ---
+
+export function sscan(db: Database, args: string[]): Reply {
+  const key = args[0] ?? '';
+  const cursorStr = args[1] ?? '0';
+
+  const cursor = parseInt(cursorStr, 10);
+  if (isNaN(cursor) || cursor < 0) {
+    return { kind: 'error', prefix: 'ERR', message: 'invalid cursor' };
+  }
+
+  // Check key type before parsing options
+  const entry = db.get(key);
+  if (entry && entry.type !== 'set') return WRONGTYPE_ERR;
+
+  let matchPattern: string | null = null;
+  let count = 10;
+
+  let i = 2;
+  while (i < args.length) {
+    const flag = (args[i] ?? '').toUpperCase();
+    if (flag === 'MATCH') {
+      i++;
+      matchPattern = args[i] ?? '*';
+    } else if (flag === 'COUNT') {
+      i++;
+      count = parseInt(args[i] ?? '10', 10);
+      if (isNaN(count)) {
+        return NOT_INTEGER_ERR;
+      }
+      if (count < 1) {
+        return SYNTAX_ERR;
+      }
+    } else {
+      return SYNTAX_ERR;
+    }
+    i++;
+  }
+
+  if (!entry) {
+    return arrayReply([bulkReply('0'), EMPTY_ARRAY]);
+  }
+
+  const s = entry.value as Set<string>;
+  const allMembers = Array.from(s);
+
+  if (allMembers.length === 0) {
+    return arrayReply([bulkReply('0'), EMPTY_ARRAY]);
+  }
+
+  const results: Reply[] = [];
+  let position = cursor;
+  let scanned = 0;
+
+  while (position < allMembers.length && scanned < count) {
+    const member = allMembers[position] ?? '';
+    position++;
+    scanned++;
+
+    if (matchPattern && !matchGlob(matchPattern, member)) continue;
+
+    results.push(bulkReply(member));
+  }
+
+  const nextCursor = position >= allMembers.length ? 0 : position;
+
+  return arrayReply([bulkReply(String(nextCursor)), arrayReply(results)]);
 }

@@ -4,8 +4,10 @@ import type { Database } from '../database.ts';
 import type { Reply } from '../types.ts';
 import * as set from './set.ts';
 
+let rngValue = 0.5;
 function createDb(): { db: Database; engine: RedisEngine } {
-  const engine = new RedisEngine({ clock: () => 1000, rng: () => 0.5 });
+  rngValue = 0.5;
+  const engine = new RedisEngine({ clock: () => 1000, rng: () => rngValue });
   return { db: engine.db(0), engine };
 }
 
@@ -20,11 +22,21 @@ function arr(...items: Reply[]): Reply {
 const ZERO = integer(0);
 const ONE = integer(1);
 const EMPTY_ARRAY: Reply = { kind: 'array', value: [] };
+const NIL: Reply = { kind: 'bulk', value: null };
 const WRONGTYPE: Reply = {
   kind: 'error',
   prefix: 'WRONGTYPE',
   message: 'Operation against a key holding the wrong kind of value',
 };
+const NOT_INTEGER_ERR: Reply = {
+  kind: 'error',
+  prefix: 'ERR',
+  message: 'value is not an integer or out of range',
+};
+
+function bulk(value: string | null): Reply {
+  return { kind: 'bulk', value };
+}
 
 // --- SADD ---
 
@@ -454,5 +466,287 @@ describe('encoding transitions', () => {
     expect(db.get('dst')?.encoding).toBe('intset');
     set.smove(db, ['src', 'dst', 'hello']);
     expect(db.get('dst')?.encoding).toBe('listpack');
+  });
+});
+
+// --- SRANDMEMBER ---
+
+describe('SRANDMEMBER', () => {
+  it('returns nil for non-existing key (no count)', () => {
+    const { db, engine } = createDb();
+    expect(set.srandmember(db, ['k'], engine.rng)).toEqual(NIL);
+  });
+
+  it('returns a single member (no count)', () => {
+    const { db, engine } = createDb();
+    set.sadd(db, ['k', 'a', 'b', 'c']);
+    const result = set.srandmember(db, ['k'], engine.rng);
+    expect(result.kind).toBe('bulk');
+    const val = (result as { kind: 'bulk'; value: string }).value;
+    expect(['a', 'b', 'c']).toContain(val);
+  });
+
+  it('returns empty array for non-existing key with count', () => {
+    const { db, engine } = createDb();
+    expect(set.srandmember(db, ['k', '3'], engine.rng)).toEqual(EMPTY_ARRAY);
+  });
+
+  it('returns empty array for count 0', () => {
+    const { db, engine } = createDb();
+    set.sadd(db, ['k', 'a', 'b']);
+    expect(set.srandmember(db, ['k', '0'], engine.rng)).toEqual(EMPTY_ARRAY);
+  });
+
+  it('positive count: returns unique elements up to set size', () => {
+    const { db, engine } = createDb();
+    set.sadd(db, ['k', 'a', 'b', 'c']);
+    const result = set.srandmember(db, ['k', '2'], engine.rng);
+    expect(result.kind).toBe('array');
+    const items = (result as { kind: 'array'; value: Reply[] }).value;
+    expect(items.length).toBe(2);
+    // Elements must be unique
+    const vals = items.map((r) => (r as { kind: 'bulk'; value: string }).value);
+    expect(new Set(vals).size).toBe(2);
+    for (const v of vals) {
+      expect(['a', 'b', 'c']).toContain(v);
+    }
+  });
+
+  it('positive count > set size: returns all elements', () => {
+    const { db, engine } = createDb();
+    set.sadd(db, ['k', 'a', 'b']);
+    const result = set.srandmember(db, ['k', '10'], engine.rng);
+    const items = (result as { kind: 'array'; value: Reply[] }).value;
+    expect(items.length).toBe(2);
+  });
+
+  it('negative count: may return duplicates', () => {
+    const { db, engine } = createDb();
+    set.sadd(db, ['k', 'a']);
+    const result = set.srandmember(db, ['k', '-3'], engine.rng);
+    const items = (result as { kind: 'array'; value: Reply[] }).value;
+    expect(items.length).toBe(3);
+    // All should be 'a' since there's only one member
+    for (const item of items) {
+      expect(item).toEqual(bulk('a'));
+    }
+  });
+
+  it('negative count: returns |count| elements', () => {
+    const { db, engine } = createDb();
+    set.sadd(db, ['k', 'a', 'b', 'c']);
+    const result = set.srandmember(db, ['k', '-5'], engine.rng);
+    const items = (result as { kind: 'array'; value: Reply[] }).value;
+    expect(items.length).toBe(5);
+  });
+
+  it('does not modify the set', () => {
+    const { db, engine } = createDb();
+    set.sadd(db, ['k', 'a', 'b', 'c']);
+    set.srandmember(db, ['k', '2'], engine.rng);
+    expect(set.scard(db, ['k'])).toEqual(integer(3));
+  });
+
+  it('returns WRONGTYPE for non-set key', () => {
+    const { db, engine } = createDb();
+    db.set('k', 'string', 'raw', 'val');
+    expect(set.srandmember(db, ['k'], engine.rng)).toEqual(WRONGTYPE);
+  });
+
+  it('returns error for non-integer count', () => {
+    const { db, engine } = createDb();
+    set.sadd(db, ['k', 'a']);
+    expect(set.srandmember(db, ['k', 'abc'], engine.rng)).toEqual(
+      NOT_INTEGER_ERR
+    );
+  });
+});
+
+// --- SPOP ---
+
+describe('SPOP', () => {
+  it('returns nil for non-existing key (no count)', () => {
+    const { db, engine } = createDb();
+    expect(set.spop(db, ['k'], engine.rng)).toEqual(NIL);
+  });
+
+  it('pops a single member and removes it (no count)', () => {
+    const { db, engine } = createDb();
+    set.sadd(db, ['k', 'a', 'b', 'c']);
+    const result = set.spop(db, ['k'], engine.rng);
+    expect(result.kind).toBe('bulk');
+    const val = (result as { kind: 'bulk'; value: string }).value;
+    expect(['a', 'b', 'c']).toContain(val);
+    expect(set.scard(db, ['k'])).toEqual(integer(2));
+    expect(set.sismember(db, ['k', val])).toEqual(ZERO);
+  });
+
+  it('deletes key when last member is popped', () => {
+    const { db, engine } = createDb();
+    set.sadd(db, ['k', 'a']);
+    set.spop(db, ['k'], engine.rng);
+    expect(db.has('k')).toBe(false);
+  });
+
+  it('returns empty array for non-existing key with count', () => {
+    const { db, engine } = createDb();
+    expect(set.spop(db, ['k', '3'], engine.rng)).toEqual(EMPTY_ARRAY);
+  });
+
+  it('returns empty array for count 0', () => {
+    const { db, engine } = createDb();
+    set.sadd(db, ['k', 'a']);
+    expect(set.spop(db, ['k', '0'], engine.rng)).toEqual(EMPTY_ARRAY);
+  });
+
+  it('pops count members and removes them', () => {
+    const { db, engine } = createDb();
+    set.sadd(db, ['k', 'a', 'b', 'c', 'd']);
+    const result = set.spop(db, ['k', '2'], engine.rng);
+    const items = (result as { kind: 'array'; value: Reply[] }).value;
+    expect(items.length).toBe(2);
+    // All popped members should be unique
+    const vals = items.map((r) => (r as { kind: 'bulk'; value: string }).value);
+    expect(new Set(vals).size).toBe(2);
+    expect(set.scard(db, ['k'])).toEqual(integer(2));
+    for (const v of vals) {
+      expect(set.sismember(db, ['k', v])).toEqual(ZERO);
+    }
+  });
+
+  it('count > set size: pops all members', () => {
+    const { db, engine } = createDb();
+    set.sadd(db, ['k', 'a', 'b']);
+    const result = set.spop(db, ['k', '10'], engine.rng);
+    const items = (result as { kind: 'array'; value: Reply[] }).value;
+    expect(items.length).toBe(2);
+    expect(db.has('k')).toBe(false);
+  });
+
+  it('returns error for negative count', () => {
+    const { db, engine } = createDb();
+    set.sadd(db, ['k', 'a']);
+    expect(set.spop(db, ['k', '-1'], engine.rng)).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'index out of range',
+    });
+  });
+
+  it('returns WRONGTYPE for non-set key', () => {
+    const { db, engine } = createDb();
+    db.set('k', 'string', 'raw', 'val');
+    expect(set.spop(db, ['k'], engine.rng)).toEqual(WRONGTYPE);
+  });
+
+  it('returns error for non-integer count', () => {
+    const { db, engine } = createDb();
+    set.sadd(db, ['k', 'a']);
+    expect(set.spop(db, ['k', 'abc'], engine.rng)).toEqual(NOT_INTEGER_ERR);
+  });
+});
+
+// --- SSCAN ---
+
+describe('SSCAN', () => {
+  it('returns cursor 0 and empty array for non-existing key', () => {
+    const { db } = createDb();
+    expect(set.sscan(db, ['k', '0'])).toEqual(arr(bulk('0'), EMPTY_ARRAY));
+  });
+
+  it('scans all members of a small set', () => {
+    const { db } = createDb();
+    set.sadd(db, ['k', 'a', 'b', 'c']);
+    const result = set.sscan(db, ['k', '0']);
+    expect(result.kind).toBe('array');
+    const outer = (result as { kind: 'array'; value: Reply[] }).value;
+    // Cursor should be 0 (complete scan)
+    expect(outer[0]).toEqual(bulk('0'));
+    // Members array
+    const members = (outer[1] as { kind: 'array'; value: Reply[] }).value;
+    expect(members.length).toBe(3);
+    const vals = members.map(
+      (r) => (r as { kind: 'bulk'; value: string }).value
+    );
+    expect(vals.sort()).toEqual(['a', 'b', 'c']);
+  });
+
+  it('supports cursor-based iteration with COUNT', () => {
+    const { db } = createDb();
+    set.sadd(db, ['k', 'a', 'b', 'c', 'd', 'e']);
+    // First scan with COUNT 2
+    const result1 = set.sscan(db, ['k', '0', 'COUNT', '2']);
+    const outer1 = (result1 as { kind: 'array'; value: Reply[] }).value;
+    const cursor1 = (outer1[0] as { kind: 'bulk'; value: string }).value;
+    expect(cursor1).not.toBe('0'); // Not done yet
+    const members1 = (outer1[1] as { kind: 'array'; value: Reply[] }).value;
+    expect(members1.length).toBe(2);
+
+    // Continue scanning
+    const result2 = set.sscan(db, ['k', cursor1, 'COUNT', '2']);
+    const outer2 = (result2 as { kind: 'array'; value: Reply[] }).value;
+    const cursor2 = (outer2[0] as { kind: 'bulk'; value: string }).value;
+    const members2 = (outer2[1] as { kind: 'array'; value: Reply[] }).value;
+    expect(members2.length).toBe(2);
+
+    // Final scan
+    const result3 = set.sscan(db, ['k', cursor2, 'COUNT', '2']);
+    const outer3 = (result3 as { kind: 'array'; value: Reply[] }).value;
+    expect(outer3[0]).toEqual(bulk('0')); // Done
+    const members3 = (outer3[1] as { kind: 'array'; value: Reply[] }).value;
+    expect(members3.length).toBe(1);
+
+    // All members should be found
+    const all = [...members1, ...members2, ...members3].map(
+      (r) => (r as { kind: 'bulk'; value: string }).value
+    );
+    expect(all.sort()).toEqual(['a', 'b', 'c', 'd', 'e']);
+  });
+
+  it('supports MATCH pattern', () => {
+    const { db } = createDb();
+    set.sadd(db, ['k', 'apple', 'banana', 'apricot', 'cherry']);
+    const result = set.sscan(db, ['k', '0', 'MATCH', 'ap*']);
+    const outer = (result as { kind: 'array'; value: Reply[] }).value;
+    const members = (outer[1] as { kind: 'array'; value: Reply[] }).value;
+    const vals = members.map(
+      (r) => (r as { kind: 'bulk'; value: string }).value
+    );
+    expect(vals.sort()).toEqual(['apple', 'apricot']);
+  });
+
+  it('returns WRONGTYPE for non-set key', () => {
+    const { db } = createDb();
+    db.set('k', 'string', 'raw', 'val');
+    expect(set.sscan(db, ['k', '0'])).toEqual(WRONGTYPE);
+  });
+
+  it('returns error for invalid cursor', () => {
+    const { db } = createDb();
+    expect(set.sscan(db, ['k', 'abc'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'invalid cursor',
+    });
+  });
+
+  it('returns syntax error for unknown option', () => {
+    const { db } = createDb();
+    set.sadd(db, ['k', 'a']);
+    expect(set.sscan(db, ['k', '0', 'BADOPT'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
+  });
+
+  it('returns empty results for MATCH with no matches', () => {
+    const { db } = createDb();
+    set.sadd(db, ['k', 'a', 'b', 'c']);
+    const result = set.sscan(db, ['k', '0', 'MATCH', 'z*']);
+    const outer = (result as { kind: 'array'; value: Reply[] }).value;
+    expect(outer[0]).toEqual(bulk('0'));
+    const members = (outer[1] as { kind: 'array'; value: Reply[] }).value;
+    expect(members.length).toBe(0);
   });
 });
