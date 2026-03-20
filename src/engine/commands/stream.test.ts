@@ -252,13 +252,34 @@ describe('XADD', () => {
     ).toBeGreaterThanOrEqual(2);
   });
 
-  it('MAXLEN 0 removes all entries', () => {
+  it('MAXLEN 0 removes all entries but keeps stream key', () => {
     const { db, setTime, getTime } = createDb(1000);
     stream.xadd(db, getTime(), ['s', '*', 'a', '1']);
     setTime(2000);
     stream.xadd(db, getTime(), ['s', 'MAXLEN', '0', '*', 'b', '2']);
-    // Stream key should be deleted when empty
-    expect(db.has('s')).toBe(false);
+    // Redis keeps zero-length streams (unlike other types)
+    expect(db.has('s')).toBe(true);
+    expect(stream.xlen(db, ['s'])).toEqual({ kind: 'integer', value: 0 });
+  });
+
+  it('MAXLEN with LIMIT option is accepted', () => {
+    const { db, setTime, getTime } = createDb(1000);
+    stream.xadd(db, getTime(), ['s', '*', 'a', '1']);
+    setTime(2000);
+    stream.xadd(db, getTime(), ['s', '*', 'b', '2']);
+    setTime(3000);
+    const reply = stream.xadd(db, getTime(), [
+      's',
+      'MAXLEN',
+      '~',
+      '2',
+      'LIMIT',
+      '100',
+      '*',
+      'c',
+      '3',
+    ]);
+    expect(reply.kind).toBe('bulk');
   });
 
   // ─── MINID trimming ─────────────────────────────────────────────

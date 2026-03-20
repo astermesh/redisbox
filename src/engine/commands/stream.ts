@@ -66,6 +66,22 @@ function parseTrimOptions(
   }
   i++;
 
+  // Optional LIMIT count (only meaningful with ~, but always accepted)
+  if (i < args.length && (args[i] as string).toUpperCase() === 'LIMIT') {
+    i++;
+    const limitVal = args[i];
+    if (limitVal === undefined) {
+      return { error: SYNTAX_ERR };
+    }
+    const n = Number(limitVal);
+    if (!Number.isInteger(n) || n < 0) {
+      return {
+        error: errorReply('ERR', 'value is not an integer or out of range'),
+      };
+    }
+    i++;
+  }
+
   return { options: { strategy, approximate, threshold }, nextIdx: i };
 }
 
@@ -181,11 +197,6 @@ export function xadd(db: Database, clockMs: number, args: string[]): Reply {
   if (trimOptions) {
     const trimErr = applyTrim(stream, trimOptions);
     if (trimErr) return trimErr;
-  }
-
-  // Delete key if stream is now empty after trimming
-  if (stream.length === 0) {
-    db.delete(key);
   }
 
   return bulkReply(idStr);
