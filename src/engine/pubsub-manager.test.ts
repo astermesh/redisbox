@@ -210,7 +210,7 @@ describe('PubSubManager', () => {
     });
   });
 
-  describe('matchPattern (glob matching)', () => {
+  describe('pattern matching via publish', () => {
     it('matches * wildcard (any string)', () => {
       const mgr = new PubSubManager();
       const sent: { clientId: number; reply: Reply }[] = [];
@@ -476,6 +476,57 @@ describe('PubSubManager', () => {
       mgr.psubscribe(2, 'p1');
       mgr.psubscribe(1, 'p2');
       expect(mgr.totalPatterns).toBe(2);
+    });
+  });
+
+  describe('removeClient', () => {
+    it('removes all channel and pattern subscriptions', () => {
+      const mgr = new PubSubManager();
+      mgr.subscribe(1, 'ch1');
+      mgr.subscribe(1, 'ch2');
+      mgr.psubscribe(1, 'p1');
+      mgr.psubscribe(1, 'p2');
+
+      mgr.removeClient(1);
+
+      expect(mgr.channelCount(1)).toBe(0);
+      expect(mgr.patternCount(1)).toBe(0);
+      expect(mgr.subscriptionCount(1)).toBe(0);
+      expect(mgr.subscribers('ch1').size).toBe(0);
+      expect(mgr.patternSubscribers('p1').size).toBe(0);
+    });
+
+    it('does not affect other clients', () => {
+      const mgr = new PubSubManager();
+      mgr.subscribe(1, 'ch1');
+      mgr.subscribe(2, 'ch1');
+      mgr.psubscribe(1, 'p1');
+      mgr.psubscribe(2, 'p1');
+
+      mgr.removeClient(1);
+
+      expect(mgr.channelCount(2)).toBe(1);
+      expect(mgr.patternCount(2)).toBe(1);
+      expect(mgr.subscribers('ch1').size).toBe(1);
+      expect(mgr.patternSubscribers('p1').size).toBe(1);
+    });
+
+    it('is safe to call for unknown client', () => {
+      const mgr = new PubSubManager();
+      expect(() => mgr.removeClient(999)).not.toThrow();
+    });
+
+    it('prevents message delivery after removal', () => {
+      const mgr = new PubSubManager();
+      const sent: { clientId: number; reply: Reply }[] = [];
+      mgr.setSender((clientId, reply) => sent.push({ clientId, reply }));
+
+      mgr.subscribe(1, 'news');
+      mgr.psubscribe(1, 'new*');
+      mgr.removeClient(1);
+
+      expect(mgr.publish('news', 'hello')).toBe(0);
+      expect(sent).toHaveLength(0);
     });
   });
 });

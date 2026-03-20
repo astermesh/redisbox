@@ -10,122 +10,9 @@
 
 import type { Reply } from './types.ts';
 import { arrayReply, bulkReply } from './types.ts';
+import { matchGlob } from './glob-pattern.ts';
 
 export type MessageSender = (clientId: number, reply: Reply) => void;
-
-/**
- * Match a string against a Redis glob-style pattern.
- *
- * Supports: * (any string including empty), ? (any single char),
- * [abc] (character class), [^abc] / [!abc] (negated), [a-z] (ranges),
- * \ (escape next character).
- */
-export function matchPattern(pattern: string, str: string): boolean {
-  let pi = 0;
-  let si = 0;
-
-  // Backtracking state for * wildcard
-  let starPi = -1;
-  let starSi = -1;
-
-  while (si < str.length) {
-    if (pi < pattern.length && pattern[pi] === '\\') {
-      // Escaped character — must match literally
-      pi++;
-      if (pi < pattern.length && pattern[pi] === str[si]) {
-        pi++;
-        si++;
-      } else {
-        // Backtrack
-        if (starPi >= 0) {
-          pi = starPi + 1;
-          starSi++;
-          si = starSi;
-        } else {
-          return false;
-        }
-      }
-    } else if (pi < pattern.length && pattern[pi] === '*') {
-      starPi = pi;
-      starSi = si;
-      pi++;
-    } else if (pi < pattern.length && pattern[pi] === '?') {
-      pi++;
-      si++;
-    } else if (pi < pattern.length && pattern[pi] === '[') {
-      // Character class
-      pi++;
-      let negate = false;
-      if (pi < pattern.length && (pattern[pi] === '^' || pattern[pi] === '!')) {
-        negate = true;
-        pi++;
-      }
-
-      let matched = false;
-      let classEnd = false;
-      while (pi < pattern.length && !classEnd) {
-        if (pattern[pi] === ']') {
-          classEnd = true;
-          break;
-        }
-        if (pattern[pi] === '\\' && pi + 1 < pattern.length) {
-          pi++;
-          if (pattern[pi] === str[si]) matched = true;
-          pi++;
-        } else if (
-          pi + 2 < pattern.length &&
-          pattern[pi + 1] === '-' &&
-          pattern[pi + 2] !== ']'
-        ) {
-          const lo = pattern.charCodeAt(pi);
-          const hi = pattern.charCodeAt(pi + 2);
-          const ch = str.charCodeAt(si);
-          if (ch >= lo && ch <= hi) matched = true;
-          pi += 3;
-        } else {
-          if (pattern[pi] === str[si]) matched = true;
-          pi++;
-        }
-      }
-
-      if (!classEnd) return false; // Unterminated [
-      pi++; // skip ]
-
-      if (negate) matched = !matched;
-
-      if (matched) {
-        si++;
-      } else {
-        if (starPi >= 0) {
-          pi = starPi + 1;
-          starSi++;
-          si = starSi;
-        } else {
-          return false;
-        }
-      }
-    } else if (pi < pattern.length && pattern[pi] === str[si]) {
-      pi++;
-      si++;
-    } else {
-      // Mismatch — backtrack to last *
-      if (starPi >= 0) {
-        pi = starPi + 1;
-        starSi++;
-        si = starSi;
-      } else {
-        return false;
-      }
-    }
-  }
-
-  // Consume remaining * in pattern
-  while (pi < pattern.length && pattern[pi] === '*') {
-    pi++;
-  }
-
-  return pi === pattern.length;
-}
 
 export class PubSubManager {
   /** channel name → set of subscribed client IDs */
@@ -353,6 +240,15 @@ export class PubSubManager {
   }
 
   /**
+   * Remove a client completely — unsubscribe from all channels and patterns.
+   * Should be called when a client disconnects.
+   */
+  removeClient(clientId: number): void {
+    this.unsubscribeAll(clientId);
+    this.punsubscribeAll(clientId);
+  }
+
+  /**
    * Register a callback for delivering push messages to clients.
    */
   setSender(sender: MessageSender): void {
@@ -384,7 +280,7 @@ export class PubSubManager {
 
     // Deliver to pattern subscribers
     for (const [pattern, patternClients] of this.patternSubs) {
-      if (matchPattern(pattern, channel)) {
+      if (matchGlob(pattern, channel)) {
         const reply = arrayReply([
           bulkReply('pmessage'),
           bulkReply(pattern),
