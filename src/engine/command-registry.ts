@@ -1244,7 +1244,7 @@ const commandSpecs: CommandSpec[] = [
     firstKey: 1,
     lastKey: 1,
     keyStep: 1,
-    categories: ['@read', '@list'],
+    categories: ['@read', '@list', '@slow'],
   },
   {
     name: 'lindex',
@@ -1254,7 +1254,7 @@ const commandSpecs: CommandSpec[] = [
     firstKey: 1,
     lastKey: 1,
     keyStep: 1,
-    categories: ['@read', '@list'],
+    categories: ['@read', '@list', '@slow'],
   },
   {
     name: 'lset',
@@ -1264,7 +1264,7 @@ const commandSpecs: CommandSpec[] = [
     firstKey: 1,
     lastKey: 1,
     keyStep: 1,
-    categories: ['@write', '@list'],
+    categories: ['@write', '@list', '@slow'],
   },
   {
     name: 'linsert',
@@ -1274,7 +1274,7 @@ const commandSpecs: CommandSpec[] = [
     firstKey: 1,
     lastKey: 1,
     keyStep: 1,
-    categories: ['@write', '@list'],
+    categories: ['@write', '@list', '@slow'],
   },
   {
     name: 'lrem',
@@ -1284,7 +1284,7 @@ const commandSpecs: CommandSpec[] = [
     firstKey: 1,
     lastKey: 1,
     keyStep: 1,
-    categories: ['@write', '@list'],
+    categories: ['@write', '@list', '@slow'],
   },
   {
     name: 'ltrim',
@@ -1294,7 +1294,7 @@ const commandSpecs: CommandSpec[] = [
     firstKey: 1,
     lastKey: 1,
     keyStep: 1,
-    categories: ['@write', '@list'],
+    categories: ['@write', '@list', '@slow'],
   },
   {
     name: 'lpos',
@@ -1304,7 +1304,7 @@ const commandSpecs: CommandSpec[] = [
     firstKey: 1,
     lastKey: 1,
     keyStep: 1,
-    categories: ['@read', '@list'],
+    categories: ['@read', '@list', '@slow'],
   },
 
   // --- Set commands ---
