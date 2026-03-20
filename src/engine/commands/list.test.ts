@@ -936,9 +936,7 @@ describe('LPOS', () => {
   it('returns empty array for COUNT with no match', () => {
     const { db } = createDb();
     makeList(db);
-    expect(list.lpos(db, ['k', 'notfound', 'COUNT', '0'])).toEqual(
-      EMPTY_ARRAY
-    );
+    expect(list.lpos(db, ['k', 'notfound', 'COUNT', '0'])).toEqual(EMPTY_ARRAY);
   });
 
   it('returns WRONGTYPE for non-list key', () => {
@@ -956,9 +954,7 @@ describe('LPOS', () => {
   it('returns error for non-integer COUNT', () => {
     const { db } = createDb();
     makeList(db);
-    expect(list.lpos(db, ['k', 'a', 'COUNT', 'abc'])).toEqual(
-      NOT_INTEGER_ERR
-    );
+    expect(list.lpos(db, ['k', 'a', 'COUNT', 'abc'])).toEqual(NOT_INTEGER_ERR);
   });
 
   it('returns error for negative COUNT', () => {
