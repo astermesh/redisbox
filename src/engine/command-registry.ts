@@ -24,6 +24,7 @@ import { specs as commandSpecs } from './commands/command.ts';
 import { specs as streamSpecs } from './commands/stream.ts';
 import { specs as aclSpecs } from './commands/acl.ts';
 import { specs as hyperloglogSpecs } from './commands/hyperloglog.ts';
+import { specs as replicationSpecs } from './commands/replication.ts';
 
 const allSpecs: CommandSpec[] = [
   ...connectionSpecs,
@@ -50,6 +51,7 @@ const allSpecs: CommandSpec[] = [
   ...streamSpecs,
   ...aclSpecs,
   ...hyperloglogSpecs,
+  ...replicationSpecs,
 ];
 
 export function createCommandTable(): CommandTable {

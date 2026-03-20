@@ -385,6 +385,11 @@ describe('createCommandTable (registry)', () => {
       'pfmerge',
       'pfdebug',
       'pfselftest',
+      'replicaof',
+      'slaveof',
+      'replconf',
+      'psync',
+      'waitaof',
     ];
 
     for (const name of expectedCommands) {
@@ -875,7 +880,7 @@ describe('createCommandTable (registry)', () => {
     it('wait handler returns 0', () => {
       const { engine, db } = createCtx();
       const def = getDef(table, 'wait');
-      const result = def.handler({ db, engine }, []);
+      const result = def.handler({ db, engine }, ['1', '0']);
       expect(result).toEqual({ kind: 'integer', value: 0 });
     });
 
