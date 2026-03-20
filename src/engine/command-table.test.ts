@@ -349,6 +349,8 @@ describe('createCommandTable (registry)', () => {
       'unsubscribe',
       'publish',
       'command',
+      'xadd',
+      'xlen',
     ];
 
     for (const name of expectedCommands) {
@@ -489,6 +491,8 @@ describe('createCommandTable (registry)', () => {
       ['subscribe', -2],
       ['unsubscribe', -1],
       ['publish', 3],
+      ['xadd', -5],
+      ['xlen', 2],
     ];
 
     for (const [name, expectedArity] of arityTests) {
