@@ -279,12 +279,13 @@ describe('ACL commands', () => {
       expect(reply.kind).toBe('array');
       if (reply.kind !== 'array') return;
 
-      // passwords field should contain SHA256 hashes
+      // passwords field should contain #-prefixed SHA256 hashes
       const passwords = reply.value[3];
       if (passwords?.kind === 'array') {
         expect(passwords.value.length).toBe(1);
         const hash = (passwords.value[0] as { value: string }).value;
-        expect(hash.length).toBe(64); // SHA256 hex = 64 chars
+        expect(hash).toMatch(/^#[0-9a-f]{64}$/); // # prefix + SHA256 hex
+        expect(hash.length).toBe(65); // # + 64 hex chars
       }
     });
 

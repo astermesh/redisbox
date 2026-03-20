@@ -61,10 +61,10 @@ function userFlags(user: AclUser): Reply {
   return arrayReply(flags.map((f) => bulkReply(f)));
 }
 
-/** Format a user's password hashes for ACL GETUSER. */
+/** Format a user's password hashes for ACL GETUSER (each prefixed with #). */
 function userPasswordHashes(user: AclUser): Reply {
   const passwords = user.getPasswords();
-  return arrayReply(passwords.map((p) => bulkReply(sha256(p))));
+  return arrayReply(passwords.map((p) => bulkReply(`#${sha256(p)}`)));
 }
 
 /** Format the commands string for ACL GETUSER / ACL LIST. */
@@ -333,9 +333,9 @@ function aclGetuser(ctx: CommandContext, args: string[]): Reply {
     bulkReply('commands'),
     bulkReply(userCommandsString(user)),
     bulkReply('keys'),
-    keysPattern ? bulkReply(keysPattern) : EMPTY_ARRAY,
+    bulkReply(keysPattern),
     bulkReply('channels'),
-    channelsPattern ? bulkReply(channelsPattern) : EMPTY_ARRAY,
+    bulkReply(channelsPattern),
     bulkReply('selectors'),
     EMPTY_ARRAY,
   ]);
