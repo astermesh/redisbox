@@ -1138,6 +1138,17 @@ describe('LMOVE', () => {
     expect(list.lmove(db, ['src', 'dst', 'LEFT', 'LEFT'])).toEqual(WRONGTYPE);
   });
 
+  it('does not modify source when destination is wrong type', () => {
+    const { db } = createDb();
+    list.rpush(db, ['src', 'a', 'b', 'c']);
+    db.set('dst', 'string', 'raw', 'val');
+    list.lmove(db, ['src', 'dst', 'LEFT', 'LEFT']);
+    // Source must be untouched
+    expect(list.lrange(db, ['src', '0', '-1'])).toEqual(
+      arr(bulk('a'), bulk('b'), bulk('c'))
+    );
+  });
+
   it('is case-insensitive for direction', () => {
     const { db } = createDb();
     list.rpush(db, ['src', 'a', 'b']);
@@ -1299,7 +1310,7 @@ describe('LMPOP', () => {
     expect(list.lmpop(db, ['1', 'k1', 'LEFT', 'COUNT', '0'])).toEqual({
       kind: 'error',
       prefix: 'ERR',
-      message: 'COUNT value of 0 is not allowed',
+      message: 'count should be greater than 0',
     });
   });
 
@@ -1337,5 +1348,75 @@ describe('LMPOP', () => {
       prefix: 'ERR',
       message: 'syntax error',
     });
+  });
+
+  it('returns syntax error for duplicate COUNT option', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k1', 'a', 'b', 'c']);
+    expect(
+      list.lmpop(db, ['1', 'k1', 'LEFT', 'COUNT', '2', 'COUNT', '3'])
+    ).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
+  });
+});
+
+// --- RPOPLPUSH ---
+
+describe('RPOPLPUSH', () => {
+  it('pops from right of source and pushes to left of destination', () => {
+    const { db } = createDb();
+    list.rpush(db, ['src', 'a', 'b', 'c']);
+    list.rpush(db, ['dst', 'x', 'y']);
+    expect(list.rpoplpush(db, ['src', 'dst'])).toEqual(bulk('c'));
+    expect(list.lrange(db, ['src', '0', '-1'])).toEqual(
+      arr(bulk('a'), bulk('b'))
+    );
+    expect(list.lrange(db, ['dst', '0', '-1'])).toEqual(
+      arr(bulk('c'), bulk('x'), bulk('y'))
+    );
+  });
+
+  it('returns nil when source does not exist', () => {
+    const { db } = createDb();
+    expect(list.rpoplpush(db, ['nosrc', 'dst'])).toEqual(NIL);
+  });
+
+  it('creates destination if it does not exist', () => {
+    const { db } = createDb();
+    list.rpush(db, ['src', 'a', 'b']);
+    expect(list.rpoplpush(db, ['src', 'dst'])).toEqual(bulk('b'));
+    expect(list.lrange(db, ['dst', '0', '-1'])).toEqual(arr(bulk('b')));
+  });
+
+  it('handles same key (rotate right to left)', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k', 'a', 'b', 'c']);
+    expect(list.rpoplpush(db, ['k', 'k'])).toEqual(bulk('c'));
+    expect(list.lrange(db, ['k', '0', '-1'])).toEqual(
+      arr(bulk('c'), bulk('a'), bulk('b'))
+    );
+  });
+
+  it('deletes source when last element is moved', () => {
+    const { db } = createDb();
+    list.rpush(db, ['src', 'a']);
+    list.rpoplpush(db, ['src', 'dst']);
+    expect(db.has('src')).toBe(false);
+  });
+
+  it('returns WRONGTYPE for non-list source', () => {
+    const { db } = createDb();
+    db.set('src', 'string', 'raw', 'val');
+    expect(list.rpoplpush(db, ['src', 'dst'])).toEqual(WRONGTYPE);
+  });
+
+  it('returns WRONGTYPE for non-list destination', () => {
+    const { db } = createDb();
+    list.rpush(db, ['src', 'a']);
+    db.set('dst', 'string', 'raw', 'val');
+    expect(list.rpoplpush(db, ['src', 'dst'])).toEqual(WRONGTYPE);
   });
 });

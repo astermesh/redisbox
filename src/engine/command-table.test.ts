@@ -334,6 +334,7 @@ describe('createCommandTable (registry)', () => {
       'lpos',
       'lmove',
       'lmpop',
+      'rpoplpush',
       'sadd',
       'srem',
       'sismember',

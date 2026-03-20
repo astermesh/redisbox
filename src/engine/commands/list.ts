@@ -609,20 +609,22 @@ export function lmpop(db: Database, args: string[]): Reply {
     return SYNTAX_ERR;
   }
 
-  // Parse optional COUNT
+  // Parse optional COUNT (only allowed once, like real Redis)
   let count = 1;
+  let countSeen = false;
   let i = directionIndex + 1;
   while (i < args.length) {
     const option = (args[i] ?? '').toUpperCase();
-    if (option === 'COUNT') {
+    if (option === 'COUNT' && !countSeen) {
       const countStr = args[i + 1];
       if (countStr === undefined) return SYNTAX_ERR;
       const countParsed = parseCount(countStr);
       if (countParsed.error) return countParsed.error;
       if (countParsed.count === 0) {
-        return errorReply('ERR', 'COUNT value of 0 is not allowed');
+        return errorReply('ERR', 'count should be greater than 0');
       }
       count = countParsed.count ?? 1;
+      countSeen = true;
       i += 2;
     } else {
       return SYNTAX_ERR;
@@ -654,6 +656,14 @@ export function lmpop(db: Database, args: string[]): Reply {
   }
 
   return NIL;
+}
+
+// --- RPOPLPUSH (deprecated since 6.2, replaced by LMOVE RIGHT LEFT) ---
+
+export function rpoplpush(db: Database, args: string[]): Reply {
+  const source = args[0] ?? '';
+  const destination = args[1] ?? '';
+  return lmove(db, [source, destination, 'RIGHT', 'LEFT']);
 }
 
 export const specs: CommandSpec[] = [
@@ -811,10 +821,20 @@ export const specs: CommandSpec[] = [
     name: 'lmpop',
     handler: (ctx, args) => lmpop(ctx.db, args),
     arity: -4,
-    flags: ['write', 'fast'],
+    flags: ['write', 'movablekeys'],
     firstKey: 0,
     lastKey: 0,
     keyStep: 0,
+    categories: ['@write', '@list', '@slow'],
+  },
+  {
+    name: 'rpoplpush',
+    handler: (ctx, args) => rpoplpush(ctx.db, args),
+    arity: 3,
+    flags: ['write', 'denyoom'],
+    firstKey: 1,
+    lastKey: 2,
+    keyStep: 1,
     categories: ['@write', '@list', '@slow'],
   },
 ];
