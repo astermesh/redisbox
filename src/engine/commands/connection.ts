@@ -71,11 +71,6 @@ function validateAuth(
   if (ctx.acl) {
     const user = ctx.acl.getUser(username);
 
-    // No password set — same as real Redis
-    if (user && user.nopass) {
-      return NO_PASSWORD_ERR;
-    }
-
     if (!user || !user.enabled || !user.validatePassword(password)) {
       return WRONGPASS_ERR;
     }
@@ -214,12 +209,16 @@ export function auth(ctx: CommandContext, args: string[]): Reply {
   syncAcl(ctx);
 
   if (ctx.acl) {
-    const user = ctx.acl.getUser(username);
-
-    // No password set — same as real Redis
-    if (user && user.nopass) {
-      return NO_PASSWORD_ERR;
+    // Old-style AUTH <password>: if default user has nopass, return
+    // "no password set" error — matches real Redis short-circuit.
+    if (args.length === 1) {
+      const defaultUser = ctx.acl.getDefaultUser();
+      if (defaultUser.nopass) {
+        return NO_PASSWORD_ERR;
+      }
     }
+
+    const user = ctx.acl.getUser(username);
 
     if (!user || !user.enabled || !user.validatePassword(password)) {
       if (ctx.client) {
