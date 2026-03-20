@@ -4,6 +4,8 @@ import type { Reply, CommandContext } from './types.ts';
 import {
   statusReply,
   errorReply,
+  arrayReply,
+  NIL_ARRAY,
   unknownCommandError,
   wrongArityError,
 } from './types.ts';
@@ -18,6 +20,7 @@ export interface ClientState {
   multiDirty: boolean;
   multiQueue: QueuedCommand[];
   subscribed: boolean;
+  watchedKeys: Map<string, number>;
 }
 
 export function createClientState(): ClientState {
@@ -26,6 +29,7 @@ export function createClientState(): ClientState {
     multiDirty: false,
     multiQueue: [],
     subscribed: false,
+    watchedKeys: new Map(),
   };
 }
 
@@ -71,6 +75,53 @@ function requiresAuth(ctx: CommandContext): boolean {
 export class CommandDispatcher {
   constructor(private readonly table: CommandTable) {}
 
+  private clearTransactionState(state: ClientState, ctx: CommandContext): void {
+    state.inMulti = false;
+    state.multiDirty = false;
+    state.multiQueue = [];
+    state.watchedKeys.clear();
+    if (ctx.client) {
+      ctx.client.flagMulti = false;
+    }
+  }
+
+  private execTransaction(state: ClientState, ctx: CommandContext): Reply {
+    const queue = state.multiQueue;
+    const dirty = state.multiDirty;
+    // Copy watched keys before clearing state (clearTransactionState mutates the map)
+    const watched = new Map(state.watchedKeys);
+
+    // Always clear state first
+    this.clearTransactionState(state, ctx);
+
+    // EXECABORT on syntax errors (takes priority over WATCH failure)
+    if (dirty) {
+      return errorReply(
+        'EXECABORT',
+        'Transaction discarded because of previous errors.'
+      );
+    }
+
+    // Check watched key versions — if any changed, return null array
+    for (const [key, version] of watched) {
+      if (ctx.db.getVersion(key) !== version) {
+        return NIL_ARRAY;
+      }
+    }
+
+    // Execute all queued commands atomically
+    const results: Reply[] = [];
+    for (const cmd of queue) {
+      results.push(cmd.def.handler(ctx, cmd.args));
+    }
+    return arrayReply(results);
+  }
+
+  private discardTransaction(state: ClientState, ctx: CommandContext): Reply {
+    this.clearTransactionState(state, ctx);
+    return statusReply('OK');
+  }
+
   dispatch(state: ClientState, ctx: CommandContext, rawArgs: string[]): Reply {
     ctx.commandTable = this.table;
 
@@ -103,6 +154,7 @@ export class CommandDispatcher {
       state.multiDirty = false;
       state.multiQueue = [];
       state.subscribed = false;
+      state.watchedKeys.clear();
 
       if (ctx.client) {
         ctx.client.dbIndex = 0;
@@ -124,13 +176,20 @@ export class CommandDispatcher {
       if (upperName === 'WATCH') {
         return errorReply('ERR', 'WATCH inside MULTI is not allowed');
       }
-      // EXEC, DISCARD — look up and execute normally (fall through)
+      // EXEC and DISCARD — verify registered and check arity, then handle
       const def = this.table.get(cmdName);
       if (!def) {
         return unknownCommandError(cmdName, args);
       }
       const arityError = this.table.checkArity(def, rawArgs.length);
       if (arityError) return arityError;
+
+      if (upperName === 'EXEC') {
+        return this.execTransaction(state, ctx);
+      }
+      if (upperName === 'DISCARD') {
+        return this.discardTransaction(state, ctx);
+      }
       return def.handler(ctx, args);
     }
 
@@ -188,6 +247,14 @@ export class CommandDispatcher {
     if (state.inMulti) {
       state.multiQueue.push({ def, args });
       return QUEUED;
+    }
+
+    // EXEC/DISCARD outside MULTI — error
+    if (upperName === 'EXEC') {
+      return errorReply('ERR', 'EXEC without MULTI');
+    }
+    if (upperName === 'DISCARD') {
+      return errorReply('ERR', 'DISCARD without MULTI');
     }
 
     // Execute handler

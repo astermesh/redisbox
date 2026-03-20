@@ -375,6 +375,26 @@ const commandSpecs: CommandSpec[] = [
     keyStep: 0,
     categories: ['@fast', '@transaction'],
   },
+  {
+    name: 'exec',
+    handler: () => transaction.exec(),
+    arity: 1,
+    flags: ['noscript', 'loading', 'stale'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@slow', '@transaction'],
+  },
+  {
+    name: 'discard',
+    handler: () => transaction.discard(),
+    arity: 1,
+    flags: ['noscript', 'loading', 'stale', 'fast'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@fast', '@transaction'],
+  },
 
   // --- Generic (keyspace) commands ---
   {
