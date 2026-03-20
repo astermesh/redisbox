@@ -1378,6 +1378,36 @@ const commandSpecs: CommandSpec[] = [
     keyStep: 1,
     categories: ['@write', '@set', '@fast'],
   },
+  {
+    name: 'srandmember',
+    handler: (ctx, args) => set.srandmember(ctx.db, args, ctx.engine.rng),
+    arity: -2,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@set'],
+  },
+  {
+    name: 'spop',
+    handler: (ctx, args) => set.spop(ctx.db, args, ctx.engine.rng),
+    arity: -2,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@set', '@fast'],
+  },
+  {
+    name: 'sscan',
+    handler: (ctx, args) => set.sscan(ctx.db, args),
+    arity: -3,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@set'],
+  },
 
   // --- Pub/Sub commands ---
   {
