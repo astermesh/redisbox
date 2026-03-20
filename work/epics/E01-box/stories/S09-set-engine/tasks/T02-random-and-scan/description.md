@@ -1,5 +1,7 @@
 # T02: Random and Scan
 
+**Status:** done
+
 Implement SRANDMEMBER, SPOP, SSCAN. SRANDMEMBER: positive count=unique elements (up to set size), negative count=may duplicate with absolute value as count. SPOP count (Redis 3.2+): remove and return count random members. SSCAN: cursor-based iteration.
 
 ## Acceptance Criteria
