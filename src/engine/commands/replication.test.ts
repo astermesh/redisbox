@@ -136,10 +136,10 @@ describe('WAIT', () => {
     expect(reply.kind).toBe('error');
   });
 
-  it('returns error for negative timeout', () => {
+  it('accepts negative timeout (clamped to 0 like Redis)', () => {
     const ctx = createCtx();
     const reply = repl.wait(ctx, ['1', '-1']);
-    expect(reply.kind).toBe('error');
+    expect(reply).toEqual({ kind: 'integer', value: 0 });
   });
 });
 
@@ -217,8 +217,8 @@ describe('specs', () => {
     expect(spec?.arity).toBe(-1);
   });
 
-  it('PSYNC has arity 3', () => {
+  it('PSYNC has arity -3', () => {
     const spec = repl.specs.find((s) => s.name === 'psync');
-    expect(spec?.arity).toBe(3);
+    expect(spec?.arity).toBe(-3);
   });
 });
