@@ -20,12 +20,7 @@ import {
 } from '../types.ts';
 import { parseInteger, parseFloat64, formatFloat } from './incr.ts';
 import { matchGlob } from '../glob-pattern.ts';
-
-const textEncoder = new TextEncoder();
-
-function strByteLength(s: string): number {
-  return textEncoder.encode(s).length;
-}
+import { strByteLength, partialShuffle } from '../utils.ts';
 
 // Default thresholds — match Redis defaults.
 // TODO: read from ConfigStore when config is wired into CommandContext.
@@ -433,14 +428,7 @@ export function hrandfield(
   if (count > 0) {
     // Positive count: unique elements, at most hash size
     const actual = Math.min(count, fields.length);
-    // Fisher-Yates partial shuffle
-    const shuffled = [...fields];
-    for (let i = 0; i < actual; i++) {
-      const j = i + Math.floor(rng() * (shuffled.length - i));
-      const tmp = shuffled[i] ?? '';
-      shuffled[i] = shuffled[j] ?? '';
-      shuffled[j] = tmp;
-    }
+    const shuffled = partialShuffle([...fields], actual, rng);
     for (let i = 0; i < actual; i++) {
       const f = shuffled[i] ?? '';
       results.push(bulkReply(f));

@@ -18,8 +18,7 @@ import {
   invalidExpireTimeError,
 } from '../types.ts';
 
-const INT64_MAX = BigInt('9223372036854775807');
-const INT64_MIN = BigInt('-9223372036854775808');
+import { INT64_MAX, INT64_MIN, strByteLength } from '../utils.ts';
 
 const INT_PATTERN = /^-?[1-9]\d*$|^0$/;
 
@@ -32,10 +31,6 @@ function strToBytes(s: string): Uint8Array {
 
 function bytesToStr(b: Uint8Array): string {
   return textDecoder.decode(b);
-}
-
-function strByteLength(s: string): number {
-  return textEncoder.encode(s).length;
 }
 
 function parseIntArg(s: string): { value: number; error: Reply | null } {

@@ -15,21 +15,13 @@ import {
 } from '../types.ts';
 import { parseInteger } from './incr.ts';
 import { matchGlob } from '../glob-pattern.ts';
-
-const textEncoder = new TextEncoder();
-
-function strByteLength(s: string): number {
-  return textEncoder.encode(s).length;
-}
+import { strByteLength, INT64_MIN, INT64_MAX, partialShuffle } from '../utils.ts';
 
 // Default thresholds — match Redis defaults.
 // TODO: read from ConfigStore when config is wired into CommandContext.
 const DEFAULT_MAX_INTSET_ENTRIES = 512;
 const DEFAULT_MAX_LISTPACK_ENTRIES = 128;
 const DEFAULT_MAX_LISTPACK_VALUE = 64;
-
-const INT64_MIN = -9223372036854775808n;
-const INT64_MAX = 9223372036854775807n;
 
 /**
  * Check if a string represents a valid integer for intset encoding.
@@ -336,14 +328,7 @@ export function srandmember(
   if (count > 0) {
     // Positive count: unique elements, at most set size
     const actual = Math.min(count, members.length);
-    // Fisher-Yates partial shuffle
-    const shuffled = [...members];
-    for (let i = 0; i < actual; i++) {
-      const j = i + Math.floor(rng() * (shuffled.length - i));
-      const tmp = shuffled[i] ?? '';
-      shuffled[i] = shuffled[j] ?? '';
-      shuffled[j] = tmp;
-    }
+    const shuffled = partialShuffle([...members], actual, rng);
     for (let i = 0; i < actual; i++) {
       results.push(bulkReply(shuffled[i] ?? ''));
     }
@@ -398,14 +383,7 @@ export function spop(db: Database, args: string[], rng: () => number): Reply {
   const members = Array.from(s);
   const actual = Math.min(count, members.length);
 
-  // Fisher-Yates partial shuffle to select random members
-  const shuffled = [...members];
-  for (let i = 0; i < actual; i++) {
-    const j = i + Math.floor(rng() * (shuffled.length - i));
-    const tmp = shuffled[i] ?? '';
-    shuffled[i] = shuffled[j] ?? '';
-    shuffled[j] = tmp;
-  }
+  const shuffled = partialShuffle([...members], actual, rng);
 
   const results: Reply[] = [];
   for (let i = 0; i < actual; i++) {

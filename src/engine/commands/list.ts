@@ -15,11 +15,7 @@ import {
   SYNTAX_ERR,
 } from '../types.ts';
 
-const textEncoder = new TextEncoder();
-
-function strByteLength(s: string): number {
-  return textEncoder.encode(s).length;
-}
+import { strByteLength } from '../utils.ts';
 
 // Default thresholds — match Redis defaults.
 // TODO: read from ConfigStore when config is wired into CommandContext.

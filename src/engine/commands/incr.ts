@@ -10,9 +10,7 @@ import {
   OVERFLOW_ERR,
 } from '../types.ts';
 import { determineStringEncoding } from './string.ts';
-
-const INT64_MAX = BigInt('9223372036854775807');
-const INT64_MIN = BigInt('-9223372036854775808');
+import { INT64_MAX, INT64_MIN } from '../utils.ts';
 
 /**
  * Parse a string as a 64-bit signed integer.
