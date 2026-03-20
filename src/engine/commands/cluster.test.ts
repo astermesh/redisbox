@@ -12,22 +12,21 @@ function createCtx(): CommandContext {
 }
 
 describe('CLUSTER INFO', () => {
-  it('returns bulk string with cluster_enabled:0', () => {
+  it('returns bulk string with cluster_state:ok', () => {
     const reply = cluster.clusterInfo();
     expect(reply.kind).toBe('bulk');
-    expect((reply as { value: string }).value).toContain('cluster_enabled:0');
+    expect((reply as { value: string }).value).toContain('cluster_state:ok');
   });
 
-  it('contains cluster_state:ok', () => {
+  it('does not include cluster_enabled (that belongs to INFO command)', () => {
     const reply = cluster.clusterInfo();
-    expect((reply as { value: string }).value).toContain('cluster_state:ok');
+    expect((reply as { value: string }).value).not.toContain('cluster_enabled');
   });
 
   it('contains all required fields', () => {
     const reply = cluster.clusterInfo();
     const text = (reply as { value: string }).value;
     const fields = [
-      'cluster_enabled',
       'cluster_state',
       'cluster_slots_assigned',
       'cluster_slots_ok',
@@ -289,7 +288,7 @@ describe('CLUSTER main dispatch', () => {
     const ctx = createCtx();
     const reply = cluster.cluster(ctx, ['INFO']);
     expect(reply.kind).toBe('bulk');
-    expect((reply as { value: string }).value).toContain('cluster_enabled:0');
+    expect((reply as { value: string }).value).toContain('cluster_state:ok');
   });
 
   it('dispatches case insensitively', () => {

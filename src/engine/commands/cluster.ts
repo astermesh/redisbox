@@ -65,7 +65,6 @@ const NODE_ID = '0'.repeat(40);
 // --- CLUSTER INFO response ---
 
 const CLUSTER_INFO_LINES = [
-  'cluster_enabled:0',
   'cluster_state:ok',
   'cluster_slots_assigned:0',
   'cluster_slots_ok:0',
