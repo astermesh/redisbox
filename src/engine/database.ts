@@ -1,4 +1,5 @@
 import type { RedisEntry, RedisEncoding, RedisType } from './types.ts';
+import { partialShuffle } from './utils.ts';
 
 export class Database {
   private readonly store = new Map<string, RedisEntry>();
@@ -182,21 +183,12 @@ export class Database {
 
   /**
    * Sample up to `count` random keys from the expiry index.
-   * Uses Fisher-Yates partial shuffle on an array of expiry keys.
    */
   sampleExpiryKeys(count: number, rng: () => number): string[] {
     const keys = Array.from(this.expiry.keys());
     if (keys.length === 0) return [];
     if (count >= keys.length) return keys;
-
-    // Partial Fisher-Yates: shuffle first `count` positions
-    for (let i = 0; i < count; i++) {
-      const j = i + Math.floor(rng() * (keys.length - i));
-      const tmp = keys[i] as string;
-      keys[i] = keys[j] as string;
-      keys[j] = tmp;
-    }
-    return keys.slice(0, count);
+    return partialShuffle(keys, count, rng);
   }
 
   /**
@@ -255,25 +247,16 @@ export class Database {
 
   /**
    * Sample up to `count` random keys from the field expiry index.
-   * Uses Fisher-Yates partial shuffle.
    */
   sampleFieldExpiryKeys(count: number, rng: () => number): string[] {
     const keys = Array.from(this.fieldExpiry.keys());
     if (keys.length === 0) return [];
     if (count >= keys.length) return keys;
-
-    for (let i = 0; i < count; i++) {
-      const j = i + Math.floor(rng() * (keys.length - i));
-      const tmp = keys[i] as string;
-      keys[i] = keys[j] as string;
-      keys[j] = tmp;
-    }
-    return keys.slice(0, count);
+    return partialShuffle(keys, count, rng);
   }
 
   /**
    * Sample up to `count` random fields with TTL for a given key.
-   * Uses Fisher-Yates partial shuffle.
    */
   sampleFieldsWithExpiry(
     key: string,
@@ -285,14 +268,7 @@ export class Database {
 
     const fieldNames = Array.from(fields.keys());
     if (count >= fieldNames.length) return fieldNames;
-
-    for (let i = 0; i < count; i++) {
-      const j = i + Math.floor(rng() * (fieldNames.length - i));
-      const tmp = fieldNames[i] as string;
-      fieldNames[i] = fieldNames[j] as string;
-      fieldNames[j] = tmp;
-    }
-    return fieldNames.slice(0, count);
+    return partialShuffle(fieldNames, count, rng);
   }
 
   /**

@@ -15,7 +15,7 @@ export interface QueuedCommand {
   args: string[];
 }
 
-export interface ClientState {
+export interface TransactionState {
   inMulti: boolean;
   multiDirty: boolean;
   multiQueue: QueuedCommand[];
@@ -23,7 +23,7 @@ export interface ClientState {
   watchedKeys: Map<string, number>;
 }
 
-export function createClientState(): ClientState {
+export function createTransactionState(): TransactionState {
   return {
     inMulti: false,
     multiDirty: false,
@@ -88,7 +88,10 @@ function requiresAuth(ctx: CommandContext): boolean {
 export class CommandDispatcher {
   constructor(private readonly table: CommandTable) {}
 
-  private clearTransactionState(state: ClientState, ctx: CommandContext): void {
+  private clearTransactionState(
+    state: TransactionState,
+    ctx: CommandContext
+  ): void {
     state.inMulti = false;
     state.multiDirty = false;
     state.multiQueue = [];
@@ -98,7 +101,7 @@ export class CommandDispatcher {
     }
   }
 
-  private execTransaction(state: ClientState, ctx: CommandContext): Reply {
+  private execTransaction(state: TransactionState, ctx: CommandContext): Reply {
     const queue = state.multiQueue;
     const dirty = state.multiDirty;
     // Copy watched keys before clearing state (clearTransactionState mutates the map)
@@ -130,12 +133,19 @@ export class CommandDispatcher {
     return arrayReply(results);
   }
 
-  private discardTransaction(state: ClientState, ctx: CommandContext): Reply {
+  private discardTransaction(
+    state: TransactionState,
+    ctx: CommandContext
+  ): Reply {
     this.clearTransactionState(state, ctx);
     return statusReply('OK');
   }
 
-  dispatch(state: ClientState, ctx: CommandContext, rawArgs: string[]): Reply {
+  dispatch(
+    state: TransactionState,
+    ctx: CommandContext,
+    rawArgs: string[]
+  ): Reply {
     ctx.commandTable = this.table;
 
     if (rawArgs.length === 0) {

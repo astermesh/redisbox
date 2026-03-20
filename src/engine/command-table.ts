@@ -31,6 +31,38 @@ export interface CommandDefinition {
   subcommands?: Map<string, CommandDefinition>;
 }
 
+export interface CommandSpec {
+  name: string;
+  handler: CommandHandler;
+  arity: number;
+  flags: CommandFlag[];
+  firstKey: number;
+  lastKey: number;
+  keyStep: number;
+  categories: string[];
+  subcommands?: CommandSpec[];
+}
+
+export function toDefinition(spec: CommandSpec): CommandDefinition {
+  const def: CommandDefinition = {
+    name: spec.name,
+    handler: spec.handler,
+    arity: spec.arity,
+    flags: new Set(spec.flags),
+    firstKey: spec.firstKey,
+    lastKey: spec.lastKey,
+    keyStep: spec.keyStep,
+    categories: new Set(spec.categories),
+  };
+  if (spec.subcommands) {
+    def.subcommands = new Map();
+    for (const sub of spec.subcommands) {
+      def.subcommands.set(sub.name.toLowerCase(), toDefinition(sub));
+    }
+  }
+  return def;
+}
+
 export class CommandTable {
   private readonly commands = new Map<string, CommandDefinition>();
 

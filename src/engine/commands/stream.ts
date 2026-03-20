@@ -9,6 +9,7 @@ import {
   SYNTAX_ERR,
 } from '../types.ts';
 import { RedisStream, parseStreamId } from '../stream.ts';
+import type { CommandSpec } from '../command-table.ts';
 
 function getStream(
   db: Database,
@@ -213,3 +214,26 @@ export function xlen(db: Database, args: string[]): Reply {
   const stream = entry.value as RedisStream;
   return integerReply(stream.length);
 }
+
+export const specs: CommandSpec[] = [
+  {
+    name: 'xadd',
+    handler: (ctx, args) => xadd(ctx.db, ctx.engine.clock(), args),
+    arity: -5,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@stream', '@fast'],
+  },
+  {
+    name: 'xlen',
+    handler: (ctx, args) => xlen(ctx.db, args),
+    arity: 2,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@stream', '@fast'],
+  },
+];

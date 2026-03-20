@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { CommandDispatcher, createClientState } from '../command-dispatcher.ts';
-import type { ClientState } from '../command-dispatcher.ts';
+import {
+  CommandDispatcher,
+  createTransactionState,
+} from '../command-dispatcher.ts';
+import type { TransactionState } from '../command-dispatcher.ts';
 import { createCommandTable } from '../command-registry.ts';
 import { RedisEngine } from '../engine.ts';
 import type { CommandContext, Reply } from '../types.ts';
@@ -32,13 +35,13 @@ function createCtx(clock = 1000): {
 
 describe('MULTI command', () => {
   let dispatcher: CommandDispatcher;
-  let state: ClientState;
+  let state: TransactionState;
   let ctx: CommandContext;
 
   beforeEach(() => {
     const table = createCommandTable();
     dispatcher = new CommandDispatcher(table);
-    state = createClientState();
+    state = createTransactionState();
     const setup = createCtx();
     ctx = setup.ctx;
   });
@@ -339,13 +342,13 @@ describe('MULTI command', () => {
 
 describe('EXEC command', () => {
   let dispatcher: CommandDispatcher;
-  let state: ClientState;
+  let state: TransactionState;
   let ctx: CommandContext;
 
   beforeEach(() => {
     const table = createCommandTable();
     dispatcher = new CommandDispatcher(table);
-    state = createClientState();
+    state = createTransactionState();
     const setup = createCtx();
     ctx = setup.ctx;
   });
@@ -591,13 +594,13 @@ describe('EXEC command', () => {
 
 describe('DISCARD command', () => {
   let dispatcher: CommandDispatcher;
-  let state: ClientState;
+  let state: TransactionState;
   let ctx: CommandContext;
 
   beforeEach(() => {
     const table = createCommandTable();
     dispatcher = new CommandDispatcher(table);
-    state = createClientState();
+    state = createTransactionState();
     const setup = createCtx();
     ctx = setup.ctx;
   });
