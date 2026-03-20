@@ -9,8 +9,8 @@
 import type * as net from 'node:net';
 import { CommandReader } from './command-reader.ts';
 import type { CommandDispatcher } from '../engine/command-dispatcher.ts';
-import { createClientState as createDispatcherState } from '../engine/command-dispatcher.ts';
-import type { ClientState as DispatcherClientState } from '../engine/command-dispatcher.ts';
+import { createTransactionState } from '../engine/command-dispatcher.ts';
+import type { TransactionState } from '../engine/command-dispatcher.ts';
 import type { Reply, CommandContext } from '../engine/types.ts';
 import type { RespValue } from '../resp/types.ts';
 import * as serializer from '../resp/resp-serializer.ts';
@@ -64,7 +64,7 @@ export class ClientConnection {
   private readonly dispatcher: CommandDispatcher;
   private readonly clientState: ClientState;
   private readonly clientStore?: ClientStateStore;
-  private readonly dispatcherState: DispatcherClientState;
+  private readonly dispatcherState: TransactionState;
   private readonly engine: RedisEngine;
   private readonly config?: ConfigStore;
   private paused = false;
@@ -77,7 +77,7 @@ export class ClientConnection {
     this.engine = options.engine;
     this.dispatcher = options.dispatcher;
     this.config = options.config;
-    this.dispatcherState = createDispatcherState();
+    this.dispatcherState = createTransactionState();
 
     this.reader = new CommandReader((args) => this.handleCommand(args));
 

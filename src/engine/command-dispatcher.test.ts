@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { CommandDispatcher, createClientState } from './command-dispatcher.ts';
-import type { ClientState } from './command-dispatcher.ts';
+import { CommandDispatcher, createTransactionState } from './command-dispatcher.ts';
+import type { TransactionState } from './command-dispatcher.ts';
 import { createCommandTable } from './command-registry.ts';
 import { CommandTable } from './command-table.ts';
 import type { CommandDefinition, CommandHandler } from './command-table.ts';
@@ -49,13 +49,13 @@ function makeDef(
 describe('CommandDispatcher', () => {
   let table: CommandTable;
   let dispatcher: CommandDispatcher;
-  let state: ClientState;
+  let state: TransactionState;
   let ctx: CommandContext;
 
   beforeEach(() => {
     table = createCommandTable();
     dispatcher = new CommandDispatcher(table);
-    state = createClientState();
+    state = createTransactionState();
     const setup = createCtx();
     ctx = setup.ctx;
   });
@@ -452,9 +452,9 @@ describe('CommandDispatcher', () => {
     });
   });
 
-  describe('createClientState', () => {
+  describe('createTransactionState', () => {
     it('creates default client state', () => {
-      const s = createClientState();
+      const s = createTransactionState();
       expect(s.inMulti).toBe(false);
       expect(s.multiDirty).toBe(false);
       expect(s.multiQueue).toEqual([]);
