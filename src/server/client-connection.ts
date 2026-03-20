@@ -17,6 +17,7 @@ import * as serializer from '../resp/resp-serializer.ts';
 import type { ClientState, ClientStateStore } from './client-state.ts';
 import type { RedisEngine } from '../engine/engine.ts';
 import type { ConfigStore } from '../config-store.ts';
+import type { EvictionManager } from '../engine/eviction-manager.ts';
 
 /** Convert an engine Reply to a RESP wire-format RespValue. */
 function replyToRespValue(reply: Reply): RespValue {
@@ -56,6 +57,7 @@ export interface ClientConnectionOptions {
   engine: RedisEngine;
   dispatcher: CommandDispatcher;
   config?: ConfigStore;
+  eviction?: EvictionManager;
 }
 
 export class ClientConnection {
@@ -67,6 +69,7 @@ export class ClientConnection {
   private readonly dispatcherState: TransactionState;
   private readonly engine: RedisEngine;
   private readonly config?: ConfigStore;
+  private readonly eviction?: EvictionManager;
   private paused = false;
   private closed = false;
 
@@ -77,6 +80,7 @@ export class ClientConnection {
     this.engine = options.engine;
     this.dispatcher = options.dispatcher;
     this.config = options.config;
+    this.eviction = options.eviction;
     this.dispatcherState = createTransactionState();
 
     this.reader = new CommandReader((args) => this.handleCommand(args));
@@ -110,6 +114,7 @@ export class ClientConnection {
       pubsub: this.engine.pubsub,
       blocking: this.engine.blocking,
       acl: this.engine.acl,
+      eviction: this.eviction,
     };
 
     const reply = this.dispatcher.dispatch(this.dispatcherState, ctx, args);
