@@ -23,6 +23,7 @@ import * as bitmap from './commands/bitmap.ts';
 import * as pubsub from './commands/pubsub.ts';
 import * as sortedSet from './commands/sorted-set.ts';
 import * as streamCmd from './commands/stream.ts';
+import * as mem from './commands/memory.ts';
 import type { CommandContext } from './types.ts';
 
 function getTable(ctx: CommandContext): CommandTable {
@@ -559,6 +560,78 @@ const commandSpecs: CommandSpec[] = [
         lastKey: 0,
         keyStep: 0,
         categories: ['@keyspace', '@read'],
+      },
+    ],
+  },
+  {
+    name: 'memory',
+    handler: (ctx, args) => mem.memory(ctx.db, ctx.engine, args),
+    arity: -2,
+    flags: ['readonly'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@slow'],
+    subcommands: [
+      {
+        name: 'usage',
+        handler: (ctx, args) => mem.memoryUsage(ctx.db, args),
+        arity: -3,
+        flags: ['readonly'],
+        firstKey: 2,
+        lastKey: 2,
+        keyStep: 1,
+        categories: ['@slow'],
+      },
+      {
+        name: 'doctor',
+        handler: () => mem.memoryDoctor(),
+        arity: 2,
+        flags: ['readonly'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow'],
+      },
+      {
+        name: 'malloc-stats',
+        handler: () => mem.memoryMallocStats(),
+        arity: 2,
+        flags: ['readonly'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow'],
+      },
+      {
+        name: 'purge',
+        handler: () => mem.memoryPurge(),
+        arity: 2,
+        flags: [],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow'],
+      },
+      {
+        name: 'stats',
+        handler: (ctx) => mem.memoryStats(ctx.engine),
+        arity: 2,
+        flags: ['readonly'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow'],
+      },
+      {
+        name: 'help',
+        handler: () => mem.memoryHelp(),
+        arity: 2,
+        flags: ['readonly'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow'],
       },
     ],
   },
