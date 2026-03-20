@@ -157,22 +157,13 @@ describe('ZADD', () => {
 
   // --- GT + LT ---
 
-  it('GT+LT: updates when score differs in any direction', () => {
+  it('GT+LT: returns error (incompatible)', () => {
     const { db, rng } = createDb();
-    sortedSet.zadd(db, ['k', '5', 'a'], rng);
-    // Higher: should update
-    expect(sortedSet.zadd(db, ['k', 'GT', 'LT', 'CH', '10', 'a'], rng)).toEqual(
-      ONE
-    );
-    expect(sortedSet.zincrby(db, ['k', '0', 'a'], rng)).toEqual(bulk('10'));
-    // Lower: should update
-    expect(sortedSet.zadd(db, ['k', 'GT', 'LT', 'CH', '2', 'a'], rng)).toEqual(
-      ONE
-    );
-    expect(sortedSet.zincrby(db, ['k', '0', 'a'], rng)).toEqual(bulk('2'));
-    // Equal: should NOT update
-    expect(sortedSet.zadd(db, ['k', 'GT', 'LT', 'CH', '2', 'a'], rng)).toEqual(
-      ZERO
+    expect(sortedSet.zadd(db, ['k', 'GT', 'LT', '1', 'a'], rng)).toEqual(
+      err(
+        'ERR',
+        'GT, LT, and/or NX options at the same time are not compatible'
+      )
     );
   });
 
@@ -208,14 +199,20 @@ describe('ZADD', () => {
   it('NX and GT together returns error', () => {
     const { db, rng } = createDb();
     expect(sortedSet.zadd(db, ['k', 'NX', 'GT', '1', 'a'], rng)).toEqual(
-      err('ERR', 'GT, LT, and NX options at the same time are not compatible')
+      err(
+        'ERR',
+        'GT, LT, and/or NX options at the same time are not compatible'
+      )
     );
   });
 
   it('NX and LT together returns error', () => {
     const { db, rng } = createDb();
     expect(sortedSet.zadd(db, ['k', 'NX', 'LT', '1', 'a'], rng)).toEqual(
-      err('ERR', 'GT, LT, and NX options at the same time are not compatible')
+      err(
+        'ERR',
+        'GT, LT, and/or NX options at the same time are not compatible'
+      )
     );
   });
 
@@ -259,14 +256,23 @@ describe('ZADD', () => {
   it('odd number of score-member args', () => {
     const { db, rng } = createDb();
     expect(sortedSet.zadd(db, ['k', '1', 'a', '2'], rng)).toEqual(
+      err('ERR', 'syntax error')
+    );
+  });
+
+  it('flags only, no score-member pairs (short)', () => {
+    const { db, rng } = createDb();
+    // With only 2 args (key + flag), hits arity check first
+    expect(sortedSet.zadd(db, ['k', 'NX'], rng)).toEqual(
       err('ERR', "wrong number of arguments for 'zadd' command")
     );
   });
 
-  it('flags only, no score-member pairs', () => {
+  it('flags only, no score-member pairs (3+ args)', () => {
     const { db, rng } = createDb();
-    expect(sortedSet.zadd(db, ['k', 'NX'], rng)).toEqual(
-      err('ERR', "wrong number of arguments for 'zadd' command")
+    // With 3 args (key + two flags), passes arity but fails syntax check
+    expect(sortedSet.zadd(db, ['k', 'NX', 'CH'], rng)).toEqual(
+      err('ERR', 'syntax error')
     );
   });
 
@@ -343,6 +349,92 @@ describe('ZADD', () => {
     sortedSet.zadd(db, ['k', '1.5', 'a', '2.7', 'b'], rng);
     expect(sortedSet.zincrby(db, ['k', '0', 'a'], rng)).toEqual(bulk('1.5'));
     expect(sortedSet.zincrby(db, ['k', '0', 'b'], rng)).toEqual(bulk('2.7'));
+  });
+
+  // --- INCR flag ---
+
+  it('INCR: increments existing member score and returns bulk string', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '10', 'a'], rng);
+    expect(sortedSet.zadd(db, ['k', 'INCR', '5', 'a'], rng)).toEqual(
+      bulk('15')
+    );
+  });
+
+  it('INCR: creates new member and returns score', () => {
+    const { db, rng } = createDb();
+    expect(sortedSet.zadd(db, ['k', 'INCR', '3', 'a'], rng)).toEqual(bulk('3'));
+  });
+
+  it('INCR: with NX on existing member returns nil', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '10', 'a'], rng);
+    expect(sortedSet.zadd(db, ['k', 'NX', 'INCR', '5', 'a'], rng)).toEqual(
+      bulk(null)
+    );
+  });
+
+  it('INCR: with NX on new member returns score', () => {
+    const { db, rng } = createDb();
+    expect(sortedSet.zadd(db, ['k', 'NX', 'INCR', '5', 'a'], rng)).toEqual(
+      bulk('5')
+    );
+  });
+
+  it('INCR: with XX on existing member returns new score', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '10', 'a'], rng);
+    expect(sortedSet.zadd(db, ['k', 'XX', 'INCR', '5', 'a'], rng)).toEqual(
+      bulk('15')
+    );
+  });
+
+  it('INCR: with XX on nonexistent member returns nil', () => {
+    const { db, rng } = createDb();
+    expect(sortedSet.zadd(db, ['k', 'XX', 'INCR', '5', 'a'], rng)).toEqual(
+      bulk(null)
+    );
+  });
+
+  it('INCR: with GT updates only when new score > old', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '10', 'a'], rng);
+    // +5 → 15 > 10, should update
+    expect(sortedSet.zadd(db, ['k', 'GT', 'INCR', '5', 'a'], rng)).toEqual(
+      bulk('15')
+    );
+    // -20 → -5 < 15, should return nil
+    expect(sortedSet.zadd(db, ['k', 'GT', 'INCR', '-20', 'a'], rng)).toEqual(
+      bulk(null)
+    );
+  });
+
+  it('INCR: with LT updates only when new score < old', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '10', 'a'], rng);
+    // -3 → 7 < 10, should update
+    expect(sortedSet.zadd(db, ['k', 'LT', 'INCR', '-3', 'a'], rng)).toEqual(
+      bulk('7')
+    );
+    // +20 → 27 > 7, should return nil
+    expect(sortedSet.zadd(db, ['k', 'LT', 'INCR', '20', 'a'], rng)).toEqual(
+      bulk(null)
+    );
+  });
+
+  it('INCR: rejects multiple score-member pairs', () => {
+    const { db, rng } = createDb();
+    expect(sortedSet.zadd(db, ['k', 'INCR', '1', 'a', '2', 'b'], rng)).toEqual(
+      err('ERR', 'INCR option supports a single increment-element pair')
+    );
+  });
+
+  it('INCR: inf + (-inf) returns NaN error', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', 'inf', 'a'], rng);
+    expect(sortedSet.zadd(db, ['k', 'INCR', '-inf', 'a'], rng)).toEqual(
+      err('ERR', 'resulting score is not a number (NaN)')
+    );
   });
 });
 

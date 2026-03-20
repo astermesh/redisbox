@@ -6,6 +6,7 @@ import {
   errorReply,
   wrongArityError,
   ZERO,
+  NIL,
   WRONGTYPE_ERR,
   NOT_FLOAT_ERR,
 } from '../types.ts';
@@ -81,6 +82,7 @@ export function zadd(db: Database, args: string[], rng: () => number): Reply {
   let gt = false;
   let lt = false;
   let ch = false;
+  let incr = false;
   let i = 1;
 
   while (i < args.length) {
@@ -100,6 +102,9 @@ export function zadd(db: Database, args: string[], rng: () => number): Reply {
     } else if (flag === 'CH') {
       ch = true;
       i++;
+    } else if (flag === 'INCR') {
+      incr = true;
+      i++;
     } else {
       break;
     }
@@ -113,18 +118,26 @@ export function zadd(db: Database, args: string[], rng: () => number): Reply {
     );
   }
 
-  // NX and GT/LT are incompatible
-  if (nx && (gt || lt)) {
+  // NX+GT, NX+LT, GT+LT are all incompatible
+  if ((nx && (gt || lt)) || (gt && lt)) {
     return errorReply(
       'ERR',
-      'GT, LT, and NX options at the same time are not compatible'
+      'GT, LT, and/or NX options at the same time are not compatible'
     );
   }
 
   // Remaining args must be score-member pairs
   const remaining = args.length - i;
   if (remaining < 2 || remaining % 2 !== 0) {
-    return wrongArityError('zadd');
+    return errorReply('ERR', 'syntax error');
+  }
+
+  // INCR mode: only one score-member pair allowed
+  if (incr && remaining !== 2) {
+    return errorReply(
+      'ERR',
+      'INCR option supports a single increment-element pair'
+    );
   }
 
   // Parse all score-member pairs first (validate before mutating)
@@ -149,43 +162,86 @@ export function zadd(db: Database, args: string[], rng: () => number): Reply {
 
   let added = 0;
   let updated = 0;
+  let incrResult: number | null = null;
 
   for (const { score, member } of pairs) {
     const existing = zset.dict.get(member);
 
     if (existing !== undefined) {
       // Member exists — update logic
-      if (nx) continue; // NX: never update
-
-      let doUpdate = true;
-      if (gt && lt) {
-        // GT+LT: update only if score differs
-        doUpdate = score !== existing;
-      } else if (gt) {
-        doUpdate = score > existing;
-      } else if (lt) {
-        doUpdate = score < existing;
+      if (nx) {
+        if (incr) incrResult = null;
+        continue; // NX: never update
       }
 
-      if (doUpdate && score !== existing) {
-        // Remove old, insert new in skip list
-        zset.sl.delete(existing, member);
-        zset.sl.insert(score, member);
-        zset.dict.set(member, score);
-        updated++;
+      if (incr) {
+        // INCR mode: add increment to existing score
+        const newScore = existing + score;
+        if (isNaN(newScore)) {
+          return errorReply('ERR', 'resulting score is not a number (NaN)');
+        }
+
+        let doUpdate = true;
+        if (gt) {
+          doUpdate = newScore > existing;
+        } else if (lt) {
+          doUpdate = newScore < existing;
+        }
+
+        if (doUpdate) {
+          zset.sl.delete(existing, member);
+          zset.sl.insert(newScore, member);
+          zset.dict.set(member, newScore);
+          updated++;
+          incrResult = newScore;
+        } else {
+          incrResult = null;
+        }
+      } else {
+        let doUpdate = true;
+        if (gt) {
+          doUpdate = score > existing;
+        } else if (lt) {
+          doUpdate = score < existing;
+        }
+
+        if (doUpdate && score !== existing) {
+          // Remove old, insert new in skip list
+          zset.sl.delete(existing, member);
+          zset.sl.insert(score, member);
+          zset.dict.set(member, score);
+          updated++;
+        }
       }
     } else {
       // Member doesn't exist — add logic
-      if (xx) continue; // XX: never add
+      if (xx) {
+        if (incr) incrResult = null;
+        continue; // XX: never add
+      }
 
-      zset.sl.insert(score, member);
-      zset.dict.set(member, score);
-      added++;
+      if (incr) {
+        if (isNaN(score)) {
+          return errorReply('ERR', 'resulting score is not a number (NaN)');
+        }
+        zset.sl.insert(score, member);
+        zset.dict.set(member, score);
+        added++;
+        incrResult = score;
+      } else {
+        zset.sl.insert(score, member);
+        zset.dict.set(member, score);
+        added++;
+      }
     }
   }
 
   // Clean up if nothing was added to a newly created empty set
   removeIfEmpty(db, key, zset);
+
+  if (incr) {
+    return incrResult !== null ? bulkReply(formatScore(incrResult)) : NIL;
+  }
 
   return integerReply(ch ? added + updated : added);
 }

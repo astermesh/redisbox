@@ -463,6 +463,10 @@ describe('createCommandTable (registry)', () => {
       ['srandmember', -2],
       ['spop', -2],
       ['sscan', -3],
+      ['zadd', -4],
+      ['zrem', -3],
+      ['zincrby', 4],
+      ['zcard', 2],
       ['subscribe', -2],
       ['unsubscribe', -1],
     ];
