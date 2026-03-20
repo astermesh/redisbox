@@ -238,6 +238,8 @@ describe('createCommandTable (registry)', () => {
       'multi',
       'exec',
       'discard',
+      'watch',
+      'unwatch',
       'del',
       'unlink',
       'exists',
