@@ -187,6 +187,9 @@ export class CommandDispatcher {
       state.watchedKeys.clear();
 
       if (ctx.client) {
+        // Clean up actual pubsub subscriptions before clearing the flag
+        ctx.pubsub?.removeClient(ctx.client.id);
+
         ctx.client.dbIndex = 0;
         ctx.client.flagMulti = false;
         ctx.client.flagSubscribed = false;

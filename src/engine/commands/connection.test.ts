@@ -25,19 +25,58 @@ function createCtx(opts?: { clientId?: number; config?: ConfigStore }): {
 
 describe('PING', () => {
   it('returns PONG with no arguments', () => {
-    expect(cmd.ping([])).toEqual({ kind: 'status', value: 'PONG' });
+    const { ctx } = createCtx();
+    expect(cmd.ping(ctx, [])).toEqual({ kind: 'status', value: 'PONG' });
   });
 
   it('returns bulk string with one argument', () => {
-    expect(cmd.ping(['hello'])).toEqual({ kind: 'bulk', value: 'hello' });
+    const { ctx } = createCtx();
+    expect(cmd.ping(ctx, ['hello'])).toEqual({ kind: 'bulk', value: 'hello' });
   });
 
   it('echoes empty string argument', () => {
-    expect(cmd.ping([''])).toEqual({ kind: 'bulk', value: '' });
+    const { ctx } = createCtx();
+    expect(cmd.ping(ctx, [''])).toEqual({ kind: 'bulk', value: '' });
   });
 
   it('rejects more than one argument', () => {
-    const result = cmd.ping(['a', 'b']);
+    const { ctx } = createCtx();
+    const result = cmd.ping(ctx, ['a', 'b']);
+    expect(result).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: "wrong number of arguments for 'ping' command",
+    });
+  });
+
+  it('returns push-style array in subscriber mode (no args)', () => {
+    const { ctx, client } = createCtx();
+    client.flagSubscribed = true;
+    expect(cmd.ping(ctx, [])).toEqual({
+      kind: 'array',
+      value: [
+        { kind: 'bulk', value: 'pong' },
+        { kind: 'bulk', value: '' },
+      ],
+    });
+  });
+
+  it('returns push-style array in subscriber mode (with message)', () => {
+    const { ctx, client } = createCtx();
+    client.flagSubscribed = true;
+    expect(cmd.ping(ctx, ['hello'])).toEqual({
+      kind: 'array',
+      value: [
+        { kind: 'bulk', value: 'pong' },
+        { kind: 'bulk', value: 'hello' },
+      ],
+    });
+  });
+
+  it('rejects more than one argument even in subscriber mode', () => {
+    const { ctx, client } = createCtx();
+    client.flagSubscribed = true;
+    const result = cmd.ping(ctx, ['a', 'b']);
     expect(result).toEqual({
       kind: 'error',
       prefix: 'ERR',
