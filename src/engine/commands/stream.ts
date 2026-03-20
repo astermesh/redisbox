@@ -231,22 +231,83 @@ export function xlen(db: Database, args: string[]): Reply {
 }
 
 /**
- * Parse a range boundary ID (for XRANGE/XREVRANGE).
- * Handles special IDs: - (min), + (max), and incomplete IDs (ms only).
+ * Increment a stream ID to the next possible value.
+ * Used for exclusive start ranges: (id → id+1
  */
-function parseRangeId(id: string, mode: 'start' | 'end'): StreamId | null {
+function streamIncrId(id: StreamId): StreamId | null {
+  if (id.seq < Number.MAX_SAFE_INTEGER) {
+    return { ms: id.ms, seq: id.seq + 1 };
+  }
+  if (id.ms < Number.MAX_SAFE_INTEGER) {
+    return { ms: id.ms + 1, seq: 0 };
+  }
+  return null; // overflow
+}
+
+/**
+ * Decrement a stream ID to the previous possible value.
+ * Used for exclusive end ranges: (id → id-1
+ */
+function streamDecrId(id: StreamId): StreamId | null {
+  if (id.seq > 0) {
+    return { ms: id.ms, seq: id.seq - 1 };
+  }
+  if (id.ms > 0) {
+    return { ms: id.ms - 1, seq: Number.MAX_SAFE_INTEGER };
+  }
+  return null; // underflow
+}
+
+const INVALID_START_RANGE_ERR = errorReply(
+  'ERR',
+  'invalid start ID for the interval'
+);
+const INVALID_END_RANGE_ERR = errorReply(
+  'ERR',
+  'invalid end ID for the interval'
+);
+
+/**
+ * Parse a range boundary ID (for XRANGE/XREVRANGE).
+ * Handles special IDs: - (min), + (max), exclusive ( prefix, and incomplete IDs (ms only).
+ */
+function parseRangeId(
+  id: string,
+  mode: 'start' | 'end'
+): StreamId | { error: Reply } | null {
   if (id === '-') return MIN_ID;
   if (id === '+') return MAX_ID;
 
-  const dashIdx = id.indexOf('-');
+  // Exclusive range with ( prefix (Redis 6.2+)
+  const exclusive = id.startsWith('(');
+  const rawId = exclusive ? id.substring(1) : id;
+
+  let parsed: StreamId | null;
+  const dashIdx = rawId.indexOf('-');
   if (dashIdx === -1) {
     // Incomplete ID — just ms part
-    const ms = Number(id);
+    const ms = Number(rawId);
     if (!Number.isInteger(ms) || ms < 0) return null;
-    return { ms, seq: mode === 'start' ? 0 : Number.MAX_SAFE_INTEGER };
+    parsed = { ms, seq: mode === 'start' ? 0 : Number.MAX_SAFE_INTEGER };
+  } else {
+    parsed = parseStreamId(rawId);
   }
 
-  return parseStreamId(id);
+  if (!parsed) return null;
+
+  if (exclusive) {
+    if (mode === 'start') {
+      const incr = streamIncrId(parsed);
+      if (!incr) return { error: INVALID_START_RANGE_ERR };
+      return incr;
+    } else {
+      const decr = streamDecrId(parsed);
+      if (!decr) return { error: INVALID_END_RANGE_ERR };
+      return decr;
+    }
+  }
+
+  return parsed;
 }
 
 /**
@@ -290,8 +351,10 @@ export function xrange(db: Database, args: string[]): Reply {
 
   const start = parseRangeId(startArg, 'start');
   if (!start) return INVALID_STREAM_ID_ERR;
+  if ('error' in start) return start.error;
   const end = parseRangeId(endArg, 'end');
   if (!end) return INVALID_STREAM_ID_ERR;
+  if ('error' in end) return end.error;
 
   let count: number | undefined;
   if (args.length > 3) {
@@ -323,8 +386,10 @@ export function xrevrange(db: Database, args: string[]): Reply {
 
   const end = parseRangeId(endArg, 'end');
   if (!end) return INVALID_STREAM_ID_ERR;
+  if ('error' in end) return end.error;
   const start = parseRangeId(startArg, 'start');
   if (!start) return INVALID_STREAM_ID_ERR;
+  if ('error' in start) return start.error;
 
   let count: number | undefined;
   if (args.length > 3) {
@@ -483,10 +548,10 @@ export const specs: CommandSpec[] = [
     name: 'xread',
     handler: (ctx, args) => xread(ctx.db, args),
     arity: -4,
-    flags: ['readonly'],
+    flags: ['readonly', 'blocking', 'movablekeys'],
     firstKey: 0,
     lastKey: 0,
     keyStep: 0,
-    categories: ['@read', '@stream', '@slow'],
+    categories: ['@read', '@stream', '@slow', '@blocking'],
   },
 ];

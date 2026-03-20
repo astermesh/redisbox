@@ -530,6 +530,75 @@ describe('XRANGE', () => {
       message: 'value is not an integer or out of range',
     });
   });
+
+  // ─── Exclusive ranges ( prefix ────────────────────────────────────
+
+  it('exclusive start with ( prefix', () => {
+    const ctx = createDb(0);
+    seedStream(ctx.db, ctx);
+    const reply = stream.xrange(ctx.db, ['s', '(2000-0', '+']);
+    expect(reply).toEqual({
+      kind: 'array',
+      value: [
+        entryReply('3000-0', [['k', '3']]),
+        entryReply('4000-0', [['k', '4']]),
+        entryReply('5000-0', [['k', '5']]),
+      ],
+    });
+  });
+
+  it('exclusive end with ( prefix', () => {
+    const ctx = createDb(0);
+    seedStream(ctx.db, ctx);
+    const reply = stream.xrange(ctx.db, ['s', '-', '(4000-0']);
+    expect(reply).toEqual({
+      kind: 'array',
+      value: [
+        entryReply('1000-0', [['k', '1']]),
+        entryReply('2000-0', [['k', '2']]),
+        entryReply('3000-0', [['k', '3']]),
+      ],
+    });
+  });
+
+  it('exclusive both start and end with ( prefix', () => {
+    const ctx = createDb(0);
+    seedStream(ctx.db, ctx);
+    const reply = stream.xrange(ctx.db, ['s', '(1000-0', '(5000-0']);
+    expect(reply).toEqual({
+      kind: 'array',
+      value: [
+        entryReply('2000-0', [['k', '2']]),
+        entryReply('3000-0', [['k', '3']]),
+        entryReply('4000-0', [['k', '4']]),
+      ],
+    });
+  });
+
+  it('exclusive with incomplete ID (ms only)', () => {
+    const ctx = createDb(0);
+    seedStream(ctx.db, ctx);
+    // (2000 as start → parses as 2000-0, then increments to 2000-1
+    const reply = stream.xrange(ctx.db, ['s', '(2000', '+']);
+    expect(reply).toEqual({
+      kind: 'array',
+      value: [
+        entryReply('3000-0', [['k', '3']]),
+        entryReply('4000-0', [['k', '4']]),
+        entryReply('5000-0', [['k', '5']]),
+      ],
+    });
+  });
+
+  it('exclusive range with invalid ID returns error', () => {
+    const { db } = createDb();
+    const reply = stream.xrange(db, ['s', '(abc', '+']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'Invalid stream ID specified as stream command argument',
+    });
+  });
 });
 
 // ─── XREVRANGE ──────────────────────────────────────────────────────────
@@ -600,6 +669,38 @@ describe('XREVRANGE', () => {
     seedStream(ctx.db, ctx);
     const reply = stream.xrevrange(ctx.db, ['s', '1000-0', '5000-0']);
     expect(reply).toEqual({ kind: 'array', value: [] });
+  });
+
+  // ─── Exclusive ranges ( prefix ────────────────────────────────────
+
+  it('exclusive end (lower bound) with ( prefix', () => {
+    const ctx = createDb(0);
+    seedStream(ctx.db, ctx);
+    // XREVRANGE s + (2000-0 → entries > 2000-0 in reverse
+    const reply = stream.xrevrange(ctx.db, ['s', '+', '(2000-0']);
+    expect(reply).toEqual({
+      kind: 'array',
+      value: [
+        entryReply('5000-0', [['k', '5']]),
+        entryReply('4000-0', [['k', '4']]),
+        entryReply('3000-0', [['k', '3']]),
+      ],
+    });
+  });
+
+  it('exclusive start (upper bound) with ( prefix', () => {
+    const ctx = createDb(0);
+    seedStream(ctx.db, ctx);
+    // XREVRANGE s (4000-0 - → entries < 4000-0 in reverse
+    const reply = stream.xrevrange(ctx.db, ['s', '(4000-0', '-']);
+    expect(reply).toEqual({
+      kind: 'array',
+      value: [
+        entryReply('3000-0', [['k', '3']]),
+        entryReply('2000-0', [['k', '2']]),
+        entryReply('1000-0', [['k', '1']]),
+      ],
+    });
   });
 });
 
