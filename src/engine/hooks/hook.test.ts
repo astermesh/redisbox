@@ -116,14 +116,19 @@ describe('AsyncHook', () => {
       expect(baseFn).not.toHaveBeenCalled();
     });
 
-    it('execute_with: modifies context before passing to next', async () => {
+    it('execute_with: modifies context before passing to next hook', async () => {
       const hook = new AsyncHook<{ value: number }, number>();
       hook.tap(async (ctx, next) => {
         ctx.value = ctx.value * 10;
         return next();
       });
-      const result = await hook.execute({ value: 3 }, async () => 30);
-      expect(result).toBe(30);
+      hook.tap(async (ctx, next) => {
+        // second hook sees the mutated context
+        return ctx.value + (await next());
+      });
+      // base=1, hook2 sees value=30, returns 30+1=31, hook1 returns 31
+      const result = await hook.execute({ value: 3 }, async () => 1);
+      expect(result).toBe(31);
     });
   });
 
