@@ -23,6 +23,7 @@ import { specs as clusterSpecs } from './commands/cluster.ts';
 import { specs as commandSpecs } from './commands/command.ts';
 import { specs as streamSpecs } from './commands/stream.ts';
 import { specs as aclSpecs } from './commands/acl.ts';
+import { specs as hyperloglogSpecs } from './commands/hyperloglog.ts';
 
 const allSpecs: CommandSpec[] = [
   ...connectionSpecs,
@@ -48,6 +49,7 @@ const allSpecs: CommandSpec[] = [
   ...commandSpecs,
   ...streamSpecs,
   ...aclSpecs,
+  ...hyperloglogSpecs,
 ];
 
 export function createCommandTable(): CommandTable {

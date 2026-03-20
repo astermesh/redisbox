@@ -1,15 +1,16 @@
 /**
  * Server-wide Pub/Sub subscription manager.
  *
- * Maintains a bidirectional index:
- *   channel → Set<clientId>
- *   clientId → Set<channel>
+ * Maintains bidirectional indexes for both channel and pattern subscriptions:
+ *   channel → Set<clientId>   /   clientId → Set<channel>
+ *   pattern → Set<clientId>   /   clientId → Set<pattern>
  *
  * Handles message delivery via a registered sender callback.
  */
 
 import type { Reply } from './types.ts';
 import { arrayReply, bulkReply } from './types.ts';
+import { matchGlob } from './glob-pattern.ts';
 
 export type MessageSender = (clientId: number, reply: Reply) => void;
 
@@ -19,6 +20,12 @@ export class PubSubManager {
 
   /** client ID → set of subscribed channel names */
   private readonly clientChannels = new Map<number, Set<string>>();
+
+  /** pattern → set of subscribed client IDs */
+  private readonly patternSubs = new Map<string, Set<number>>();
+
+  /** client ID → set of subscribed patterns */
+  private readonly clientPatterns = new Map<number, Set<string>>();
 
   /** callback to deliver push messages to clients */
   private sender: MessageSender | null = null;
@@ -123,6 +130,124 @@ export class PubSubManager {
     return this.channelSubscribers.get(channel) ?? new Set();
   }
 
+  // --- Pattern subscriptions ---
+
+  /**
+   * Subscribe a client to a pattern.
+   * @returns true if the client was newly subscribed, false if already subscribed
+   */
+  psubscribe(clientId: number, pattern: string): boolean {
+    let patterns = this.clientPatterns.get(clientId);
+    if (!patterns) {
+      patterns = new Set();
+      this.clientPatterns.set(clientId, patterns);
+    }
+
+    if (patterns.has(pattern)) {
+      return false;
+    }
+
+    patterns.add(pattern);
+
+    let subs = this.patternSubs.get(pattern);
+    if (!subs) {
+      subs = new Set();
+      this.patternSubs.set(pattern, subs);
+    }
+    subs.add(clientId);
+
+    return true;
+  }
+
+  /**
+   * Unsubscribe a client from a pattern.
+   * @returns true if the client was subscribed (and is now removed), false if not subscribed
+   */
+  punsubscribe(clientId: number, pattern: string): boolean {
+    const patterns = this.clientPatterns.get(clientId);
+    if (!patterns || !patterns.has(pattern)) {
+      return false;
+    }
+
+    patterns.delete(pattern);
+    if (patterns.size === 0) {
+      this.clientPatterns.delete(clientId);
+    }
+
+    const subs = this.patternSubs.get(pattern);
+    if (subs) {
+      subs.delete(clientId);
+      if (subs.size === 0) {
+        this.patternSubs.delete(pattern);
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Unsubscribe a client from all patterns.
+   * @returns the list of patterns the client was subscribed to
+   */
+  punsubscribeAll(clientId: number): string[] {
+    const patterns = this.clientPatterns.get(clientId);
+    if (!patterns || patterns.size === 0) {
+      return [];
+    }
+
+    const removed = [...patterns];
+    for (const pattern of removed) {
+      const subs = this.patternSubs.get(pattern);
+      if (subs) {
+        subs.delete(clientId);
+        if (subs.size === 0) {
+          this.patternSubs.delete(pattern);
+        }
+      }
+    }
+
+    this.clientPatterns.delete(clientId);
+    return removed;
+  }
+
+  /**
+   * Get the total number of pattern subscriptions for a client.
+   */
+  patternCount(clientId: number): number {
+    return this.clientPatterns.get(clientId)?.size ?? 0;
+  }
+
+  /**
+   * Get the patterns a client is subscribed to.
+   */
+  clientPatternSubscriptions(clientId: number): ReadonlySet<string> {
+    return this.clientPatterns.get(clientId) ?? new Set();
+  }
+
+  /**
+   * Get the set of client IDs subscribed to a pattern.
+   */
+  patternSubscribers(pattern: string): ReadonlySet<number> {
+    return this.patternSubs.get(pattern) ?? new Set();
+  }
+
+  /**
+   * Get the total number of subscriptions (channels + patterns) for a client.
+   * This is the count returned in SUBSCRIBE/UNSUBSCRIBE/PSUBSCRIBE/PUNSUBSCRIBE replies.
+   */
+  subscriptionCount(clientId: number): number {
+    return this.channelCount(clientId) + this.patternCount(clientId);
+  }
+
+  /**
+   * Remove a client completely — unsubscribe from all channels and patterns.
+   * Should be called when a client disconnects.
+   */
+  removeClient(clientId: number): void {
+    this.unsubscribeAll(clientId);
+    this.punsubscribeAll(clientId);
+  }
+
   /**
    * Register a callback for delivering push messages to clients.
    */
@@ -132,7 +257,7 @@ export class PubSubManager {
 
   /**
    * Publish a message to a channel.
-   * Delivers to all channel subscribers (and pattern subscribers once added).
+   * Delivers to all channel subscribers and pattern subscribers.
    * @returns the number of clients that received the message
    */
   publish(channel: string, message: string): number {
@@ -153,7 +278,22 @@ export class PubSubManager {
       }
     }
 
-    // Pattern subscriber delivery will be added by T03 (PSUBSCRIBE)
+    // Deliver to pattern subscribers
+    for (const [pattern, patternClients] of this.patternSubs) {
+      if (matchGlob(pattern, channel)) {
+        const reply = arrayReply([
+          bulkReply('pmessage'),
+          bulkReply(pattern),
+          bulkReply(channel),
+          bulkReply(message),
+        ]);
+
+        for (const clientId of patternClients) {
+          this.sender?.(clientId, reply);
+          count++;
+        }
+      }
+    }
 
     return count;
   }
@@ -163,5 +303,12 @@ export class PubSubManager {
    */
   get totalChannels(): number {
     return this.channelSubscribers.size;
+  }
+
+  /**
+   * Total number of active patterns (patterns with at least one subscriber).
+   */
+  get totalPatterns(): number {
+    return this.patternSubs.size;
   }
 }

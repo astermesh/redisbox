@@ -128,6 +128,13 @@ export class CommandDispatcher {
     // Execute all queued commands atomically
     const results: Reply[] = [];
     for (const cmd of queue) {
+      // Eviction check for denyoom commands inside MULTI/EXEC
+      if (cmd.def.flags.has('denyoom') && ctx.eviction) {
+        if (!ctx.eviction.tryEvict()) {
+          results.push(ctx.eviction.oomReply());
+          continue;
+        }
+      }
       results.push(cmd.def.handler(ctx, cmd.args));
     }
     return arrayReply(results);
@@ -278,6 +285,27 @@ export class CommandDispatcher {
     }
     if (upperName === 'DISCARD') {
       return errorReply('ERR', 'DISCARD without MULTI');
+    }
+
+    // WATCH: record current version of each key
+    if (upperName === 'WATCH') {
+      for (const key of args) {
+        state.watchedKeys.set(key, ctx.db.getVersion(key));
+      }
+      return def.handler(ctx, args);
+    }
+
+    // UNWATCH: clear all watched keys
+    if (upperName === 'UNWATCH') {
+      state.watchedKeys.clear();
+      return def.handler(ctx, args);
+    }
+
+    // Eviction check: reject denyoom commands when OOM and eviction fails
+    if (def.flags.has('denyoom') && ctx.eviction) {
+      if (!ctx.eviction.tryEvict()) {
+        return ctx.eviction.oomReply();
+      }
     }
 
     // Execute handler

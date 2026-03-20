@@ -203,6 +203,31 @@ export class Database {
     return this.expiry.entries();
   }
 
+  /**
+   * Sample up to `count` random keys from all keys in the store.
+   */
+  sampleKeys(count: number, rng: () => number): string[] {
+    const keys = Array.from(this.store.keys());
+    if (keys.length === 0) return [];
+    if (count >= keys.length) return keys;
+    return partialShuffle(keys, count, rng);
+  }
+
+  /**
+   * Sample up to `count` random keys that have an expiry set (volatile keys).
+   */
+  sampleVolatileKeys(count: number, rng: () => number): string[] {
+    return this.sampleExpiryKeys(count, rng);
+  }
+
+  /**
+   * Get the raw entry without expiry check or LRU touch.
+   * Used by eviction to inspect entries without side effects.
+   */
+  getRaw(key: string): RedisEntry | null {
+    return this.store.get(key) ?? null;
+  }
+
   flushExpired(): void {
     for (const key of Array.from(this.expiry.keys())) {
       this.expireIfNeeded(key);
