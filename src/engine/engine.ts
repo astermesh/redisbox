@@ -19,11 +19,13 @@ export class RedisEngine {
   readonly pubsub = new PubSubManager();
   readonly blocking = new BlockingManager();
   readonly acl = new AclStore();
+  readonly startTime: number;
 
   constructor(deps?: Partial<EngineDeps>) {
     const resolved = { ...defaultDeps, ...deps };
     this.clock = resolved.clock;
     this.rng = resolved.rng;
+    this.startTime = this.clock();
 
     this.databases = [];
     for (let i = 0; i < NUM_DATABASES; i++) {
