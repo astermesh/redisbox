@@ -4,7 +4,13 @@ import type { ClientState } from '../command-dispatcher.ts';
 import { createCommandTable } from '../command-registry.ts';
 import { RedisEngine } from '../engine.ts';
 import type { CommandContext, Reply } from '../types.ts';
-import { statusReply, errorReply } from '../types.ts';
+import {
+  statusReply,
+  errorReply,
+  arrayReply,
+  bulkReply,
+  integerReply,
+} from '../types.ts';
 import { ClientState as ServerClientState } from '../../server/client-state.ts';
 
 function createCtx(clock = 1000): {
@@ -325,6 +331,385 @@ describe('MULTI command', () => {
       expect(result.kind).toBe('array');
       const arr = result as { kind: 'array'; value: Reply[] };
       // Should not be nil (command exists)
+      expect(arr.value[0]).not.toEqual({ kind: 'bulk', value: null });
+    });
+  });
+});
+
+describe('EXEC command', () => {
+  let dispatcher: CommandDispatcher;
+  let state: ClientState;
+  let ctx: CommandContext;
+
+  beforeEach(() => {
+    const table = createCommandTable();
+    dispatcher = new CommandDispatcher(table);
+    state = createClientState();
+    const setup = createCtx();
+    ctx = setup.ctx;
+  });
+
+  describe('outside MULTI', () => {
+    it('returns error when not in transaction', () => {
+      const result = dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(result).toEqual(errorReply('ERR', 'EXEC without MULTI'));
+    });
+
+    it('is case-insensitive', () => {
+      const result = dispatcher.dispatch(state, ctx, ['exec']);
+      expect(result).toEqual(errorReply('ERR', 'EXEC without MULTI'));
+    });
+  });
+
+  describe('basic execution', () => {
+    it('returns empty array for empty transaction', () => {
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      const result = dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(result).toEqual(arrayReply([]));
+    });
+
+    it('executes single queued command', () => {
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['SET', 'k', 'v']);
+      const result = dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(result).toEqual(arrayReply([statusReply('OK')]));
+      // Verify the command was actually executed
+      expect(ctx.db.get('k')?.value).toBe('v');
+    });
+
+    it('executes multiple queued commands in order', () => {
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['SET', 'k', 'hello']);
+      dispatcher.dispatch(state, ctx, ['GET', 'k']);
+      dispatcher.dispatch(state, ctx, ['INCR', 'counter']);
+      dispatcher.dispatch(state, ctx, ['INCR', 'counter']);
+      const result = dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(result).toEqual(
+        arrayReply([
+          statusReply('OK'),
+          bulkReply('hello'),
+          integerReply(1),
+          integerReply(2),
+        ])
+      );
+    });
+
+    it('returns results for each command even on runtime errors', () => {
+      // Runtime errors (e.g. WRONGTYPE) don't abort the transaction
+      ctx.db.set('k', 'string', 'embstr', 'hello');
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['INCR', 'k']); // Will fail: not integer
+      dispatcher.dispatch(state, ctx, ['SET', 'other', 'val']);
+      const result = dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(result.kind).toBe('array');
+      const arr = (result as { kind: 'array'; value: Reply[] }).value;
+      expect(arr).toHaveLength(2);
+      expect(arr[0]?.kind).toBe('error'); // INCR fails at runtime
+      expect(arr[1]).toEqual(statusReply('OK')); // SET succeeds
+    });
+  });
+
+  describe('state cleanup after EXEC', () => {
+    it('exits transaction mode', () => {
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['SET', 'k', 'v']);
+      dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(state.inMulti).toBe(false);
+    });
+
+    it('clears the queue', () => {
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['SET', 'k', 'v']);
+      dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(state.multiQueue).toHaveLength(0);
+    });
+
+    it('clears the dirty flag', () => {
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(state.multiDirty).toBe(false);
+    });
+
+    it('clears watched keys', () => {
+      state.watchedKeys = new Map([['k', 1]]);
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(state.watchedKeys.size).toBe(0);
+    });
+
+    it('clears flagMulti on server client state', () => {
+      const client = new ServerClientState(1, 100);
+      ctx.client = client;
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      expect(client.flagMulti).toBe(true);
+      dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(client.flagMulti).toBe(false);
+    });
+
+    it('allows new MULTI after EXEC', () => {
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['SET', 'k', 'v']);
+      dispatcher.dispatch(state, ctx, ['EXEC']);
+      // Should be able to start new transaction
+      const result = dispatcher.dispatch(state, ctx, ['MULTI']);
+      expect(result).toEqual(statusReply('OK'));
+      expect(state.inMulti).toBe(true);
+    });
+  });
+
+  describe('EXECABORT on syntax errors', () => {
+    it('returns EXECABORT when dirty flag is set', () => {
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['NOSUCHCMD']); // marks dirty
+      dispatcher.dispatch(state, ctx, ['SET', 'k', 'v']); // still queued
+      const result = dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(result).toEqual(
+        errorReply(
+          'EXECABORT',
+          'Transaction discarded because of previous errors.'
+        )
+      );
+    });
+
+    it('does not execute any commands on EXECABORT', () => {
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['NOSUCHCMD']);
+      dispatcher.dispatch(state, ctx, ['SET', 'k', 'v']);
+      dispatcher.dispatch(state, ctx, ['EXEC']);
+      // SET should not have been executed
+      expect(ctx.db.get('k')).toBeNull();
+    });
+
+    it('clears state after EXECABORT', () => {
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['NOSUCHCMD']);
+      dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(state.inMulti).toBe(false);
+      expect(state.multiDirty).toBe(false);
+      expect(state.multiQueue).toHaveLength(0);
+    });
+
+    it('clears flagMulti on EXECABORT', () => {
+      const client = new ServerClientState(1, 100);
+      ctx.client = client;
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['NOSUCHCMD']);
+      dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(client.flagMulti).toBe(false);
+    });
+  });
+
+  describe('WATCH failure returns null', () => {
+    it('returns null array when watched key changed', () => {
+      // Simulate a watched key that changed
+      state.watchedKeys = new Map([['k', 0]]);
+      // Modify the key so version changes
+      ctx.db.set('k', 'string', 'embstr', 'changed');
+
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['GET', 'k']);
+      const result = dispatcher.dispatch(state, ctx, ['EXEC']);
+      // Redis returns a null array (*-1) on WATCH failure
+      expect(result).toEqual(bulkReply(null));
+    });
+
+    it('does not execute commands on WATCH failure', () => {
+      state.watchedKeys = new Map([['k', 0]]);
+      ctx.db.set('k', 'string', 'embstr', 'changed');
+
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['SET', 'other', 'val']);
+      dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(ctx.db.get('other')).toBeNull();
+    });
+
+    it('succeeds when watched key has not changed', () => {
+      // Set a key and record its version
+      ctx.db.set('k', 'string', 'embstr', 'original');
+      const version = ctx.db.getVersion('k');
+      state.watchedKeys = new Map([['k', version]]);
+
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['GET', 'k']);
+      const result = dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(result).toEqual(arrayReply([bulkReply('original')]));
+    });
+
+    it('clears state on WATCH failure', () => {
+      state.watchedKeys = new Map([['k', 0]]);
+      ctx.db.set('k', 'string', 'embstr', 'changed');
+
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['EXEC']);
+      expect(state.inMulti).toBe(false);
+      expect(state.watchedKeys.size).toBe(0);
+    });
+
+    it('EXECABORT takes priority over WATCH failure', () => {
+      state.watchedKeys = new Map([['k', 0]]);
+      ctx.db.set('k', 'string', 'embstr', 'changed');
+
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['NOSUCHCMD']); // marks dirty
+      const result = dispatcher.dispatch(state, ctx, ['EXEC']);
+      // EXECABORT takes priority
+      expect(result).toEqual(
+        errorReply(
+          'EXECABORT',
+          'Transaction discarded because of previous errors.'
+        )
+      );
+    });
+  });
+
+  describe('arity', () => {
+    it('rejects extra arguments', () => {
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      const result = dispatcher.dispatch(state, ctx, ['EXEC', 'extra']);
+      expect(result).toEqual(
+        errorReply('ERR', "wrong number of arguments for 'exec' command")
+      );
+      // Transaction still active after arity error
+      expect(state.inMulti).toBe(true);
+    });
+  });
+
+  describe('COMMAND introspection', () => {
+    it('EXEC is found via COMMAND INFO', () => {
+      const result = dispatcher.dispatch(state, ctx, [
+        'COMMAND',
+        'INFO',
+        'EXEC',
+      ]);
+      expect(result.kind).toBe('array');
+      const arr = result as { kind: 'array'; value: Reply[] };
+      expect(arr.value[0]).not.toEqual({ kind: 'bulk', value: null });
+    });
+  });
+});
+
+describe('DISCARD command', () => {
+  let dispatcher: CommandDispatcher;
+  let state: ClientState;
+  let ctx: CommandContext;
+
+  beforeEach(() => {
+    const table = createCommandTable();
+    dispatcher = new CommandDispatcher(table);
+    state = createClientState();
+    const setup = createCtx();
+    ctx = setup.ctx;
+  });
+
+  describe('outside MULTI', () => {
+    it('returns error when not in transaction', () => {
+      const result = dispatcher.dispatch(state, ctx, ['DISCARD']);
+      expect(result).toEqual(errorReply('ERR', 'DISCARD without MULTI'));
+    });
+
+    it('is case-insensitive', () => {
+      const result = dispatcher.dispatch(state, ctx, ['discard']);
+      expect(result).toEqual(errorReply('ERR', 'DISCARD without MULTI'));
+    });
+  });
+
+  describe('basic behavior', () => {
+    it('returns OK', () => {
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      const result = dispatcher.dispatch(state, ctx, ['DISCARD']);
+      expect(result).toEqual(statusReply('OK'));
+    });
+
+    it('discards queued commands', () => {
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['SET', 'k', 'v']);
+      dispatcher.dispatch(state, ctx, ['GET', 'k']);
+      dispatcher.dispatch(state, ctx, ['DISCARD']);
+      // Commands were not executed
+      expect(ctx.db.get('k')).toBeNull();
+    });
+  });
+
+  describe('state cleanup after DISCARD', () => {
+    it('exits transaction mode', () => {
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['DISCARD']);
+      expect(state.inMulti).toBe(false);
+    });
+
+    it('clears the queue', () => {
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['SET', 'k', 'v']);
+      dispatcher.dispatch(state, ctx, ['DISCARD']);
+      expect(state.multiQueue).toHaveLength(0);
+    });
+
+    it('clears the dirty flag', () => {
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['NOSUCHCMD']);
+      expect(state.multiDirty).toBe(true);
+      dispatcher.dispatch(state, ctx, ['DISCARD']);
+      expect(state.multiDirty).toBe(false);
+    });
+
+    it('clears watched keys', () => {
+      state.watchedKeys = new Map([['k', 1]]);
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['DISCARD']);
+      expect(state.watchedKeys.size).toBe(0);
+    });
+
+    it('clears flagMulti on server client state', () => {
+      const client = new ServerClientState(1, 100);
+      ctx.client = client;
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      expect(client.flagMulti).toBe(true);
+      dispatcher.dispatch(state, ctx, ['DISCARD']);
+      expect(client.flagMulti).toBe(false);
+    });
+
+    it('allows new MULTI after DISCARD', () => {
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['DISCARD']);
+      const result = dispatcher.dispatch(state, ctx, ['MULTI']);
+      expect(result).toEqual(statusReply('OK'));
+      expect(state.inMulti).toBe(true);
+    });
+  });
+
+  describe('DISCARD with dirty transaction', () => {
+    it('successfully discards dirty transaction', () => {
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      dispatcher.dispatch(state, ctx, ['NOSUCHCMD']);
+      expect(state.multiDirty).toBe(true);
+      const result = dispatcher.dispatch(state, ctx, ['DISCARD']);
+      expect(result).toEqual(statusReply('OK'));
+      expect(state.inMulti).toBe(false);
+      expect(state.multiDirty).toBe(false);
+    });
+  });
+
+  describe('arity', () => {
+    it('rejects extra arguments', () => {
+      dispatcher.dispatch(state, ctx, ['MULTI']);
+      const result = dispatcher.dispatch(state, ctx, ['DISCARD', 'extra']);
+      expect(result).toEqual(
+        errorReply('ERR', "wrong number of arguments for 'discard' command")
+      );
+      // Transaction still active after arity error
+      expect(state.inMulti).toBe(true);
+    });
+  });
+
+  describe('COMMAND introspection', () => {
+    it('DISCARD is found via COMMAND INFO', () => {
+      const result = dispatcher.dispatch(state, ctx, [
+        'COMMAND',
+        'INFO',
+        'DISCARD',
+      ]);
+      expect(result.kind).toBe('array');
+      const arr = result as { kind: 'array'; value: Reply[] };
       expect(arr.value[0]).not.toEqual({ kind: 'bulk', value: null });
     });
   });

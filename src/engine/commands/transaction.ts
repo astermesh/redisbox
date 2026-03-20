@@ -1,5 +1,5 @@
 import type { Reply } from '../types.ts';
-import { OK } from '../types.ts';
+import { OK, errorReply } from '../types.ts';
 
 /**
  * MULTI
@@ -12,4 +12,27 @@ import { OK } from '../types.ts';
  */
 export function multi(): Reply {
   return OK;
+}
+
+/**
+ * EXEC
+ * Executes all commands issued after MULTI.
+ *
+ * Actual execution logic is in CommandDispatcher.execTransaction().
+ * This handler is only called outside MULTI as a fallback.
+ */
+export function exec(): Reply {
+  return errorReply('ERR', 'EXEC without MULTI');
+}
+
+/**
+ * DISCARD
+ * Flushes all previously queued commands in a transaction and restores
+ * the connection state to normal.
+ *
+ * Actual discard logic is in CommandDispatcher.discardTransaction().
+ * This handler is only called outside MULTI as a fallback.
+ */
+export function discard(): Reply {
+  return errorReply('ERR', 'DISCARD without MULTI');
 }
