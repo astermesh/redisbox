@@ -122,8 +122,11 @@ export function clusterCountkeysinslot(
     );
   }
   const slot = parseInt(args[0] ?? '', 10);
-  if (isNaN(slot) || slot < 0 || slot > 16383) {
-    return errorReply('ERR', 'Invalid or out of range slot');
+  if (isNaN(slot)) {
+    return errorReply('ERR', 'value is not an integer or out of range');
+  }
+  if (slot < 0 || slot > 16383) {
+    return errorReply('ERR', 'Invalid slot');
   }
   let count = 0;
   for (const key of ctx.db.keys()) {
@@ -143,16 +146,16 @@ export function clusterGetkeysinslot(
     );
   }
   const slot = parseInt(args[0] ?? '', 10);
-  if (isNaN(slot) || slot < 0 || slot > 16383) {
-    return errorReply('ERR', 'Invalid or out of range slot');
-  }
-  const count = parseInt(args[1] ?? '', 10);
-  if (isNaN(count) || count < 0) {
+  const maxkeys = parseInt(args[1] ?? '', 10);
+  if (isNaN(slot) || isNaN(maxkeys)) {
     return errorReply('ERR', 'value is not an integer or out of range');
+  }
+  if (slot < 0 || slot > 16383 || maxkeys < 0) {
+    return errorReply('ERR', 'Invalid slot or number of keys');
   }
   const result: Reply[] = [];
   for (const key of ctx.db.keys()) {
-    if (result.length >= count) break;
+    if (result.length >= maxkeys) break;
     if (keySlot(key) === slot) {
       result.push(bulkReply(key));
     }

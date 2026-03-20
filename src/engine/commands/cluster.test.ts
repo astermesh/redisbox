@@ -189,22 +189,27 @@ describe('CLUSTER COUNTKEYSINSLOT', () => {
     expect((reply as { value: number }).value).toBe(0);
   });
 
-  it('returns error for invalid slot', () => {
+  it('returns "Invalid slot" for out-of-range slot', () => {
     const ctx = createCtx();
     const reply = cluster.clusterCountkeysinslot(ctx, ['16384']);
     expect(reply.kind).toBe('error');
+    expect((reply as { message: string }).message).toContain('Invalid slot');
   });
 
-  it('returns error for negative slot', () => {
+  it('returns "Invalid slot" for negative slot', () => {
     const ctx = createCtx();
     const reply = cluster.clusterCountkeysinslot(ctx, ['-1']);
     expect(reply.kind).toBe('error');
+    expect((reply as { message: string }).message).toContain('Invalid slot');
   });
 
-  it('returns error for non-integer slot', () => {
+  it('returns "value is not an integer" for non-integer slot', () => {
     const ctx = createCtx();
     const reply = cluster.clusterCountkeysinslot(ctx, ['abc']);
     expect(reply.kind).toBe('error');
+    expect((reply as { message: string }).message).toContain(
+      'value is not an integer or out of range'
+    );
   });
 });
 
@@ -227,16 +232,36 @@ describe('CLUSTER GETKEYSINSLOT', () => {
 
   it('respects count limit', () => {
     const ctx = createCtx();
-    // Add multiple keys that hash to the same slot
     ctx.db.set('foo', 'string', 'raw', 'v1');
     const reply = cluster.clusterGetkeysinslot(ctx, ['12182', '0']);
     expect(reply).toEqual({ kind: 'array', value: [] });
   });
 
-  it('returns error for invalid slot', () => {
+  it('returns "Invalid slot or number of keys" for out-of-range slot', () => {
     const ctx = createCtx();
     const reply = cluster.clusterGetkeysinslot(ctx, ['16384', '10']);
     expect(reply.kind).toBe('error');
+    expect((reply as { message: string }).message).toContain(
+      'Invalid slot or number of keys'
+    );
+  });
+
+  it('returns "Invalid slot or number of keys" for negative count', () => {
+    const ctx = createCtx();
+    const reply = cluster.clusterGetkeysinslot(ctx, ['0', '-1']);
+    expect(reply.kind).toBe('error');
+    expect((reply as { message: string }).message).toContain(
+      'Invalid slot or number of keys'
+    );
+  });
+
+  it('returns "value is not an integer" for non-integer slot', () => {
+    const ctx = createCtx();
+    const reply = cluster.clusterGetkeysinslot(ctx, ['abc', '10']);
+    expect(reply.kind).toBe('error');
+    expect((reply as { message: string }).message).toContain(
+      'value is not an integer or out of range'
+    );
   });
 
   it('returns error for missing count', () => {
