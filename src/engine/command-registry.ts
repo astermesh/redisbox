@@ -22,6 +22,7 @@ import { specs as infoSpecs } from './commands/info.ts';
 import { specs as clusterSpecs } from './commands/cluster.ts';
 import { specs as commandSpecs } from './commands/command.ts';
 import { specs as streamSpecs } from './commands/stream.ts';
+import { specs as aclSpecs } from './commands/acl.ts';
 import { specs as hyperloglogSpecs } from './commands/hyperloglog.ts';
 
 const allSpecs: CommandSpec[] = [
@@ -47,6 +48,7 @@ const allSpecs: CommandSpec[] = [
   ...clusterSpecs,
   ...commandSpecs,
   ...streamSpecs,
+  ...aclSpecs,
   ...hyperloglogSpecs,
 ];
 
