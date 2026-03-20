@@ -376,6 +376,11 @@ describe('createCommandTable (registry)', () => {
       'xadd',
       'xlen',
       'cluster',
+      'pfadd',
+      'pfcount',
+      'pfmerge',
+      'pfdebug',
+      'pfselftest',
     ];
 
     for (const name of expectedCommands) {
