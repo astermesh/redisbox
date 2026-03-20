@@ -338,6 +338,7 @@ describe('createCommandTable (registry)', () => {
       'zcard',
       'subscribe',
       'unsubscribe',
+      'publish',
       'command',
     ];
 
@@ -469,6 +470,7 @@ describe('createCommandTable (registry)', () => {
       ['zcard', 2],
       ['subscribe', -2],
       ['unsubscribe', -1],
+      ['publish', 3],
     ];
 
     for (const [name, expectedArity] of arityTests) {

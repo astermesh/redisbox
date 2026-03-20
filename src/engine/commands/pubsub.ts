@@ -1,12 +1,21 @@
 /**
- * Pub/Sub command handlers: SUBSCRIBE, UNSUBSCRIBE.
+ * Pub/Sub command handlers: SUBSCRIBE, UNSUBSCRIBE, PUBLISH.
  *
- * Each command sends one response per channel (not one aggregated response).
+ * SUBSCRIBE/UNSUBSCRIBE send one response per channel (not one aggregated response).
  * Uses the 'multi' reply kind to emit multiple top-level array replies.
+ *
+ * PUBLISH delivers messages to all channel subscribers and returns the
+ * number of recipients.
  */
 
 import type { CommandContext, Reply } from '../types.ts';
-import { arrayReply, bulkReply, integerReply, multiReply } from '../types.ts';
+import {
+  arrayReply,
+  bulkReply,
+  integerReply,
+  multiReply,
+  ZERO,
+} from '../types.ts';
 
 /**
  * SUBSCRIBE channel [channel ...]
@@ -110,4 +119,22 @@ export function unsubscribe(ctx: CommandContext, args: string[]): Reply {
 
   client.flagSubscribed = pubsub.channelCount(client.id) > 0;
   return multiReply(replies);
+}
+
+/**
+ * PUBLISH channel message
+ *
+ * Posts a message to the given channel. Returns the number of clients
+ * that received the message (channel subscribers + pattern subscribers).
+ */
+export function publish(ctx: CommandContext, args: string[]): Reply {
+  const pubsub = ctx.pubsub;
+  if (!pubsub) {
+    return ZERO;
+  }
+
+  const channel = args[0] ?? '';
+  const message = args[1] ?? '';
+  const count = pubsub.publish(channel, message);
+  return integerReply(count);
 }
