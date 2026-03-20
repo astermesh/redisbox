@@ -124,4 +124,17 @@ export class ClientConnection {
       this.socket.resume();
     }
   }
+
+  /**
+   * Send a push reply to this client (used for pub/sub message delivery).
+   */
+  sendReply(reply: Reply): void {
+    if (this.closed) return;
+    const buf = serializeReply(reply);
+    const flushed = this.socket.write(buf);
+    if (!flushed && !this.paused) {
+      this.paused = true;
+      this.socket.pause();
+    }
+  }
 }

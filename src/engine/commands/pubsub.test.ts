@@ -25,6 +25,34 @@ function createCtx(opts?: { clientId?: number }): {
   };
 }
 
+function createMultiClientCtx(): {
+  engine: RedisEngine;
+  pubsub: PubSubManager;
+  createClient: (id: number) => { ctx: CommandContext; client: ClientState };
+  sent: { clientId: number; reply: Reply }[];
+} {
+  const engine = new RedisEngine({ clock: () => 1000 });
+  const pubsub = engine.pubsub;
+  const sent: { clientId: number; reply: Reply }[] = [];
+  pubsub.setSender((clientId, reply) => sent.push({ clientId, reply }));
+
+  return {
+    engine,
+    pubsub,
+    createClient: (id: number) => {
+      const client = new ClientState(id, 500);
+      const ctx: CommandContext = {
+        db: engine.db(0),
+        engine,
+        client,
+        pubsub,
+      };
+      return { ctx, client };
+    },
+    sent,
+  };
+}
+
 /** Extract the inner replies from a multi reply */
 function multiReplies(reply: Reply): Reply[] {
   expect(reply.kind).toBe('multi');
@@ -296,5 +324,103 @@ describe('SUBSCRIBE + UNSUBSCRIBE integration', () => {
     });
     expect(client.flagSubscribed).toBe(true);
     expect(pubsub.channelCount(client.id)).toBe(1);
+  });
+});
+
+describe('PUBLISH', () => {
+  it('returns 0 when no subscribers on channel', () => {
+    const { ctx } = createCtx();
+    const reply = cmd.publish(ctx, ['news', 'hello']);
+    expect(reply).toEqual({ kind: 'integer', value: 0 });
+  });
+
+  it('returns count of channel subscribers', () => {
+    const { createClient } = createMultiClientCtx();
+    const { ctx: ctx1 } = createClient(1);
+    const { ctx: ctx2 } = createClient(2);
+    const { ctx: publisherCtx } = createClient(3);
+
+    cmd.subscribe(ctx1, ['news']);
+    cmd.subscribe(ctx2, ['news']);
+
+    const reply = cmd.publish(publisherCtx, ['news', 'hello']);
+    expect(reply).toEqual({ kind: 'integer', value: 2 });
+  });
+
+  it('delivers message to all channel subscribers', () => {
+    const { createClient, sent } = createMultiClientCtx();
+    const { ctx: ctx1 } = createClient(1);
+    const { ctx: ctx2 } = createClient(2);
+    const { ctx: publisherCtx } = createClient(3);
+
+    cmd.subscribe(ctx1, ['news']);
+    cmd.subscribe(ctx2, ['news']);
+
+    cmd.publish(publisherCtx, ['news', 'hello world']);
+
+    expect(sent).toHaveLength(2);
+
+    const msg1 = sent.find((s) => s.clientId === 1);
+    const msg2 = sent.find((s) => s.clientId === 2);
+
+    const expectedMessage = {
+      kind: 'array',
+      value: [
+        { kind: 'bulk', value: 'message' },
+        { kind: 'bulk', value: 'news' },
+        { kind: 'bulk', value: 'hello world' },
+      ],
+    };
+
+    expect(msg1?.reply).toEqual(expectedMessage);
+    expect(msg2?.reply).toEqual(expectedMessage);
+  });
+
+  it('does not deliver to unsubscribed clients', () => {
+    const { createClient, sent } = createMultiClientCtx();
+    const { ctx: ctx1 } = createClient(1);
+    const { ctx: publisherCtx } = createClient(2);
+
+    cmd.subscribe(ctx1, ['news']);
+    cmd.unsubscribe(ctx1, ['news']);
+
+    cmd.publish(publisherCtx, ['news', 'hello']);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('only delivers to subscribers of the target channel', () => {
+    const { createClient, sent } = createMultiClientCtx();
+    const { ctx: ctx1 } = createClient(1);
+    const { ctx: ctx2 } = createClient(2);
+    const { ctx: publisherCtx } = createClient(3);
+
+    cmd.subscribe(ctx1, ['sports']);
+    cmd.subscribe(ctx2, ['news']);
+
+    cmd.publish(publisherCtx, ['news', 'hello']);
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.clientId).toBe(2);
+  });
+
+  it('works without pubsub in context', () => {
+    const engine = new RedisEngine({ clock: () => 1000 });
+    const ctx: CommandContext = {
+      db: engine.db(0),
+      engine,
+    };
+    const reply = cmd.publish(ctx, ['news', 'hello']);
+    expect(reply).toEqual({ kind: 'integer', value: 0 });
+  });
+
+  it('publisher can also be a subscriber and receive its own message', () => {
+    const { createClient, sent } = createMultiClientCtx();
+    const { ctx } = createClient(1);
+
+    cmd.subscribe(ctx, ['news']);
+
+    cmd.publish(ctx, ['news', 'self']);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.clientId).toBe(1);
   });
 });
