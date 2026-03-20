@@ -207,6 +207,10 @@ export class Database {
     return this.expireIfNeeded(key);
   }
 
+  expiryEntries(): IterableIterator<[string, number]> {
+    return this.expiry.entries();
+  }
+
   flushExpired(): void {
     for (const key of Array.from(this.expiry.keys())) {
       this.expireIfNeeded(key);
