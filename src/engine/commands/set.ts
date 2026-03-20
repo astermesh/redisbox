@@ -469,6 +469,277 @@ export function sscan(db: Database, args: string[]): Reply {
   return arrayReply([bulkReply(String(nextCursor)), arrayReply(results)]);
 }
 
+// --- Helper: collect sets from multiple keys ---
+
+function collectSets(
+  db: Database,
+  keys: string[]
+): { sets: (Set<string> | null)[]; error: Reply | null } {
+  const sets: (Set<string> | null)[] = [];
+  for (const key of keys) {
+    const result = getExistingSet(db, key);
+    if (result.error) return { sets: [], error: result.error };
+    sets.push(result.set);
+  }
+  return { sets, error: null };
+}
+
+// --- SUNION ---
+
+export function sunion(db: Database, args: string[]): Reply {
+  const { sets, error } = collectSets(db, args);
+  if (error) return error;
+
+  const result = new Set<string>();
+  for (const s of sets) {
+    if (s) {
+      for (const member of s) {
+        result.add(member);
+      }
+    }
+  }
+
+  if (result.size === 0) return EMPTY_ARRAY;
+  const replies: Reply[] = [];
+  for (const member of result) {
+    replies.push(bulkReply(member));
+  }
+  return arrayReply(replies);
+}
+
+// --- Helper: find smallest set from array of non-null sets ---
+
+function findSmallest(sets: Set<string>[]): Set<string> {
+  let smallest = sets[0] as Set<string>;
+  for (let i = 1; i < sets.length; i++) {
+    const s = sets[i] as Set<string>;
+    if (s.size < smallest.size) {
+      smallest = s;
+    }
+  }
+  return smallest;
+}
+
+/**
+ * Compute intersection members. Returns null if any set is missing (empty intersection).
+ */
+function computeIntersection(sets: (Set<string> | null)[]): Set<string> | null {
+  for (const s of sets) {
+    if (!s) return null;
+  }
+  const nonNull = sets as Set<string>[];
+  const smallest = findSmallest(nonNull);
+  const result = new Set<string>();
+  for (const member of smallest) {
+    let inAll = true;
+    for (const s of nonNull) {
+      if (s !== smallest && !s.has(member)) {
+        inAll = false;
+        break;
+      }
+    }
+    if (inAll) result.add(member);
+  }
+  return result;
+}
+
+/**
+ * Compute difference: first set minus all others.
+ */
+function computeDifference(sets: (Set<string> | null)[]): Set<string> {
+  const first = sets[0];
+  if (!first) return new Set();
+  const result = new Set<string>();
+  for (const member of first) {
+    let inOther = false;
+    for (let i = 1; i < sets.length; i++) {
+      const s = sets[i];
+      if (s && s.has(member)) {
+        inOther = true;
+        break;
+      }
+    }
+    if (!inOther) result.add(member);
+  }
+  return result;
+}
+
+// --- SINTER ---
+
+export function sinter(db: Database, args: string[]): Reply {
+  const { sets, error } = collectSets(db, args);
+  if (error) return error;
+
+  const result = computeIntersection(sets);
+  if (!result || result.size === 0) return EMPTY_ARRAY;
+
+  const replies: Reply[] = [];
+  for (const member of result) {
+    replies.push(bulkReply(member));
+  }
+  return arrayReply(replies);
+}
+
+// --- SDIFF ---
+
+export function sdiff(db: Database, args: string[]): Reply {
+  const { sets, error } = collectSets(db, args);
+  if (error) return error;
+
+  const result = computeDifference(sets);
+  if (result.size === 0) return EMPTY_ARRAY;
+
+  const replies: Reply[] = [];
+  for (const member of result) {
+    replies.push(bulkReply(member));
+  }
+  return arrayReply(replies);
+}
+
+// --- Store helper ---
+
+function storeSetResult(
+  db: Database,
+  destination: string,
+  members: Set<string>
+): Reply {
+  if (members.size === 0) {
+    db.delete(destination);
+    return ZERO;
+  }
+  const encoding = chooseInitialEncoding(members);
+  db.set(destination, 'set', encoding, members);
+  db.removeExpiry(destination);
+  return integerReply(members.size);
+}
+
+// --- SUNIONSTORE ---
+
+export function sunionstore(db: Database, args: string[]): Reply {
+  const destination = args[0] ?? '';
+  const keys = args.slice(1);
+
+  // Read all source sets first (destination may be one of them)
+  const { sets, error } = collectSets(db, keys);
+  if (error) return error;
+
+  const result = new Set<string>();
+  for (const s of sets) {
+    if (s) {
+      for (const member of s) {
+        result.add(member);
+      }
+    }
+  }
+
+  return storeSetResult(db, destination, result);
+}
+
+// --- SINTERSTORE ---
+
+export function sinterstore(db: Database, args: string[]): Reply {
+  const destination = args[0] ?? '';
+  const keys = args.slice(1);
+
+  const { sets, error } = collectSets(db, keys);
+  if (error) return error;
+
+  const result = computeIntersection(sets) ?? new Set<string>();
+  return storeSetResult(db, destination, result);
+}
+
+// --- SDIFFSTORE ---
+
+export function sdiffstore(db: Database, args: string[]): Reply {
+  const destination = args[0] ?? '';
+  const keys = args.slice(1);
+
+  const { sets, error } = collectSets(db, keys);
+  if (error) return error;
+
+  const result = computeDifference(sets);
+  return storeSetResult(db, destination, result);
+}
+
+// --- SINTERCARD ---
+
+export function sintercard(db: Database, args: string[]): Reply {
+  // SINTERCARD numkeys key [key ...] [LIMIT limit]
+  const numkeysStr = args[0] ?? '';
+  const numkeysParsed = parseInteger(numkeysStr);
+  if (numkeysParsed === null) return NOT_INTEGER_ERR;
+  const numkeys = Number(numkeysParsed);
+
+  if (numkeys <= 0) {
+    return errorReply('ERR', "numkeys can't be non-positive value");
+  }
+
+  // Parse keys and optional LIMIT
+  let limit = 0;
+  const keys: string[] = [];
+
+  let i = 1;
+  while (i < args.length && keys.length < numkeys) {
+    keys.push(args[i] ?? '');
+    i++;
+  }
+
+  // Parse optional LIMIT
+  if (i < args.length) {
+    const flag = (args[i] ?? '').toUpperCase();
+    if (flag !== 'LIMIT') {
+      return SYNTAX_ERR;
+    }
+    i++;
+    if (i >= args.length) return SYNTAX_ERR;
+    const limitParsed = parseInteger(args[i] ?? '');
+    if (limitParsed === null) return NOT_INTEGER_ERR;
+    limit = Number(limitParsed);
+    if (limit < 0) {
+      return errorReply('ERR', "LIMIT can't be negative");
+    }
+    i++;
+  }
+
+  // Check we got the right number of keys
+  if (keys.length !== numkeys) {
+    return SYNTAX_ERR;
+  }
+
+  // Extra trailing args
+  if (i < args.length) {
+    return SYNTAX_ERR;
+  }
+
+  const { sets, error } = collectSets(db, keys);
+  if (error) return error;
+
+  // If any key doesn't exist, intersection is empty
+  for (const s of sets) {
+    if (!s) return ZERO;
+  }
+
+  const nonNull = sets as Set<string>[];
+  const smallest = findSmallest(nonNull);
+
+  let count = 0;
+  for (const member of smallest) {
+    let inAll = true;
+    for (const s of nonNull) {
+      if (s !== smallest && !s.has(member)) {
+        inAll = false;
+        break;
+      }
+    }
+    if (inAll) {
+      count++;
+      if (limit > 0 && count >= limit) break;
+    }
+  }
+
+  return integerReply(count);
+}
+
 export const specs: CommandSpec[] = [
   {
     name: 'sadd',
@@ -567,6 +838,76 @@ export const specs: CommandSpec[] = [
     flags: ['readonly'],
     firstKey: 1,
     lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@set'],
+  },
+  {
+    name: 'sunion',
+    handler: (ctx, args) => sunion(ctx.db, args),
+    arity: -2,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: -1,
+    keyStep: 1,
+    categories: ['@read', '@set'],
+  },
+  {
+    name: 'sinter',
+    handler: (ctx, args) => sinter(ctx.db, args),
+    arity: -2,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: -1,
+    keyStep: 1,
+    categories: ['@read', '@set'],
+  },
+  {
+    name: 'sdiff',
+    handler: (ctx, args) => sdiff(ctx.db, args),
+    arity: -2,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: -1,
+    keyStep: 1,
+    categories: ['@read', '@set'],
+  },
+  {
+    name: 'sunionstore',
+    handler: (ctx, args) => sunionstore(ctx.db, args),
+    arity: -3,
+    flags: ['write', 'denyoom'],
+    firstKey: 1,
+    lastKey: -1,
+    keyStep: 1,
+    categories: ['@write', '@set'],
+  },
+  {
+    name: 'sinterstore',
+    handler: (ctx, args) => sinterstore(ctx.db, args),
+    arity: -3,
+    flags: ['write', 'denyoom'],
+    firstKey: 1,
+    lastKey: -1,
+    keyStep: 1,
+    categories: ['@write', '@set'],
+  },
+  {
+    name: 'sdiffstore',
+    handler: (ctx, args) => sdiffstore(ctx.db, args),
+    arity: -3,
+    flags: ['write', 'denyoom'],
+    firstKey: 1,
+    lastKey: -1,
+    keyStep: 1,
+    categories: ['@write', '@set'],
+  },
+  {
+    name: 'sintercard',
+    handler: (ctx, args) => sintercard(ctx.db, args),
+    arity: -3,
+    flags: ['readonly'],
+    firstKey: 2,
+    lastKey: 0,
     keyStep: 1,
     categories: ['@read', '@set'],
   },
