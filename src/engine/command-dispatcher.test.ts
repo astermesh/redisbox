@@ -398,14 +398,14 @@ describe('CommandDispatcher', () => {
 
     it('allows PSUBSCRIBE in subscribe mode', () => {
       const result = dispatcher.dispatch(state, ctx, ['PSUBSCRIBE', 'p*']);
-      const err = result as { kind: 'error'; message: string };
-      expect(err.message).not.toContain("Can't execute");
+      // Should not be blocked — returns a multi reply, not subscribe mode error
+      expect(result.kind).not.toBe('error');
     });
 
     it('allows PUNSUBSCRIBE in subscribe mode', () => {
       const result = dispatcher.dispatch(state, ctx, ['PUNSUBSCRIBE', 'p*']);
-      const err = result as { kind: 'error'; message: string };
-      expect(err.message).not.toContain("Can't execute");
+      // Should not be blocked — returns a multi reply, not subscribe mode error
+      expect(result.kind).not.toBe('error');
     });
 
     it('allows PING in subscribe mode', () => {
