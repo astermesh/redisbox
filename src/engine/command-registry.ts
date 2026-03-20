@@ -24,6 +24,7 @@ import * as pubsub from './commands/pubsub.ts';
 import * as sortedSet from './commands/sorted-set.ts';
 import * as streamCmd from './commands/stream.ts';
 import * as mem from './commands/memory.ts';
+import * as infoCmd from './commands/info.ts';
 import type { CommandContext } from './types.ts';
 
 function getTable(ctx: CommandContext): CommandTable {
@@ -1649,6 +1650,18 @@ const commandSpecs: CommandSpec[] = [
     lastKey: 0,
     keyStep: 0,
     categories: ['@pubsub', '@fast'],
+  },
+
+  // --- Server info ---
+  {
+    name: 'info',
+    handler: (ctx, args) => infoCmd.info(ctx, args),
+    arity: -1,
+    flags: ['loading', 'stale'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@slow', '@dangerous'],
   },
 
   // --- Command introspection ---
