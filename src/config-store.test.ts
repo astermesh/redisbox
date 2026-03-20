@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { ConfigStore, globMatch } from './config-store.ts';
+import { ConfigStore } from './config-store.ts';
+import { matchGlob } from './engine/glob-pattern.ts';
 
 // ===========================================================================
 // globMatch
@@ -7,75 +8,75 @@ import { ConfigStore, globMatch } from './config-store.ts';
 
 describe('globMatch', () => {
   it('matches exact string', () => {
-    expect(globMatch('hello', 'hello')).toBe(true);
+    expect(matchGlob('hello', 'hello')).toBe(true);
   });
 
   it('rejects different string', () => {
-    expect(globMatch('hello', 'world')).toBe(false);
+    expect(matchGlob('hello', 'world')).toBe(false);
   });
 
   it('matches * wildcard for any substring', () => {
-    expect(globMatch('h*o', 'hello')).toBe(true);
-    expect(globMatch('h*o', 'ho')).toBe(true);
-    expect(globMatch('h*o', 'hxo')).toBe(true);
+    expect(matchGlob('h*o', 'hello')).toBe(true);
+    expect(matchGlob('h*o', 'ho')).toBe(true);
+    expect(matchGlob('h*o', 'hxo')).toBe(true);
   });
 
   it('matches * at beginning', () => {
-    expect(globMatch('*ello', 'hello')).toBe(true);
+    expect(matchGlob('*ello', 'hello')).toBe(true);
   });
 
   it('matches * at end', () => {
-    expect(globMatch('hell*', 'hello')).toBe(true);
+    expect(matchGlob('hell*', 'hello')).toBe(true);
   });
 
   it('matches standalone *', () => {
-    expect(globMatch('*', 'anything')).toBe(true);
-    expect(globMatch('*', '')).toBe(true);
+    expect(matchGlob('*', 'anything')).toBe(true);
+    expect(matchGlob('*', '')).toBe(true);
   });
 
   it('matches ? for single character', () => {
-    expect(globMatch('h?llo', 'hello')).toBe(true);
-    expect(globMatch('h?llo', 'hallo')).toBe(true);
-    expect(globMatch('h?llo', 'hllo')).toBe(false);
+    expect(matchGlob('h?llo', 'hello')).toBe(true);
+    expect(matchGlob('h?llo', 'hallo')).toBe(true);
+    expect(matchGlob('h?llo', 'hllo')).toBe(false);
   });
 
   it('matches character class [abc]', () => {
-    expect(globMatch('h[ae]llo', 'hello')).toBe(true);
-    expect(globMatch('h[ae]llo', 'hallo')).toBe(true);
-    expect(globMatch('h[ae]llo', 'hillo')).toBe(false);
+    expect(matchGlob('h[ae]llo', 'hello')).toBe(true);
+    expect(matchGlob('h[ae]llo', 'hallo')).toBe(true);
+    expect(matchGlob('h[ae]llo', 'hillo')).toBe(false);
   });
 
   it('matches negated character class [^abc]', () => {
-    expect(globMatch('h[^ae]llo', 'hillo')).toBe(true);
-    expect(globMatch('h[^ae]llo', 'hello')).toBe(false);
+    expect(matchGlob('h[^ae]llo', 'hillo')).toBe(true);
+    expect(matchGlob('h[^ae]llo', 'hello')).toBe(false);
   });
 
   it('matches character range [a-z]', () => {
-    expect(globMatch('[a-z]ello', 'hello')).toBe(true);
-    expect(globMatch('[a-z]ello', 'Hello')).toBe(false);
+    expect(matchGlob('[a-z]ello', 'hello')).toBe(true);
+    expect(matchGlob('[a-z]ello', 'Hello')).toBe(false);
   });
 
   it('handles escaped characters', () => {
-    expect(globMatch('h\\*llo', 'h*llo')).toBe(true);
-    expect(globMatch('h\\*llo', 'hello')).toBe(false);
+    expect(matchGlob('h\\*llo', 'h*llo')).toBe(true);
+    expect(matchGlob('h\\*llo', 'hello')).toBe(false);
   });
 
   it('handles multiple wildcards', () => {
-    expect(globMatch('*max*entries*', 'hash-max-listpack-entries')).toBe(true);
-    expect(globMatch('*max*entries*', 'zset-max-ziplist-entries')).toBe(true);
-    expect(globMatch('*max*entries*', 'maxmemory')).toBe(false);
+    expect(matchGlob('*max*entries*', 'hash-max-listpack-entries')).toBe(true);
+    expect(matchGlob('*max*entries*', 'zset-max-ziplist-entries')).toBe(true);
+    expect(matchGlob('*max*entries*', 'maxmemory')).toBe(false);
   });
 
   it('handles empty pattern and string', () => {
-    expect(globMatch('', '')).toBe(true);
-    expect(globMatch('', 'a')).toBe(false);
+    expect(matchGlob('', '')).toBe(true);
+    expect(matchGlob('', 'a')).toBe(false);
   });
 
   it('matches Redis-style config patterns', () => {
-    expect(globMatch('maxmemory*', 'maxmemory')).toBe(true);
-    expect(globMatch('maxmemory*', 'maxmemory-policy')).toBe(true);
-    expect(globMatch('maxmemory*', 'maxmemory-samples')).toBe(true);
-    expect(globMatch('maxmemory*', 'maxclients')).toBe(false);
+    expect(matchGlob('maxmemory*', 'maxmemory')).toBe(true);
+    expect(matchGlob('maxmemory*', 'maxmemory-policy')).toBe(true);
+    expect(matchGlob('maxmemory*', 'maxmemory-samples')).toBe(true);
+    expect(matchGlob('maxmemory*', 'maxclients')).toBe(false);
   });
 });
 

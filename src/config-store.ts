@@ -5,129 +5,7 @@
  * supports glob-pattern lookup and validated set.
  */
 
-// ---------------------------------------------------------------------------
-// Glob pattern matching (Redis-compatible: *, ?, [abc], [^a], \x escaping)
-// ---------------------------------------------------------------------------
-
-export function globMatch(pattern: string, str: string): boolean {
-  let pi = 0;
-  let si = 0;
-  let starPi = -1;
-  let starSi = -1;
-
-  while (si < str.length) {
-    if (pi < pattern.length && pattern[pi] === '\\') {
-      // escaped char — match literally
-      pi++;
-      if (pi < pattern.length && pattern[pi] === str[si]) {
-        pi++;
-        si++;
-        continue;
-      }
-      // mismatch
-      if (starPi >= 0) {
-        pi = starPi + 1;
-        starSi++;
-        si = starSi;
-        continue;
-      }
-      return false;
-    }
-
-    if (pi < pattern.length && pattern[pi] === '*') {
-      starPi = pi;
-      starSi = si;
-      pi++;
-      continue;
-    }
-
-    if (pi < pattern.length && pattern[pi] === '?') {
-      pi++;
-      si++;
-      continue;
-    }
-
-    if (pi < pattern.length && pattern[pi] === '[') {
-      const ch = str[si] ?? '';
-      const result = matchCharClass(pattern, pi, ch);
-      if (result >= 0) {
-        pi = result;
-        si++;
-        continue;
-      }
-      // no match in char class
-      if (starPi >= 0) {
-        pi = starPi + 1;
-        starSi++;
-        si = starSi;
-        continue;
-      }
-      return false;
-    }
-
-    if (pi < pattern.length && pattern[pi] === str[si]) {
-      pi++;
-      si++;
-      continue;
-    }
-
-    if (starPi >= 0) {
-      pi = starPi + 1;
-      starSi++;
-      si = starSi;
-      continue;
-    }
-
-    return false;
-  }
-
-  while (pi < pattern.length && pattern[pi] === '*') {
-    pi++;
-  }
-
-  return pi === pattern.length;
-}
-
-/**
- * Try to match a character class [abc] or [^abc] at position pi in pattern.
- * Returns the index past the closing ']' on match, or -1 on mismatch.
- */
-function matchCharClass(pattern: string, pi: number, ch: string): number {
-  let i = pi + 1; // skip '['
-  let negate = false;
-
-  if (i < pattern.length && (pattern[i] === '^' || pattern[i] === '!')) {
-    negate = true;
-    i++;
-  }
-
-  let matched = false;
-  const start = i;
-
-  while (i < pattern.length && (pattern[i] !== ']' || i === start)) {
-    // range: a-z
-    if (
-      i + 2 < pattern.length &&
-      pattern[i + 1] === '-' &&
-      pattern[i + 2] !== ']'
-    ) {
-      const lo = pattern[i] ?? '';
-      const hi = pattern[i + 2] ?? '';
-      if (ch >= lo && ch <= hi) matched = true;
-      i += 3;
-    } else {
-      if (pattern[i] === ch) matched = true;
-      i++;
-    }
-  }
-
-  if (i >= pattern.length) return -1; // unclosed bracket
-
-  i++; // skip ']'
-
-  if (negate) matched = !matched;
-  return matched ? i : -1;
-}
+import { matchGlob } from './engine/glob-pattern.ts';
 
 // ---------------------------------------------------------------------------
 // Config parameter definitions
@@ -401,7 +279,7 @@ export class ConfigStore {
     const result: string[] = [];
 
     for (const [key, value] of this.values) {
-      if (globMatch(lowerPattern, key)) {
+      if (matchGlob(lowerPattern, key)) {
         result.push(key, value);
       }
     }
@@ -420,7 +298,7 @@ export class ConfigStore {
     for (const pattern of patterns) {
       const lowerPattern = pattern.toLowerCase();
       for (const [key, value] of this.values) {
-        if (!seen.has(key) && globMatch(lowerPattern, key)) {
+        if (!seen.has(key) && matchGlob(lowerPattern, key)) {
           seen.add(key);
           result.push(key, value);
         }
