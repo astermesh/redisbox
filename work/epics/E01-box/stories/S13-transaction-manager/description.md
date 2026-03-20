@@ -1,5 +1,7 @@
 # S13: Transaction Manager
 
+**Status:** done
+
 Implement MULTI/EXEC/DISCARD/WATCH transactions with optimistic locking. Commands between MULTI and EXEC are queued and executed atomically.
 
 ## Tasks

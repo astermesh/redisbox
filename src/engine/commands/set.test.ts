@@ -750,3 +750,435 @@ describe('SSCAN', () => {
     expect(members.length).toBe(0);
   });
 });
+
+// Helper: extract string members from array reply
+function extractMembers(reply: Reply): string[] {
+  if (reply.kind !== 'array') return [];
+  return (reply as { kind: 'array'; value: Reply[] }).value.map(
+    (r) => (r as { kind: 'bulk'; value: string }).value
+  );
+}
+
+// --- SUNION ---
+
+describe('SUNION', () => {
+  it('returns union of two sets', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a', 'b', 'c']);
+    set.sadd(db, ['s2', 'b', 'c', 'd']);
+    const result = set.sunion(db, ['s1', 's2']);
+    expect(extractMembers(result).sort()).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('returns union of three sets', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a']);
+    set.sadd(db, ['s2', 'b']);
+    set.sadd(db, ['s3', 'c']);
+    const result = set.sunion(db, ['s1', 's2', 's3']);
+    expect(extractMembers(result).sort()).toEqual(['a', 'b', 'c']);
+  });
+
+  it('treats non-existing key as empty set', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a', 'b']);
+    const result = set.sunion(db, ['s1', 'nokey']);
+    expect(extractMembers(result).sort()).toEqual(['a', 'b']);
+  });
+
+  it('returns empty array when all keys missing', () => {
+    const { db } = createDb();
+    expect(set.sunion(db, ['nokey1', 'nokey2'])).toEqual(EMPTY_ARRAY);
+  });
+
+  it('returns single set members for single key', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a', 'b']);
+    const result = set.sunion(db, ['s1']);
+    expect(extractMembers(result).sort()).toEqual(['a', 'b']);
+  });
+
+  it('returns WRONGTYPE for non-set key', () => {
+    const { db } = createDb();
+    db.set('k', 'string', 'raw', 'val');
+    set.sadd(db, ['s1', 'a']);
+    expect(set.sunion(db, ['s1', 'k'])).toEqual(WRONGTYPE);
+  });
+});
+
+// --- SINTER ---
+
+describe('SINTER', () => {
+  it('returns intersection of two sets', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a', 'b', 'c']);
+    set.sadd(db, ['s2', 'b', 'c', 'd']);
+    const result = set.sinter(db, ['s1', 's2']);
+    expect(extractMembers(result).sort()).toEqual(['b', 'c']);
+  });
+
+  it('returns intersection of three sets', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a', 'b', 'c']);
+    set.sadd(db, ['s2', 'b', 'c', 'd']);
+    set.sadd(db, ['s3', 'c', 'd', 'e']);
+    const result = set.sinter(db, ['s1', 's2', 's3']);
+    expect(extractMembers(result).sort()).toEqual(['c']);
+  });
+
+  it('returns empty array when non-existing key in intersection', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a', 'b']);
+    const result = set.sinter(db, ['s1', 'nokey']);
+    expect(result).toEqual(EMPTY_ARRAY);
+  });
+
+  it('returns empty array when no common members', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a']);
+    set.sadd(db, ['s2', 'b']);
+    const result = set.sinter(db, ['s1', 's2']);
+    expect(result).toEqual(EMPTY_ARRAY);
+  });
+
+  it('returns single set members for single key', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a', 'b']);
+    const result = set.sinter(db, ['s1']);
+    expect(extractMembers(result).sort()).toEqual(['a', 'b']);
+  });
+
+  it('returns WRONGTYPE for non-set key', () => {
+    const { db } = createDb();
+    db.set('k', 'string', 'raw', 'val');
+    set.sadd(db, ['s1', 'a']);
+    expect(set.sinter(db, ['k', 's1'])).toEqual(WRONGTYPE);
+  });
+});
+
+// --- SDIFF ---
+
+describe('SDIFF', () => {
+  it('returns difference of two sets', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a', 'b', 'c']);
+    set.sadd(db, ['s2', 'b', 'c', 'd']);
+    const result = set.sdiff(db, ['s1', 's2']);
+    expect(extractMembers(result).sort()).toEqual(['a']);
+  });
+
+  it('returns difference with multiple sets', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a', 'b', 'c', 'd']);
+    set.sadd(db, ['s2', 'b']);
+    set.sadd(db, ['s3', 'c']);
+    const result = set.sdiff(db, ['s1', 's2', 's3']);
+    expect(extractMembers(result).sort()).toEqual(['a', 'd']);
+  });
+
+  it('treats non-existing key as empty set', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a', 'b']);
+    const result = set.sdiff(db, ['s1', 'nokey']);
+    expect(extractMembers(result).sort()).toEqual(['a', 'b']);
+  });
+
+  it('returns empty when first key does not exist', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s2', 'a']);
+    const result = set.sdiff(db, ['nokey', 's2']);
+    expect(result).toEqual(EMPTY_ARRAY);
+  });
+
+  it('returns all members when diffed with empty', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a', 'b']);
+    const result = set.sdiff(db, ['s1']);
+    expect(extractMembers(result).sort()).toEqual(['a', 'b']);
+  });
+
+  it('returns WRONGTYPE for non-set key', () => {
+    const { db } = createDb();
+    db.set('k', 'string', 'raw', 'val');
+    set.sadd(db, ['s1', 'a']);
+    expect(set.sdiff(db, ['s1', 'k'])).toEqual(WRONGTYPE);
+  });
+
+  it('returns WRONGTYPE when first key is wrong type', () => {
+    const { db } = createDb();
+    db.set('k', 'string', 'raw', 'val');
+    set.sadd(db, ['s1', 'a']);
+    expect(set.sdiff(db, ['k', 's1'])).toEqual(WRONGTYPE);
+  });
+});
+
+// --- SUNIONSTORE ---
+
+describe('SUNIONSTORE', () => {
+  it('stores union and returns cardinality', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a', 'b']);
+    set.sadd(db, ['s2', 'b', 'c']);
+    expect(set.sunionstore(db, ['dst', 's1', 's2'])).toEqual(integer(3));
+    expect(extractMembers(set.smembers(db, ['dst'])).sort()).toEqual([
+      'a',
+      'b',
+      'c',
+    ]);
+  });
+
+  it('overwrites existing destination key', () => {
+    const { db } = createDb();
+    set.sadd(db, ['dst', 'x', 'y', 'z']);
+    set.sadd(db, ['s1', 'a']);
+    expect(set.sunionstore(db, ['dst', 's1'])).toEqual(ONE);
+    expect(extractMembers(set.smembers(db, ['dst']))).toEqual(['a']);
+  });
+
+  it('deletes destination when result is empty', () => {
+    const { db } = createDb();
+    set.sadd(db, ['dst', 'x']);
+    expect(set.sunionstore(db, ['dst', 'nokey'])).toEqual(ZERO);
+    expect(db.has('dst')).toBe(false);
+  });
+
+  it('returns WRONGTYPE for non-set source', () => {
+    const { db } = createDb();
+    db.set('k', 'string', 'raw', 'val');
+    expect(set.sunionstore(db, ['dst', 'k'])).toEqual(WRONGTYPE);
+  });
+
+  it('destination can be same as source', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a', 'b']);
+    set.sadd(db, ['s2', 'c']);
+    expect(set.sunionstore(db, ['s1', 's1', 's2'])).toEqual(integer(3));
+    expect(extractMembers(set.smembers(db, ['s1'])).sort()).toEqual([
+      'a',
+      'b',
+      'c',
+    ]);
+  });
+
+  it('removes expiry on destination', () => {
+    const { db } = createDb();
+    set.sadd(db, ['dst', 'old']);
+    db.setExpiry('dst', 9999);
+    set.sadd(db, ['s1', 'a']);
+    set.sunionstore(db, ['dst', 's1']);
+    expect(db.getExpiry('dst')).toBeUndefined();
+  });
+});
+
+// --- SINTERSTORE ---
+
+describe('SINTERSTORE', () => {
+  it('stores intersection and returns cardinality', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a', 'b', 'c']);
+    set.sadd(db, ['s2', 'b', 'c', 'd']);
+    expect(set.sinterstore(db, ['dst', 's1', 's2'])).toEqual(integer(2));
+    expect(extractMembers(set.smembers(db, ['dst'])).sort()).toEqual([
+      'b',
+      'c',
+    ]);
+  });
+
+  it('deletes destination when result is empty', () => {
+    const { db } = createDb();
+    set.sadd(db, ['dst', 'x']);
+    set.sadd(db, ['s1', 'a']);
+    expect(set.sinterstore(db, ['dst', 's1', 'nokey'])).toEqual(ZERO);
+    expect(db.has('dst')).toBe(false);
+  });
+
+  it('overwrites existing destination', () => {
+    const { db } = createDb();
+    set.sadd(db, ['dst', 'x', 'y']);
+    set.sadd(db, ['s1', 'a', 'b']);
+    expect(set.sinterstore(db, ['dst', 's1'])).toEqual(integer(2));
+    expect(extractMembers(set.smembers(db, ['dst'])).sort()).toEqual([
+      'a',
+      'b',
+    ]);
+  });
+
+  it('returns WRONGTYPE for non-set source', () => {
+    const { db } = createDb();
+    db.set('k', 'string', 'raw', 'val');
+    expect(set.sinterstore(db, ['dst', 'k'])).toEqual(WRONGTYPE);
+  });
+});
+
+// --- SDIFFSTORE ---
+
+describe('SDIFFSTORE', () => {
+  it('stores difference and returns cardinality', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a', 'b', 'c']);
+    set.sadd(db, ['s2', 'b', 'c', 'd']);
+    expect(set.sdiffstore(db, ['dst', 's1', 's2'])).toEqual(ONE);
+    expect(extractMembers(set.smembers(db, ['dst']))).toEqual(['a']);
+  });
+
+  it('deletes destination when result is empty', () => {
+    const { db } = createDb();
+    set.sadd(db, ['dst', 'x']);
+    set.sadd(db, ['s1', 'a']);
+    set.sadd(db, ['s2', 'a']);
+    expect(set.sdiffstore(db, ['dst', 's1', 's2'])).toEqual(ZERO);
+    expect(db.has('dst')).toBe(false);
+  });
+
+  it('overwrites existing destination', () => {
+    const { db } = createDb();
+    set.sadd(db, ['dst', 'x', 'y']);
+    set.sadd(db, ['s1', 'a', 'b', 'c']);
+    set.sadd(db, ['s2', 'b']);
+    expect(set.sdiffstore(db, ['dst', 's1', 's2'])).toEqual(integer(2));
+    expect(extractMembers(set.smembers(db, ['dst'])).sort()).toEqual([
+      'a',
+      'c',
+    ]);
+  });
+
+  it('returns WRONGTYPE for non-set source', () => {
+    const { db } = createDb();
+    db.set('k', 'string', 'raw', 'val');
+    expect(set.sdiffstore(db, ['dst', 'k'])).toEqual(WRONGTYPE);
+  });
+
+  it('destination can be same as source', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a', 'b', 'c']);
+    set.sadd(db, ['s2', 'b']);
+    expect(set.sdiffstore(db, ['s1', 's1', 's2'])).toEqual(integer(2));
+    expect(extractMembers(set.smembers(db, ['s1'])).sort()).toEqual(['a', 'c']);
+  });
+});
+
+// --- SINTERCARD ---
+
+describe('SINTERCARD', () => {
+  it('returns cardinality of intersection', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a', 'b', 'c']);
+    set.sadd(db, ['s2', 'b', 'c', 'd']);
+    expect(set.sintercard(db, ['2', 's1', 's2'])).toEqual(integer(2));
+  });
+
+  it('returns 0 when no common members', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a']);
+    set.sadd(db, ['s2', 'b']);
+    expect(set.sintercard(db, ['2', 's1', 's2'])).toEqual(ZERO);
+  });
+
+  it('returns 0 when key does not exist', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a']);
+    expect(set.sintercard(db, ['2', 's1', 'nokey'])).toEqual(ZERO);
+  });
+
+  it('respects LIMIT option', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a', 'b', 'c', 'd']);
+    set.sadd(db, ['s2', 'a', 'b', 'c', 'd']);
+    expect(set.sintercard(db, ['2', 's1', 's2', 'LIMIT', '2'])).toEqual(
+      integer(2)
+    );
+  });
+
+  it('LIMIT 0 means no limit', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a', 'b', 'c']);
+    set.sadd(db, ['s2', 'a', 'b', 'c']);
+    expect(set.sintercard(db, ['2', 's1', 's2', 'LIMIT', '0'])).toEqual(
+      integer(3)
+    );
+  });
+
+  it('LIMIT larger than intersection returns full count', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a', 'b']);
+    set.sadd(db, ['s2', 'a', 'b']);
+    expect(set.sintercard(db, ['2', 's1', 's2', 'LIMIT', '100'])).toEqual(
+      integer(2)
+    );
+  });
+
+  it('returns error for negative LIMIT', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a']);
+    set.sadd(db, ['s2', 'a']);
+    const result = set.sintercard(db, ['2', 's1', 's2', 'LIMIT', '-1']);
+    expect(result).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: "LIMIT can't be negative",
+    });
+  });
+
+  it('returns error for non-integer numkeys', () => {
+    const { db } = createDb();
+    const result = set.sintercard(db, ['abc', 's1']);
+    expect(result).toEqual(NOT_INTEGER_ERR);
+  });
+
+  it('returns error for numkeys 0', () => {
+    const { db } = createDb();
+    const result = set.sintercard(db, ['0']);
+    expect(result).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'numkeys should be greater than 0',
+    });
+  });
+
+  it('returns error for negative numkeys', () => {
+    const { db } = createDb();
+    const result = set.sintercard(db, ['-1', 's1']);
+    expect(result).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'numkeys should be greater than 0',
+    });
+  });
+
+  it('returns error for wrong number of keys', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a']);
+    // numkeys=2 but only 1 key provided, with no LIMIT
+    const result = set.sintercard(db, ['2', 's1']);
+    expect(result).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: "Number of keys can't be greater than number of args",
+    });
+  });
+
+  it('returns WRONGTYPE for non-set key', () => {
+    const { db } = createDb();
+    db.set('k', 'string', 'raw', 'val');
+    expect(set.sintercard(db, ['1', 'k'])).toEqual(WRONGTYPE);
+  });
+
+  it('works with three sets', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a', 'b', 'c']);
+    set.sadd(db, ['s2', 'b', 'c', 'd']);
+    set.sadd(db, ['s3', 'c', 'd', 'e']);
+    expect(set.sintercard(db, ['3', 's1', 's2', 's3'])).toEqual(ONE);
+  });
+
+  it('returns syntax error for unknown option after keys', () => {
+    const { db } = createDb();
+    set.sadd(db, ['s1', 'a']);
+    const result = set.sintercard(db, ['1', 's1', 'BADOPT', '5']);
+    expect(result).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
+  });
+});
