@@ -525,6 +525,137 @@ export function lpos(db: Database, args: string[]): Reply {
   return results.length > 0 ? integerReply(results[0] ?? 0) : NIL;
 }
 
+// --- LMOVE ---
+
+export function lmove(db: Database, args: string[]): Reply {
+  const source = args[0] ?? '';
+  const destination = args[1] ?? '';
+  const wherefrom = (args[2] ?? '').toUpperCase();
+  const whereto = (args[3] ?? '').toUpperCase();
+
+  if (
+    (wherefrom !== 'LEFT' && wherefrom !== 'RIGHT') ||
+    (whereto !== 'LEFT' && whereto !== 'RIGHT')
+  ) {
+    return SYNTAX_ERR;
+  }
+
+  // Check source exists and is a list
+  const srcResult = getExistingList(db, source);
+  if (srcResult.error) return srcResult.error;
+  if (!srcResult.list) return NIL;
+
+  // Check destination type before modifying anything (even if same key)
+  if (source !== destination) {
+    const dstEntry = db.get(destination);
+    if (dstEntry && dstEntry.type !== 'list') return WRONGTYPE_ERR;
+  }
+
+  const srcList = srcResult.list;
+
+  // Pop from source
+  const element =
+    wherefrom === 'LEFT' ? (srcList.shift() ?? '') : (srcList.pop() ?? '');
+
+  // Clean up source if empty
+  deleteIfEmpty(db, source, srcList);
+
+  // Push to destination
+  const pushTo = (targetList: string[]): void => {
+    if (whereto === 'LEFT') {
+      targetList.unshift(element);
+    } else {
+      targetList.push(element);
+    }
+  };
+
+  if (source === destination && srcList.length > 0) {
+    // Same key, list still exists — push directly
+    pushTo(srcList);
+    updateEncoding(db, source);
+  } else if (source === destination && srcList.length === 0) {
+    // Same key, was deleted — recreate
+    const { list: newList } = getOrCreateList(db, destination);
+    if (newList) pushTo(newList);
+    updateEncoding(db, destination);
+  } else {
+    // Different keys
+    const dstResult = getOrCreateList(db, destination);
+    if (dstResult.error) return dstResult.error;
+    if (dstResult.list) pushTo(dstResult.list);
+    updateEncoding(db, destination);
+  }
+
+  return bulkReply(element);
+}
+
+// --- LMPOP ---
+
+export function lmpop(db: Database, args: string[]): Reply {
+  // Parse numkeys
+  const numkeysParsed = parseInteger(args[0] ?? '');
+  if (numkeysParsed.error) return numkeysParsed.error;
+  const numkeys = numkeysParsed.value;
+
+  if (numkeys <= 0) {
+    return errorReply('ERR', "numkeys can't be non-positive value");
+  }
+
+  // Parse direction (comes after numkeys keys)
+  const directionIndex = 1 + numkeys;
+  const direction = (args[directionIndex] ?? '').toUpperCase();
+
+  if (direction !== 'LEFT' && direction !== 'RIGHT') {
+    return SYNTAX_ERR;
+  }
+
+  // Parse optional COUNT
+  let count = 1;
+  let i = directionIndex + 1;
+  while (i < args.length) {
+    const option = (args[i] ?? '').toUpperCase();
+    if (option === 'COUNT') {
+      const countStr = args[i + 1];
+      if (countStr === undefined) return SYNTAX_ERR;
+      const countParsed = parseCount(countStr);
+      if (countParsed.error) return countParsed.error;
+      if (countParsed.count === 0) {
+        return errorReply('ERR', 'COUNT value of 0 is not allowed');
+      }
+      count = countParsed.count ?? 1;
+      i += 2;
+    } else {
+      return SYNTAX_ERR;
+    }
+  }
+
+  // Find first non-empty list
+  for (let ki = 0; ki < numkeys; ki++) {
+    const key = args[1 + ki] ?? '';
+    const { list, error } = getExistingList(db, key);
+    if (error) return error;
+    if (!list || list.length === 0) continue;
+
+    // Pop elements
+    const actualCount = Math.min(count, list.length);
+    let popped: string[];
+    if (direction === 'LEFT') {
+      popped = list.splice(0, actualCount);
+    } else {
+      popped = list.splice(list.length - actualCount, actualCount);
+      popped.reverse();
+    }
+
+    deleteIfEmpty(db, key, list);
+    return arrayReply([
+      bulkReply(key),
+      arrayReply(popped.map((v) => bulkReply(v))),
+    ]);
+  }
+
+  return NIL;
+}
+
 export const specs: CommandSpec[] = [
   {
     name: 'lpush',
@@ -665,5 +796,25 @@ export const specs: CommandSpec[] = [
     lastKey: 1,
     keyStep: 1,
     categories: ['@read', '@list', '@slow'],
+  },
+  {
+    name: 'lmove',
+    handler: (ctx, args) => lmove(ctx.db, args),
+    arity: 5,
+    flags: ['write', 'denyoom'],
+    firstKey: 1,
+    lastKey: 2,
+    keyStep: 1,
+    categories: ['@write', '@list', '@slow'],
+  },
+  {
+    name: 'lmpop',
+    handler: (ctx, args) => lmpop(ctx.db, args),
+    arity: -4,
+    flags: ['write', 'fast'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@write', '@list', '@slow'],
   },
 ];

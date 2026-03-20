@@ -332,6 +332,8 @@ describe('createCommandTable (registry)', () => {
       'lrem',
       'ltrim',
       'lpos',
+      'lmove',
+      'lmpop',
       'sadd',
       'srem',
       'sismember',

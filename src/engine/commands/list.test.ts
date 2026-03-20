@@ -1002,3 +1002,340 @@ describe('LPOS', () => {
     expect(list.lpos(db, ['k', 'a', 'RANK', '3'])).toEqual(NIL);
   });
 });
+
+// --- LMOVE ---
+
+describe('LMOVE', () => {
+  it('moves element from left of source to left of destination', () => {
+    const { db } = createDb();
+    list.rpush(db, ['src', 'a', 'b', 'c']);
+    list.rpush(db, ['dst', 'x', 'y']);
+    expect(list.lmove(db, ['src', 'dst', 'LEFT', 'LEFT'])).toEqual(bulk('a'));
+    expect(list.lrange(db, ['src', '0', '-1'])).toEqual(
+      arr(bulk('b'), bulk('c'))
+    );
+    expect(list.lrange(db, ['dst', '0', '-1'])).toEqual(
+      arr(bulk('a'), bulk('x'), bulk('y'))
+    );
+  });
+
+  it('moves element from left of source to right of destination', () => {
+    const { db } = createDb();
+    list.rpush(db, ['src', 'a', 'b', 'c']);
+    list.rpush(db, ['dst', 'x', 'y']);
+    expect(list.lmove(db, ['src', 'dst', 'LEFT', 'RIGHT'])).toEqual(bulk('a'));
+    expect(list.lrange(db, ['src', '0', '-1'])).toEqual(
+      arr(bulk('b'), bulk('c'))
+    );
+    expect(list.lrange(db, ['dst', '0', '-1'])).toEqual(
+      arr(bulk('x'), bulk('y'), bulk('a'))
+    );
+  });
+
+  it('moves element from right of source to left of destination', () => {
+    const { db } = createDb();
+    list.rpush(db, ['src', 'a', 'b', 'c']);
+    list.rpush(db, ['dst', 'x', 'y']);
+    expect(list.lmove(db, ['src', 'dst', 'RIGHT', 'LEFT'])).toEqual(bulk('c'));
+    expect(list.lrange(db, ['src', '0', '-1'])).toEqual(
+      arr(bulk('a'), bulk('b'))
+    );
+    expect(list.lrange(db, ['dst', '0', '-1'])).toEqual(
+      arr(bulk('c'), bulk('x'), bulk('y'))
+    );
+  });
+
+  it('moves element from right of source to right of destination', () => {
+    const { db } = createDb();
+    list.rpush(db, ['src', 'a', 'b', 'c']);
+    list.rpush(db, ['dst', 'x', 'y']);
+    expect(list.lmove(db, ['src', 'dst', 'RIGHT', 'RIGHT'])).toEqual(bulk('c'));
+    expect(list.lrange(db, ['src', '0', '-1'])).toEqual(
+      arr(bulk('a'), bulk('b'))
+    );
+    expect(list.lrange(db, ['dst', '0', '-1'])).toEqual(
+      arr(bulk('x'), bulk('y'), bulk('c'))
+    );
+  });
+
+  it('returns nil when source does not exist', () => {
+    const { db } = createDb();
+    expect(list.lmove(db, ['nosrc', 'dst', 'LEFT', 'RIGHT'])).toEqual(NIL);
+  });
+
+  it('creates destination if it does not exist', () => {
+    const { db } = createDb();
+    list.rpush(db, ['src', 'a', 'b']);
+    expect(list.lmove(db, ['src', 'dst', 'LEFT', 'LEFT'])).toEqual(bulk('a'));
+    expect(list.lrange(db, ['dst', '0', '-1'])).toEqual(arr(bulk('a')));
+  });
+
+  it('deletes source when last element is moved', () => {
+    const { db } = createDb();
+    list.rpush(db, ['src', 'a']);
+    list.lmove(db, ['src', 'dst', 'LEFT', 'LEFT']);
+    expect(db.has('src')).toBe(false);
+  });
+
+  it('handles same key — rotation LEFT LEFT', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k', 'a', 'b', 'c']);
+    // LEFT LEFT: pop head, push to head — no change
+    expect(list.lmove(db, ['k', 'k', 'LEFT', 'LEFT'])).toEqual(bulk('a'));
+    expect(list.lrange(db, ['k', '0', '-1'])).toEqual(
+      arr(bulk('a'), bulk('b'), bulk('c'))
+    );
+  });
+
+  it('handles same key — rotation LEFT RIGHT', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k', 'a', 'b', 'c']);
+    // LEFT RIGHT: pop head, push to tail — rotate left
+    expect(list.lmove(db, ['k', 'k', 'LEFT', 'RIGHT'])).toEqual(bulk('a'));
+    expect(list.lrange(db, ['k', '0', '-1'])).toEqual(
+      arr(bulk('b'), bulk('c'), bulk('a'))
+    );
+  });
+
+  it('handles same key — rotation RIGHT LEFT', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k', 'a', 'b', 'c']);
+    // RIGHT LEFT: pop tail, push to head — rotate right
+    expect(list.lmove(db, ['k', 'k', 'RIGHT', 'LEFT'])).toEqual(bulk('c'));
+    expect(list.lrange(db, ['k', '0', '-1'])).toEqual(
+      arr(bulk('c'), bulk('a'), bulk('b'))
+    );
+  });
+
+  it('handles same key — rotation RIGHT RIGHT', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k', 'a', 'b', 'c']);
+    // RIGHT RIGHT: pop tail, push to tail — no change
+    expect(list.lmove(db, ['k', 'k', 'RIGHT', 'RIGHT'])).toEqual(bulk('c'));
+    expect(list.lrange(db, ['k', '0', '-1'])).toEqual(
+      arr(bulk('a'), bulk('b'), bulk('c'))
+    );
+  });
+
+  it('handles same key with single element', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k', 'a']);
+    expect(list.lmove(db, ['k', 'k', 'LEFT', 'RIGHT'])).toEqual(bulk('a'));
+    expect(list.lrange(db, ['k', '0', '-1'])).toEqual(arr(bulk('a')));
+  });
+
+  it('returns WRONGTYPE when source is not a list', () => {
+    const { db } = createDb();
+    db.set('src', 'string', 'raw', 'val');
+    list.rpush(db, ['dst', 'x']);
+    expect(list.lmove(db, ['src', 'dst', 'LEFT', 'LEFT'])).toEqual(WRONGTYPE);
+  });
+
+  it('returns WRONGTYPE when destination is not a list', () => {
+    const { db } = createDb();
+    list.rpush(db, ['src', 'a']);
+    db.set('dst', 'string', 'raw', 'val');
+    expect(list.lmove(db, ['src', 'dst', 'LEFT', 'LEFT'])).toEqual(WRONGTYPE);
+  });
+
+  it('is case-insensitive for direction', () => {
+    const { db } = createDb();
+    list.rpush(db, ['src', 'a', 'b']);
+    expect(list.lmove(db, ['src', 'dst', 'left', 'right'])).toEqual(bulk('a'));
+  });
+
+  it('returns syntax error for invalid wherefrom', () => {
+    const { db } = createDb();
+    list.rpush(db, ['src', 'a']);
+    expect(list.lmove(db, ['src', 'dst', 'UP', 'LEFT'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
+  });
+
+  it('returns syntax error for invalid whereto', () => {
+    const { db } = createDb();
+    list.rpush(db, ['src', 'a']);
+    expect(list.lmove(db, ['src', 'dst', 'LEFT', 'UP'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
+  });
+});
+
+// --- LMPOP ---
+
+describe('LMPOP', () => {
+  it('pops one element from first non-empty list (LEFT)', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k1', 'a', 'b', 'c']);
+    list.rpush(db, ['k2', 'x', 'y']);
+    expect(list.lmpop(db, ['2', 'k1', 'k2', 'LEFT'])).toEqual(
+      arr(bulk('k1'), arr(bulk('a')))
+    );
+    expect(list.lrange(db, ['k1', '0', '-1'])).toEqual(
+      arr(bulk('b'), bulk('c'))
+    );
+  });
+
+  it('pops one element from first non-empty list (RIGHT)', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k1', 'a', 'b', 'c']);
+    expect(list.lmpop(db, ['1', 'k1', 'RIGHT'])).toEqual(
+      arr(bulk('k1'), arr(bulk('c')))
+    );
+    expect(list.lrange(db, ['k1', '0', '-1'])).toEqual(
+      arr(bulk('a'), bulk('b'))
+    );
+  });
+
+  it('pops with COUNT option', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k1', 'a', 'b', 'c', 'd']);
+    expect(list.lmpop(db, ['1', 'k1', 'LEFT', 'COUNT', '3'])).toEqual(
+      arr(bulk('k1'), arr(bulk('a'), bulk('b'), bulk('c')))
+    );
+    expect(list.lrange(db, ['k1', '0', '-1'])).toEqual(arr(bulk('d')));
+  });
+
+  it('pops with COUNT greater than list length', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k1', 'a', 'b']);
+    expect(list.lmpop(db, ['1', 'k1', 'LEFT', 'COUNT', '10'])).toEqual(
+      arr(bulk('k1'), arr(bulk('a'), bulk('b')))
+    );
+    expect(db.has('k1')).toBe(false);
+  });
+
+  it('skips non-existing keys to find first non-empty', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k2', 'x', 'y']);
+    expect(list.lmpop(db, ['2', 'k1', 'k2', 'LEFT'])).toEqual(
+      arr(bulk('k2'), arr(bulk('x')))
+    );
+  });
+
+  it('returns nil when all keys are empty/non-existing', () => {
+    const { db } = createDb();
+    expect(list.lmpop(db, ['2', 'k1', 'k2', 'LEFT'])).toEqual(NIL);
+  });
+
+  it('deletes key when all elements are popped', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k1', 'a']);
+    list.lmpop(db, ['1', 'k1', 'LEFT']);
+    expect(db.has('k1')).toBe(false);
+  });
+
+  it('pops from right with COUNT', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k1', 'a', 'b', 'c', 'd']);
+    expect(list.lmpop(db, ['1', 'k1', 'RIGHT', 'COUNT', '2'])).toEqual(
+      arr(bulk('k1'), arr(bulk('d'), bulk('c')))
+    );
+    expect(list.lrange(db, ['k1', '0', '-1'])).toEqual(
+      arr(bulk('a'), bulk('b'))
+    );
+  });
+
+  it('returns WRONGTYPE for non-list key', () => {
+    const { db } = createDb();
+    db.set('k1', 'string', 'raw', 'val');
+    expect(list.lmpop(db, ['1', 'k1', 'LEFT'])).toEqual(WRONGTYPE);
+  });
+
+  it('returns error for non-integer numkeys', () => {
+    const { db } = createDb();
+    expect(list.lmpop(db, ['abc', 'k1', 'LEFT'])).toEqual(NOT_INTEGER_ERR);
+  });
+
+  it('returns error for numkeys 0', () => {
+    const { db } = createDb();
+    expect(list.lmpop(db, ['0', 'LEFT'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: "numkeys can't be non-positive value",
+    });
+  });
+
+  it('returns error for negative numkeys', () => {
+    const { db } = createDb();
+    expect(list.lmpop(db, ['-1', 'k1', 'LEFT'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: "numkeys can't be non-positive value",
+    });
+  });
+
+  it('returns syntax error for invalid direction', () => {
+    const { db } = createDb();
+    expect(list.lmpop(db, ['1', 'k1', 'UP'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
+  });
+
+  it('returns syntax error for invalid option after direction', () => {
+    const { db } = createDb();
+    expect(list.lmpop(db, ['1', 'k1', 'LEFT', 'BADOPT', '1'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
+  });
+
+  it('returns error for non-integer COUNT value', () => {
+    const { db } = createDb();
+    expect(list.lmpop(db, ['1', 'k1', 'LEFT', 'COUNT', 'abc'])).toEqual(
+      NOT_INTEGER_ERR
+    );
+  });
+
+  it('returns error for COUNT 0', () => {
+    const { db } = createDb();
+    expect(list.lmpop(db, ['1', 'k1', 'LEFT', 'COUNT', '0'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'COUNT value of 0 is not allowed',
+    });
+  });
+
+  it('returns error for negative COUNT', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k1', 'a']);
+    expect(list.lmpop(db, ['1', 'k1', 'LEFT', 'COUNT', '-1'])).toEqual(
+      NOT_INTEGER_ERR
+    );
+  });
+
+  it('is case-insensitive for direction', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k1', 'a', 'b']);
+    expect(list.lmpop(db, ['1', 'k1', 'left'])).toEqual(
+      arr(bulk('k1'), arr(bulk('a')))
+    );
+  });
+
+  it('is case-insensitive for COUNT keyword', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k1', 'a', 'b']);
+    expect(list.lmpop(db, ['1', 'k1', 'LEFT', 'count', '2'])).toEqual(
+      arr(bulk('k1'), arr(bulk('a'), bulk('b')))
+    );
+  });
+
+  it('returns syntax error when numkeys does not match key count', () => {
+    const { db } = createDb();
+    // numkeys=2 but only direction follows after 1 key — direction is treated as key
+    // so "LEFT" never appears as direction. Actually need to check exact Redis behavior.
+    // With numkeys=2, args after numkeys are: k1, LEFT (treated as 2 keys), then no direction
+    expect(list.lmpop(db, ['2', 'k1', 'LEFT'])).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
+  });
+});
