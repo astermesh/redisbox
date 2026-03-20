@@ -1006,6 +1006,130 @@ export function zrangestore(
   return integerReply(zset.dict.size);
 }
 
+// --- ZSCORE ---
+
+export function zscore(db: Database, args: string[]): Reply {
+  if (args.length !== 2) {
+    return wrongArityError('zscore');
+  }
+
+  const key = args[0] as string;
+  const member = args[1] as string;
+
+  const { zset, error } = getExistingZset(db, key);
+  if (error) return error;
+  if (!zset) return NIL;
+
+  const score = zset.dict.get(member);
+  if (score === undefined) return NIL;
+
+  return bulkReply(formatScore(score));
+}
+
+// --- ZMSCORE ---
+
+export function zmscore(db: Database, args: string[]): Reply {
+  if (args.length < 2) {
+    return wrongArityError('zmscore');
+  }
+
+  const key = args[0] as string;
+
+  const { zset, error } = getExistingZset(db, key);
+  if (error) return error;
+
+  const results: Reply[] = [];
+  for (let i = 1; i < args.length; i++) {
+    const member = args[i] as string;
+    if (!zset) {
+      results.push(NIL);
+      continue;
+    }
+    const score = zset.dict.get(member);
+    results.push(score === undefined ? NIL : bulkReply(formatScore(score)));
+  }
+
+  return arrayReply(results);
+}
+
+// --- ZRANK ---
+
+export function zrank(db: Database, args: string[]): Reply {
+  if (args.length < 2 || args.length > 3) {
+    return wrongArityError('zrank');
+  }
+
+  const key = args[0] as string;
+  const member = args[1] as string;
+  const withScore =
+    args.length === 3 && (args[2] as string).toUpperCase() === 'WITHSCORE';
+
+  const { zset, error } = getExistingZset(db, key);
+  if (error) return error;
+
+  if (!zset) {
+    if (withScore) return arrayReply([NIL, NIL]);
+    return NIL;
+  }
+
+  const score = zset.dict.get(member);
+  if (score === undefined) {
+    if (withScore) return arrayReply([NIL, NIL]);
+    return NIL;
+  }
+
+  const rank = zset.sl.getRank(score, member);
+  if (rank < 0) {
+    if (withScore) return arrayReply([NIL, NIL]);
+    return NIL;
+  }
+
+  if (withScore) {
+    return arrayReply([integerReply(rank), bulkReply(formatScore(score))]);
+  }
+  return integerReply(rank);
+}
+
+// --- ZREVRANK ---
+
+export function zrevrank(db: Database, args: string[]): Reply {
+  if (args.length < 2 || args.length > 3) {
+    return wrongArityError('zrevrank');
+  }
+
+  const key = args[0] as string;
+  const member = args[1] as string;
+  const withScore =
+    args.length === 3 && (args[2] as string).toUpperCase() === 'WITHSCORE';
+
+  const { zset, error } = getExistingZset(db, key);
+  if (error) return error;
+
+  if (!zset) {
+    if (withScore) return arrayReply([NIL, NIL]);
+    return NIL;
+  }
+
+  const score = zset.dict.get(member);
+  if (score === undefined) {
+    if (withScore) return arrayReply([NIL, NIL]);
+    return NIL;
+  }
+
+  const rank = zset.sl.getRank(score, member);
+  if (rank < 0) {
+    if (withScore) return arrayReply([NIL, NIL]);
+    return NIL;
+  }
+
+  const revRank = zset.dict.size - 1 - rank;
+
+  if (withScore) {
+    return arrayReply([integerReply(revRank), bulkReply(formatScore(score))]);
+  }
+  return integerReply(revRank);
+}
+
 export const specs: CommandSpec[] = [
   {
     name: 'zadd',
@@ -1116,6 +1240,46 @@ export const specs: CommandSpec[] = [
     lastKey: 1,
     keyStep: 1,
     categories: ['@read', '@sortedset'],
+  },
+  {
+    name: 'zscore',
+    handler: (ctx, args) => zscore(ctx.db, args),
+    arity: 3,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@sortedset', '@fast'],
+  },
+  {
+    name: 'zmscore',
+    handler: (ctx, args) => zmscore(ctx.db, args),
+    arity: -3,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@sortedset', '@fast'],
+  },
+  {
+    name: 'zrank',
+    handler: (ctx, args) => zrank(ctx.db, args),
+    arity: -3,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@sortedset', '@fast'],
+  },
+  {
+    name: 'zrevrank',
+    handler: (ctx, args) => zrevrank(ctx.db, args),
+    arity: -3,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@sortedset', '@fast'],
   },
   {
     name: 'zrangestore',
