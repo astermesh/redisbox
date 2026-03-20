@@ -22,6 +22,7 @@ import { specs as infoSpecs } from './commands/info.ts';
 import { specs as clusterSpecs } from './commands/cluster.ts';
 import { specs as commandSpecs } from './commands/command.ts';
 import { specs as streamSpecs } from './commands/stream.ts';
+import { specs as aclSpecs } from './commands/acl.ts';
 
 const allSpecs: CommandSpec[] = [
   ...connectionSpecs,
@@ -46,6 +47,7 @@ const allSpecs: CommandSpec[] = [
   ...clusterSpecs,
   ...commandSpecs,
   ...streamSpecs,
+  ...aclSpecs,
 ];
 
 export function createCommandTable(): CommandTable {

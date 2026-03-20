@@ -90,11 +90,32 @@ export class AclUser {
 }
 
 // ---------------------------------------------------------------------------
+// ACL log entry
+// ---------------------------------------------------------------------------
+
+export interface AclLogEntry {
+  count: number;
+  reason: string;
+  context: string;
+  object: string;
+  username: string;
+  ageSeconds: number;
+  clientInfo: string;
+  entryId: number;
+  timestampCreated: number;
+  timestampLastUpdated: number;
+}
+
+// ---------------------------------------------------------------------------
 // AclStore
 // ---------------------------------------------------------------------------
 
+const ACL_LOG_MAX = 128;
+
 export class AclStore {
   private readonly users = new Map<string, AclUser>();
+  private readonly log: AclLogEntry[] = [];
+  private logIdCounter = 0;
 
   constructor() {
     // The default user always exists, starts enabled with nopass + all perms.
@@ -124,6 +145,45 @@ export class AclStore {
   /** Return all usernames in insertion order. */
   usernames(): string[] {
     return [...this.users.keys()];
+  }
+
+  /** Return iterator over all users. */
+  allUsers(): IterableIterator<AclUser> {
+    return this.users.values();
+  }
+
+  // --- user management ------------------------------------------------------
+
+  /**
+   * Get or create a user. Returns the user (existing or newly created).
+   * New users start disabled with no passwords and no permissions.
+   */
+  createOrGetUser(username: string): AclUser {
+    let user = this.users.get(username);
+    if (!user) {
+      user = new AclUser(username);
+      // New users default to: off, no passwords, no commands, no keys, no channels
+      user.enabled = false;
+      user.nopass = false;
+      user.allCommands = false;
+      user.allKeys = false;
+      user.allChannels = false;
+      this.users.set(username, user);
+    }
+    return user;
+  }
+
+  /**
+   * Delete users. Cannot delete the default user.
+   * Returns the number of deleted users.
+   */
+  deleteUsers(usernames: string[]): number {
+    let count = 0;
+    for (const name of usernames) {
+      if (name === 'default') continue;
+      if (this.users.delete(name)) count++;
+    }
+    return count;
   }
 
   // --- requirepass synchronisation ------------------------------------------
@@ -157,5 +217,59 @@ export class AclStore {
     const user = this.users.get(username);
     if (!user || !user.enabled) return false;
     return user.validatePassword(password);
+  }
+
+  // --- ACL log --------------------------------------------------------------
+
+  addLogEntry(
+    reason: string,
+    context: string,
+    object: string,
+    username: string,
+    clientInfo: string,
+    now: number
+  ): void {
+    // Check if we can coalesce with an existing entry
+    for (const entry of this.log) {
+      if (
+        entry.reason === reason &&
+        entry.context === context &&
+        entry.object === object &&
+        entry.username === username
+      ) {
+        entry.count++;
+        entry.timestampLastUpdated = now;
+        return;
+      }
+    }
+
+    const entry: AclLogEntry = {
+      count: 1,
+      reason,
+      context,
+      object,
+      username,
+      ageSeconds: 0,
+      clientInfo,
+      entryId: this.logIdCounter++,
+      timestampCreated: now,
+      timestampLastUpdated: now,
+    };
+
+    this.log.unshift(entry);
+    if (this.log.length > ACL_LOG_MAX) {
+      this.log.pop();
+    }
+  }
+
+  getLog(count?: number): AclLogEntry[] {
+    if (count !== undefined && count >= 0) {
+      return this.log.slice(0, count);
+    }
+    return [...this.log];
+  }
+
+  resetLog(): void {
+    this.log.length = 0;
   }
 }
