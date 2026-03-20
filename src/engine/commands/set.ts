@@ -385,7 +385,11 @@ export function spop(db: Database, args: string[], rng: () => number): Reply {
   const count = Number(countParsed);
 
   if (count < 0) {
-    return { kind: 'error', prefix: 'ERR', message: 'index out of range' };
+    return {
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'value is out of range, must be positive',
+    };
   }
 
   if (!s || s.size === 0) return EMPTY_ARRAY;

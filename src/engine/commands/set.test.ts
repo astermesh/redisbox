@@ -629,7 +629,7 @@ describe('SPOP', () => {
     expect(set.spop(db, ['k', '-1'], engine.rng)).toEqual({
       kind: 'error',
       prefix: 'ERR',
-      message: 'index out of range',
+      message: 'value is out of range, must be positive',
     });
   });
 
