@@ -332,7 +332,7 @@ export const specs: CommandSpec[] = [
     name: 'copy',
     handler: (ctx, args) => copy(ctx.engine, ctx.db, args),
     arity: -3,
-    flags: ['write'],
+    flags: ['write', 'denyoom'],
     firstKey: 1,
     lastKey: 2,
     keyStep: 1,

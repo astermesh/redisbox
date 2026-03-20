@@ -137,19 +137,26 @@ export class EvictionManager {
 
   /**
    * Evict a random key. If volatileOnly, only pick from keys with expiry.
+   * Samples across all databases and picks one randomly, matching Redis behavior
+   * of not biasing toward lower-indexed databases.
    */
   private evictRandom(volatileOnly: boolean): boolean {
+    const candidates: { db: Database; key: string }[] = [];
     for (const db of this.engine.databases) {
       const keys = volatileOnly
         ? db.sampleVolatileKeys(1, this.engine.rng)
         : db.sampleKeys(1, this.engine.rng);
       const key = keys[0];
       if (key !== undefined) {
-        db.delete(key);
-        return true;
+        candidates.push({ db, key });
       }
     }
-    return false;
+    if (candidates.length === 0) return false;
+    const idx = Math.floor(this.engine.rng() * candidates.length);
+    const picked = candidates[idx];
+    if (!picked) return false;
+    picked.db.delete(picked.key);
+    return true;
   }
 
   /**
