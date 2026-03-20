@@ -166,4 +166,5 @@ export interface CommandContext {
   pubsub?: import('./pubsub-manager.ts').PubSubManager;
   blocking?: import('./blocking-manager.ts').BlockingManager;
   acl?: import('./acl-store.ts').AclStore;
+  eviction?: import('./eviction-manager.ts').EvictionManager;
 }
