@@ -9,6 +9,7 @@ import {
   OK,
   EMPTY_ARRAY,
 } from '../types.ts';
+import type { CommandSpec } from '../command-table.ts';
 
 const PONG: Reply = statusReply('PONG');
 const RESET_REPLY: Reply = statusReply('RESET');
@@ -252,3 +253,66 @@ export function auth(ctx: CommandContext, args: string[]): Reply {
   }
   return OK;
 }
+
+export const specs: CommandSpec[] = [
+  {
+    name: 'ping',
+    handler: (_ctx, args) => ping(args),
+    arity: -1,
+    flags: ['fast', 'stale', 'loading'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@fast', '@connection'],
+  },
+  {
+    name: 'echo',
+    handler: (_ctx, args) => echo(args),
+    arity: 2,
+    flags: ['fast', 'stale', 'loading'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@fast', '@connection'],
+  },
+  {
+    name: 'quit',
+    handler: () => quit(),
+    arity: -1,
+    flags: ['fast', 'noscript', 'stale', 'loading', 'noauth'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@fast', '@connection'],
+  },
+  {
+    name: 'reset',
+    handler: () => reset(),
+    arity: 1,
+    flags: ['fast', 'noscript', 'loading', 'stale', 'noauth'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@fast', '@connection'],
+  },
+  {
+    name: 'hello',
+    handler: (ctx, args) => hello(ctx, args),
+    arity: -1,
+    flags: ['fast', 'loading', 'stale', 'noauth'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@fast', '@connection'],
+  },
+  {
+    name: 'auth',
+    handler: (ctx, args) => auth(ctx, args),
+    arity: -2,
+    flags: ['fast', 'loading', 'stale', 'noauth', 'noscript'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@fast', '@connection'],
+  },
+];

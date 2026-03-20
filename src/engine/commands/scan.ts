@@ -9,6 +9,7 @@ import {
   NOT_INTEGER_ERR,
 } from '../types.ts';
 import { matchGlob } from '../glob-pattern.ts';
+import type { CommandSpec } from '../command-table.ts';
 
 export function keys(db: Database, args: string[]): Reply {
   const pattern = args[0] ?? '*';
@@ -91,3 +92,26 @@ export function scan(db: Database, args: string[]): Reply {
 
   return arrayReply([bulkReply(String(nextCursor)), arrayReply(result)]);
 }
+
+export const specs: CommandSpec[] = [
+  {
+    name: 'keys',
+    handler: (ctx, args) => keys(ctx.db, args),
+    arity: 2,
+    flags: ['readonly'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@keyspace', '@read'],
+  },
+  {
+    name: 'scan',
+    handler: (ctx, args) => scan(ctx.db, args),
+    arity: -2,
+    flags: ['readonly'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@keyspace', '@read'],
+  },
+];

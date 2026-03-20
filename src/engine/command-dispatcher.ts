@@ -88,7 +88,10 @@ function requiresAuth(ctx: CommandContext): boolean {
 export class CommandDispatcher {
   constructor(private readonly table: CommandTable) {}
 
-  private clearTransactionState(state: TransactionState, ctx: CommandContext): void {
+  private clearTransactionState(
+    state: TransactionState,
+    ctx: CommandContext
+  ): void {
     state.inMulti = false;
     state.multiDirty = false;
     state.multiQueue = [];
@@ -130,12 +133,19 @@ export class CommandDispatcher {
     return arrayReply(results);
   }
 
-  private discardTransaction(state: TransactionState, ctx: CommandContext): Reply {
+  private discardTransaction(
+    state: TransactionState,
+    ctx: CommandContext
+  ): Reply {
     this.clearTransactionState(state, ctx);
     return statusReply('OK');
   }
 
-  dispatch(state: TransactionState, ctx: CommandContext, rawArgs: string[]): Reply {
+  dispatch(
+    state: TransactionState,
+    ctx: CommandContext,
+    rawArgs: string[]
+  ): Reply {
     ctx.commandTable = this.table;
 
     if (rawArgs.length === 0) {

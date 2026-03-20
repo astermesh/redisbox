@@ -15,7 +15,7 @@ export const INT64_MIN = BigInt('-9223372036854775808');
 export function partialShuffle<T>(
   arr: T[],
   count: number,
-  rng: () => number,
+  rng: () => number
 ): T[] {
   const n = Math.min(count, arr.length);
   for (let i = 0; i < n; i++) {

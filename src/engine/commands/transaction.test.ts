@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { CommandDispatcher, createTransactionState } from '../command-dispatcher.ts';
+import {
+  CommandDispatcher,
+  createTransactionState,
+} from '../command-dispatcher.ts';
 import type { TransactionState } from '../command-dispatcher.ts';
 import { createCommandTable } from '../command-registry.ts';
 import { RedisEngine } from '../engine.ts';

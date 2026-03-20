@@ -18,6 +18,7 @@ import {
   NOT_INTEGER_ERR,
 } from '../types.ts';
 import { estimateKeyMemoryWithSamples } from '../memory.ts';
+import type { CommandSpec } from '../command-table.ts';
 
 const DEFAULT_SAMPLES = 5;
 
@@ -217,3 +218,78 @@ function avgBytesPerKey(engine: RedisEngine, totalUsed: number): number {
   const count = countAllKeys(engine);
   return count === 0 ? 0 : Math.round(totalUsed / count);
 }
+
+export const specs: CommandSpec[] = [
+  {
+    name: 'memory',
+    handler: (ctx, args) => memory(ctx.db, ctx.engine, args),
+    arity: -2,
+    flags: ['readonly'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@slow'],
+    subcommands: [
+      {
+        name: 'usage',
+        handler: (ctx, args) => memoryUsage(ctx.db, args),
+        arity: -3,
+        flags: ['readonly'],
+        firstKey: 2,
+        lastKey: 2,
+        keyStep: 1,
+        categories: ['@slow'],
+      },
+      {
+        name: 'doctor',
+        handler: () => memoryDoctor(),
+        arity: 2,
+        flags: ['readonly'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow'],
+      },
+      {
+        name: 'malloc-stats',
+        handler: () => memoryMallocStats(),
+        arity: 2,
+        flags: ['readonly'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow'],
+      },
+      {
+        name: 'purge',
+        handler: () => memoryPurge(),
+        arity: 2,
+        flags: [],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow'],
+      },
+      {
+        name: 'stats',
+        handler: (ctx) => memoryStats(ctx.engine),
+        arity: 2,
+        flags: ['readonly'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow'],
+      },
+      {
+        name: 'help',
+        handler: () => memoryHelp(),
+        arity: 2,
+        flags: ['readonly'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow'],
+      },
+    ],
+  },
+];

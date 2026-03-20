@@ -12,6 +12,7 @@ import {
   NIL,
   wrongArityError,
 } from '../types.ts';
+import type { CommandSpec } from '../command-table.ts';
 
 interface SortOptions {
   by: string | null;
@@ -278,3 +279,26 @@ function storeResults(db: Database, destKey: string, items: Reply[]): Reply {
   db.removeExpiry(destKey);
   return integerReply(items.length);
 }
+
+export const specs: CommandSpec[] = [
+  {
+    name: 'sort',
+    handler: (ctx, args) => sort(ctx.db, args),
+    arity: -2,
+    flags: ['write', 'denyoom', 'movablekeys'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@set', '@sortedset', '@list'],
+  },
+  {
+    name: 'sort_ro',
+    handler: (ctx, args) => sortRo(ctx.db, args),
+    arity: -2,
+    flags: ['readonly', 'movablekeys'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@set', '@sortedset', '@list'],
+  },
+];

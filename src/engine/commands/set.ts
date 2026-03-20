@@ -16,7 +16,13 @@ import {
 } from '../types.ts';
 import { parseInteger } from './incr.ts';
 import { matchGlob } from '../glob-pattern.ts';
-import { strByteLength, INT64_MIN, INT64_MAX, partialShuffle } from '../utils.ts';
+import {
+  strByteLength,
+  INT64_MIN,
+  INT64_MAX,
+  partialShuffle,
+} from '../utils.ts';
+import type { CommandSpec } from '../command-table.ts';
 
 // Default thresholds — match Redis defaults.
 // TODO: read from ConfigStore when config is wired into CommandContext.
@@ -462,3 +468,106 @@ export function sscan(db: Database, args: string[]): Reply {
 
   return arrayReply([bulkReply(String(nextCursor)), arrayReply(results)]);
 }
+
+export const specs: CommandSpec[] = [
+  {
+    name: 'sadd',
+    handler: (ctx, args) => sadd(ctx.db, args),
+    arity: -3,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@set', '@fast'],
+  },
+  {
+    name: 'srem',
+    handler: (ctx, args) => srem(ctx.db, args),
+    arity: -3,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@set', '@fast'],
+  },
+  {
+    name: 'sismember',
+    handler: (ctx, args) => sismember(ctx.db, args),
+    arity: 3,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@set', '@fast'],
+  },
+  {
+    name: 'smismember',
+    handler: (ctx, args) => smismember(ctx.db, args),
+    arity: -3,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@set', '@fast'],
+  },
+  {
+    name: 'smembers',
+    handler: (ctx, args) => smembers(ctx.db, args),
+    arity: 2,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@set'],
+  },
+  {
+    name: 'scard',
+    handler: (ctx, args) => scard(ctx.db, args),
+    arity: 2,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@set', '@fast'],
+  },
+  {
+    name: 'smove',
+    handler: (ctx, args) => smove(ctx.db, args),
+    arity: 4,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 2,
+    keyStep: 1,
+    categories: ['@write', '@set', '@fast'],
+  },
+  {
+    name: 'srandmember',
+    handler: (ctx, args) => srandmember(ctx.db, args, ctx.engine.rng),
+    arity: -2,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@set'],
+  },
+  {
+    name: 'spop',
+    handler: (ctx, args) => spop(ctx.db, args, ctx.engine.rng),
+    arity: -2,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@set', '@fast'],
+  },
+  {
+    name: 'sscan',
+    handler: (ctx, args) => sscan(ctx.db, args),
+    arity: -3,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@set'],
+  },
+];
