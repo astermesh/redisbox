@@ -3,6 +3,7 @@ import type { EngineDeps } from './types.ts';
 import { PubSubManager } from './pubsub-manager.ts';
 import { BlockingManager } from './blocking-manager.ts';
 import { estimateKeyMemory } from './memory.ts';
+import { AclStore } from './acl-store.ts';
 
 const NUM_DATABASES = 16;
 
@@ -17,6 +18,7 @@ export class RedisEngine {
   readonly rng: () => number;
   readonly pubsub = new PubSubManager();
   readonly blocking = new BlockingManager();
+  readonly acl = new AclStore();
 
   constructor(deps?: Partial<EngineDeps>) {
     const resolved = { ...defaultDeps, ...deps };

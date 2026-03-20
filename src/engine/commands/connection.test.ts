@@ -17,6 +17,7 @@ function createCtx(opts?: { clientId?: number; config?: ConfigStore }): {
       engine,
       client,
       config: opts?.config,
+      acl: engine.acl,
     },
     client,
   };
@@ -424,9 +425,31 @@ describe('AUTH', () => {
       db: engine.db(0),
       engine,
       config,
+      acl: engine.acl,
     };
 
     const result = cmd.auth(ctx, ['secret']);
     expect(result).toEqual({ kind: 'status', value: 'OK' });
+  });
+
+  it('rejects AUTH when default user is disabled', () => {
+    const config = new ConfigStore();
+    config.set('requirepass', 'secret');
+    const { ctx, client } = createCtx({ config });
+    client.authenticated = false;
+
+    // Disable the default user via ACL store
+    const acl = ctx.acl;
+    if (acl) {
+      acl.getDefaultUser().enabled = false;
+    }
+
+    const result = cmd.auth(ctx, ['secret']);
+    expect(result).toEqual({
+      kind: 'error',
+      prefix: 'WRONGPASS',
+      message: 'invalid username-password pair or user is disabled.',
+    });
+    expect(client.authenticated).toBe(false);
   });
 });
