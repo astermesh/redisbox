@@ -5,9 +5,13 @@
  *   channel → Set<clientId>
  *   clientId → Set<channel>
  *
- * This class only tracks subscriptions. Message delivery is handled
- * separately (T02: PUBLISH and message delivery).
+ * Handles message delivery via a registered sender callback.
  */
+
+import type { Reply } from './types.ts';
+import { arrayReply, bulkReply } from './types.ts';
+
+export type MessageSender = (clientId: number, reply: Reply) => void;
 
 export class PubSubManager {
   /** channel name → set of subscribed client IDs */
@@ -15,6 +19,9 @@ export class PubSubManager {
 
   /** client ID → set of subscribed channel names */
   private readonly clientChannels = new Map<number, Set<string>>();
+
+  /** callback to deliver push messages to clients */
+  private sender: MessageSender | null = null;
 
   /**
    * Subscribe a client to a channel.
@@ -114,5 +121,40 @@ export class PubSubManager {
    */
   subscribers(channel: string): ReadonlySet<number> {
     return this.channelSubscribers.get(channel) ?? new Set();
+  }
+
+  /**
+   * Register a callback for delivering push messages to clients.
+   */
+  setSender(sender: MessageSender): void {
+    this.sender = sender;
+  }
+
+  /**
+   * Publish a message to a channel.
+   * Delivers to all channel subscribers (and pattern subscribers once added).
+   * @returns the number of clients that received the message
+   */
+  publish(channel: string, message: string): number {
+    let count = 0;
+
+    // Deliver to channel subscribers
+    const subs = this.channelSubscribers.get(channel);
+    if (subs && subs.size > 0) {
+      const reply = arrayReply([
+        bulkReply('message'),
+        bulkReply(channel),
+        bulkReply(message),
+      ]);
+
+      for (const clientId of subs) {
+        this.sender?.(clientId, reply);
+        count++;
+      }
+    }
+
+    // Pattern subscriber delivery will be added by T03 (PSUBSCRIBE)
+
+    return count;
   }
 }

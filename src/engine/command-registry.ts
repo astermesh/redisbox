@@ -1473,6 +1473,16 @@ const commandSpecs: CommandSpec[] = [
     keyStep: 0,
     categories: ['@pubsub', '@slow'],
   },
+  {
+    name: 'publish',
+    handler: (ctx, args) => pubsub.publish(ctx, args),
+    arity: 3,
+    flags: ['pubsub', 'loading', 'stale', 'fast'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@pubsub', '@fast'],
+  },
 
   // --- Command introspection ---
   {
