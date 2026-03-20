@@ -20,6 +20,7 @@ import * as database from './commands/database.ts';
 import * as cmd from './commands/command.ts';
 import * as transaction from './commands/transaction.ts';
 import * as pubsub from './commands/pubsub.ts';
+import * as sortedSet from './commands/sorted-set.ts';
 import type { CommandContext } from './types.ts';
 
 function getTable(ctx: CommandContext): CommandTable {
@@ -1407,6 +1408,48 @@ const commandSpecs: CommandSpec[] = [
     lastKey: 1,
     keyStep: 1,
     categories: ['@read', '@set'],
+  },
+
+  // --- Sorted set commands ---
+  {
+    name: 'zadd',
+    handler: (ctx, args) => sortedSet.zadd(ctx.db, args, ctx.engine.rng),
+    arity: -4,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@sortedset', '@fast'],
+  },
+  {
+    name: 'zrem',
+    handler: (ctx, args) => sortedSet.zrem(ctx.db, args),
+    arity: -3,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@sortedset', '@fast'],
+  },
+  {
+    name: 'zincrby',
+    handler: (ctx, args) => sortedSet.zincrby(ctx.db, args, ctx.engine.rng),
+    arity: 4,
+    flags: ['write', 'denyoom', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@sortedset', '@fast'],
+  },
+  {
+    name: 'zcard',
+    handler: (ctx, args) => sortedSet.zcard(ctx.db, args),
+    arity: 2,
+    flags: ['readonly', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@sortedset', '@fast'],
   },
 
   // --- Pub/Sub commands ---
