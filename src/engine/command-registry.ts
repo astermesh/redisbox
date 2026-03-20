@@ -15,6 +15,7 @@ import { specs as bitmapSpecs } from './commands/bitmap.ts';
 import { specs as hashSpecs } from './commands/hash.ts';
 import { specs as hashTtlSpecs } from './commands/hash-ttl.ts';
 import { specs as listSpecs } from './commands/list.ts';
+import { specs as blockingListSpecs } from './commands/blocking-list.ts';
 import { specs as setSpecs } from './commands/set.ts';
 import { specs as sortedSetSpecs } from './commands/sorted-set.ts';
 import { specs as pubsubSpecs } from './commands/pubsub.ts';
@@ -42,6 +43,7 @@ const allSpecs: CommandSpec[] = [
   ...hashSpecs,
   ...hashTtlSpecs,
   ...listSpecs,
+  ...blockingListSpecs,
   ...setSpecs,
   ...sortedSetSpecs,
   ...pubsubSpecs,
