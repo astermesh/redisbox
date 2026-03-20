@@ -379,12 +379,6 @@ describe('OBJECT', () => {
   });
 });
 
-describe('WAIT', () => {
-  it('returns 0', () => {
-    expect(cmd.wait()).toEqual({ kind: 'integer', value: 0 });
-  });
-});
-
 describe('DUMP / RESTORE stubs', () => {
   it('DUMP returns error', () => {
     expect(cmd.dump().kind).toBe('error');

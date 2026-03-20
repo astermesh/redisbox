@@ -185,10 +185,6 @@ export function objectHelp(): Reply {
   ]);
 }
 
-export function wait(): Reply {
-  return integerReply(0);
-}
-
 export function dump(): Reply {
   return errorReply('ERR', 'DUMP is not supported in this engine');
 }
@@ -400,16 +396,6 @@ export const specs: CommandSpec[] = [
         categories: ['@keyspace', '@read'],
       },
     ],
-  },
-  {
-    name: 'wait',
-    handler: () => wait(),
-    arity: 3,
-    flags: ['readonly'],
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
-    categories: ['@generic'],
   },
   {
     name: 'dump',
