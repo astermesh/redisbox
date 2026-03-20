@@ -88,13 +88,7 @@ describe('HEXPIRE', () => {
   it('returns error for negative seconds', () => {
     const { db, clock } = createDb(1000);
     setupHash(db);
-    const result = hashTtl.hexpire(db, clock, [
-      'k',
-      '-5',
-      'FIELDS',
-      '1',
-      'f1',
-    ]);
+    const result = hashTtl.hexpire(db, clock, ['k', '-5', 'FIELDS', '1', 'f1']);
     expect(result.kind).toBe('error');
     expect(hash.hexists(db, ['k', 'f1'])).toEqual(integer(1));
   });
@@ -761,9 +755,7 @@ describe('lazy field expiration', () => {
     setTime(3000);
     const result = hash.hscan(db, ['k', '0']);
     // Should only return f2
-    expect(result).toEqual(
-      arr(bulk('0'), arr(bulk('f2'), bulk('v2')))
-    );
+    expect(result).toEqual(arr(bulk('0'), arr(bulk('f2'), bulk('v2'))));
   });
 
   it('HSET counts expired field as new', () => {
