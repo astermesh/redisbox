@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   CommandDispatcher,
   createTransactionState,
@@ -9,9 +9,10 @@ import { CommandTable } from './command-table.ts';
 import type { CommandDefinition, CommandHandler } from './command-table.ts';
 import { RedisEngine } from './engine.ts';
 import type { CommandContext, Reply } from './types.ts';
-import { statusReply, errorReply } from './types.ts';
+import { statusReply, errorReply, bulkReply } from './types.ts';
 import { ClientState as ClientStateObj } from '../server/client-state.ts';
 import { ConfigStore } from '../config-store.ts';
+import { IbiHookManager } from './hooks/ibi.ts';
 
 function createCtx(clock = 1000): {
   ctx: CommandContext;
@@ -1179,6 +1180,163 @@ describe('CommandDispatcher', () => {
       const result = dispatcher.dispatch(state, aclCtx, ['SET', 'k', 'v']);
       const err = result as { kind: 'error'; prefix: string; message: string };
       expect(err.message).toContain("'set'");
+    });
+  });
+
+  describe('dispatchAsync with IBI hooks', () => {
+    let ibi: IbiHookManager;
+    let ibiCtx: CommandContext;
+
+    beforeEach(() => {
+      ibi = new IbiHookManager();
+      ibiCtx = { db: ctx.db, engine: ctx.engine, ibi };
+    });
+
+    it('returns same result as sync dispatch when no hooks registered', async () => {
+      ibiCtx.db.set('k', 'string', 'raw', 'val');
+      const result = await dispatcher.dispatchAsync(state, ibiCtx, [
+        'GET',
+        'k',
+      ]);
+      expect(result).toEqual(bulkReply('val'));
+    });
+
+    it('fires redis:command hook on dispatch', async () => {
+      const seen: string[] = [];
+      ibi.hook('redis:command').tap(async (hookCtx, next) => {
+        seen.push(hookCtx.command);
+        return next();
+      });
+
+      ibiCtx.db.set('k', 'string', 'raw', 'val');
+      await dispatcher.dispatchAsync(state, ibiCtx, ['GET', 'k']);
+      expect(seen).toEqual(['GET']);
+    });
+
+    it('fires redis:string:read for GET command', async () => {
+      const fired = vi.fn();
+      ibi.hook('redis:string:read').tap(async (_ctx, next) => {
+        fired();
+        return next();
+      });
+
+      ibiCtx.db.set('k', 'string', 'raw', 'val');
+      await dispatcher.dispatchAsync(state, ibiCtx, ['GET', 'k']);
+      expect(fired).toHaveBeenCalledOnce();
+    });
+
+    it('fires redis:string:write for SET command', async () => {
+      const fired = vi.fn();
+      ibi.hook('redis:string:write').tap(async (_ctx, next) => {
+        fired();
+        return next();
+      });
+
+      await dispatcher.dispatchAsync(state, ibiCtx, ['SET', 'k', 'val']);
+      expect(fired).toHaveBeenCalledOnce();
+    });
+
+    it('fires redis:key for DEL command', async () => {
+      const fired = vi.fn();
+      ibi.hook('redis:key').tap(async (_ctx, next) => {
+        fired();
+        return next();
+      });
+
+      await dispatcher.dispatchAsync(state, ibiCtx, ['DEL', 'k']);
+      expect(fired).toHaveBeenCalledOnce();
+    });
+
+    it('fires redis:connection for PING command', async () => {
+      const fired = vi.fn();
+      ibi.hook('redis:connection').tap(async (_ctx, next) => {
+        fired();
+        return next();
+      });
+
+      await dispatcher.dispatchAsync(state, ibiCtx, ['PING']);
+      expect(fired).toHaveBeenCalledOnce();
+    });
+
+    it('hook can intercept and return custom reply', async () => {
+      ibi.hook('redis:command').tap(async (_ctx, _next) => {
+        return errorReply('ERR', 'blocked');
+      });
+
+      const result = await dispatcher.dispatchAsync(state, ibiCtx, [
+        'SET',
+        'k',
+        'v',
+      ]);
+      expect(result).toEqual(errorReply('ERR', 'blocked'));
+      // Key should not have been set
+      expect(ibiCtx.db.get('k')).toBeNull();
+    });
+
+    it('hook can transform reply', async () => {
+      ibi.hook('redis:string:read').tap(async (_ctx, next) => {
+        const reply = await next();
+        if (reply.kind === 'bulk' && reply.value !== null) {
+          return bulkReply(reply.value.toUpperCase());
+        }
+        return reply;
+      });
+
+      ibiCtx.db.set('k', 'string', 'raw', 'hello');
+      const result = await dispatcher.dispatchAsync(state, ibiCtx, [
+        'GET',
+        'k',
+      ]);
+      expect(result).toEqual(bulkReply('HELLO'));
+    });
+
+    it('populates hook context correctly', async () => {
+      const client = new ClientStateObj(42, 100);
+      client.dbIndex = 3;
+      ibiCtx.client = client;
+      ibiCtx.db = ibiCtx.engine.db(3);
+
+      let captured: { command: string; clientId: number; db: number } | null =
+        null;
+      ibi.hook('redis:command').tap(async (hookCtx, next) => {
+        captured = {
+          command: hookCtx.command,
+          clientId: hookCtx.clientId,
+          db: hookCtx.db,
+        };
+        return next();
+      });
+
+      await dispatcher.dispatchAsync(state, ibiCtx, ['PING']);
+      expect(captured).toEqual({
+        command: 'PING',
+        clientId: 42,
+        db: 3,
+      });
+    });
+
+    it('skips hooks for MULTI/EXEC control flow', async () => {
+      const fired = vi.fn();
+      ibi.hook('redis:command').tap(async (_ctx, next) => {
+        fired();
+        return next();
+      });
+
+      // Enter MULTI mode
+      dispatcher.dispatch(state, ibiCtx, ['MULTI']);
+      // Commands in MULTI should skip hooks (they're queued, not executed)
+      await dispatcher.dispatchAsync(state, ibiCtx, ['SET', 'k', 'v']);
+      expect(fired).not.toHaveBeenCalled();
+    });
+
+    it('fast path when no ibi manager on context', async () => {
+      const noIbiCtx: CommandContext = { db: ctx.db, engine: ctx.engine };
+      noIbiCtx.db.set('k', 'string', 'raw', 'val');
+      const result = await dispatcher.dispatchAsync(state, noIbiCtx, [
+        'GET',
+        'k',
+      ]);
+      expect(result).toEqual(bulkReply('val'));
     });
   });
 });

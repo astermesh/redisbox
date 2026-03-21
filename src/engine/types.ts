@@ -167,4 +167,5 @@ export interface CommandContext {
   blocking?: import('./blocking-manager.ts').BlockingManager;
   acl?: import('./acl-store.ts').AclStore;
   eviction?: import('./eviction-manager.ts').EvictionManager;
+  ibi?: import('./hooks/ibi.ts').IbiHookManager;
 }

@@ -115,6 +115,7 @@ export class ClientConnection {
       blocking: this.engine.blocking,
       acl: this.engine.acl,
       eviction: this.eviction,
+      ibi: this.engine.ibi,
     };
 
     const reply = this.dispatcher.dispatch(this.dispatcherState, ctx, args);

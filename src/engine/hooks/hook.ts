@@ -75,6 +75,11 @@ export const PostDecision = {
 export class AsyncHook<Ctx, T> {
   private readonly handlers: AsyncHookFn<Ctx, T>[] = [];
 
+  /** Number of registered handlers. */
+  get size(): number {
+    return this.handlers.length;
+  }
+
   /** Register a hook handler. */
   tap(fn: AsyncHookFn<Ctx, T>): void {
     this.handlers.push(fn);

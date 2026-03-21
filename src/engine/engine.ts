@@ -5,6 +5,7 @@ import { BlockingManager } from './blocking-manager.ts';
 import { estimateKeyMemory } from './memory.ts';
 import { AclStore } from './acl-store.ts';
 import { SlowlogManager } from './slowlog.ts';
+import { IbiHookManager } from './hooks/ibi.ts';
 
 const NUM_DATABASES = 16;
 
@@ -21,6 +22,7 @@ export class RedisEngine {
   readonly blocking = new BlockingManager();
   readonly acl = new AclStore();
   readonly slowlog = new SlowlogManager();
+  readonly ibi = new IbiHookManager();
   readonly startTime: number;
 
   constructor(deps?: Partial<EngineDeps>) {
