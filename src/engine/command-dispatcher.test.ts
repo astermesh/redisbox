@@ -408,9 +408,32 @@ describe('CommandDispatcher', () => {
       expect(result.kind).not.toBe('error');
     });
 
-    it('allows PING in subscribe mode', () => {
-      const result = dispatcher.dispatch(state, ctx, ['PING']);
-      expect(result).toEqual({ kind: 'status', value: 'PONG' });
+    it('allows PING in subscribe mode and returns push-style array', () => {
+      const client = new ClientStateObj(1, 100);
+      client.flagSubscribed = true;
+      const subCtx: CommandContext = { ...ctx, client };
+      const result = dispatcher.dispatch(state, subCtx, ['PING']);
+      expect(result).toEqual({
+        kind: 'array',
+        value: [
+          { kind: 'bulk', value: 'pong' },
+          { kind: 'bulk', value: '' },
+        ],
+      });
+    });
+
+    it('PING with message in subscribe mode returns push-style array with message', () => {
+      const client = new ClientStateObj(1, 100);
+      client.flagSubscribed = true;
+      const subCtx: CommandContext = { ...ctx, client };
+      const result = dispatcher.dispatch(state, subCtx, ['PING', 'hello']);
+      expect(result).toEqual({
+        kind: 'array',
+        value: [
+          { kind: 'bulk', value: 'pong' },
+          { kind: 'bulk', value: 'hello' },
+        ],
+      });
     });
 
     it('allows RESET in subscribe mode and clears subscribed flag', () => {
@@ -743,6 +766,138 @@ describe('CommandDispatcher', () => {
       };
       const result = dispatcher.dispatch(state, noClientCtx, ['PING']);
       expect(result).toEqual({ kind: 'status', value: 'PONG' });
+    });
+  });
+
+  describe('subscriber mode lifecycle', () => {
+    let engine: import('./engine.ts').RedisEngine;
+    let client: ClientStateObj;
+    let subCtx: CommandContext;
+
+    beforeEach(() => {
+      const setup = createCtx();
+      engine = setup.engine;
+      client = new ClientStateObj(1, 100);
+      subCtx = {
+        db: engine.db(0),
+        engine,
+        client,
+        pubsub: engine.pubsub,
+      };
+    });
+
+    it('enters subscriber mode on first SUBSCRIBE', () => {
+      expect(state.subscribed).toBe(false);
+      expect(client.flagSubscribed).toBe(false);
+
+      dispatcher.dispatch(state, subCtx, ['SUBSCRIBE', 'ch1']);
+      expect(client.flagSubscribed).toBe(true);
+      expect(state.subscribed).toBe(true);
+    });
+
+    it('enters subscriber mode on first PSUBSCRIBE', () => {
+      dispatcher.dispatch(state, subCtx, ['PSUBSCRIBE', 'p*']);
+      expect(client.flagSubscribed).toBe(true);
+      expect(state.subscribed).toBe(true);
+    });
+
+    it('exits subscriber mode when all channel subscriptions removed', () => {
+      dispatcher.dispatch(state, subCtx, ['SUBSCRIBE', 'ch1']);
+      expect(state.subscribed).toBe(true);
+
+      dispatcher.dispatch(state, subCtx, ['UNSUBSCRIBE', 'ch1']);
+      expect(client.flagSubscribed).toBe(false);
+      expect(state.subscribed).toBe(false);
+    });
+
+    it('exits subscriber mode when all pattern subscriptions removed', () => {
+      dispatcher.dispatch(state, subCtx, ['PSUBSCRIBE', 'p*']);
+      expect(state.subscribed).toBe(true);
+
+      dispatcher.dispatch(state, subCtx, ['PUNSUBSCRIBE', 'p*']);
+      expect(client.flagSubscribed).toBe(false);
+      expect(state.subscribed).toBe(false);
+    });
+
+    it('stays in subscriber mode when channel subs removed but patterns remain', () => {
+      dispatcher.dispatch(state, subCtx, ['SUBSCRIBE', 'ch1']);
+      dispatcher.dispatch(state, subCtx, ['PSUBSCRIBE', 'p*']);
+      expect(state.subscribed).toBe(true);
+
+      dispatcher.dispatch(state, subCtx, ['UNSUBSCRIBE', 'ch1']);
+      expect(client.flagSubscribed).toBe(true);
+      expect(state.subscribed).toBe(true);
+    });
+
+    it('stays in subscriber mode when pattern subs removed but channels remain', () => {
+      dispatcher.dispatch(state, subCtx, ['SUBSCRIBE', 'ch1']);
+      dispatcher.dispatch(state, subCtx, ['PSUBSCRIBE', 'p*']);
+
+      dispatcher.dispatch(state, subCtx, ['PUNSUBSCRIBE', 'p*']);
+      expect(client.flagSubscribed).toBe(true);
+      expect(state.subscribed).toBe(true);
+    });
+
+    it('exits subscriber mode only when both channels and patterns reach 0', () => {
+      dispatcher.dispatch(state, subCtx, ['SUBSCRIBE', 'ch1', 'ch2']);
+      dispatcher.dispatch(state, subCtx, ['PSUBSCRIBE', 'p1', 'p2']);
+
+      dispatcher.dispatch(state, subCtx, ['UNSUBSCRIBE']);
+      expect(state.subscribed).toBe(true);
+
+      dispatcher.dispatch(state, subCtx, ['PUNSUBSCRIBE']);
+      expect(client.flagSubscribed).toBe(false);
+      expect(state.subscribed).toBe(false);
+    });
+
+    it('rejects commands after entering subscriber mode', () => {
+      dispatcher.dispatch(state, subCtx, ['SUBSCRIBE', 'ch1']);
+
+      const result = dispatcher.dispatch(state, subCtx, ['GET', 'k']);
+      expect(result.kind).toBe('error');
+      const err = result as { kind: 'error'; message: string };
+      expect(err.message).toContain("Can't execute 'get'");
+    });
+
+    it('allows commands again after exiting subscriber mode', () => {
+      dispatcher.dispatch(state, subCtx, ['SUBSCRIBE', 'ch1']);
+      dispatcher.dispatch(state, subCtx, ['UNSUBSCRIBE', 'ch1']);
+
+      subCtx.db.set('k', 'string', 'raw', 'val');
+      const result = dispatcher.dispatch(state, subCtx, ['GET', 'k']);
+      expect(result).toEqual({ kind: 'bulk', value: 'val' });
+    });
+
+    it('RESET clears pubsub subscriptions from manager', () => {
+      dispatcher.dispatch(state, subCtx, ['SUBSCRIBE', 'ch1', 'ch2']);
+      dispatcher.dispatch(state, subCtx, ['PSUBSCRIBE', 'p*']);
+      expect(engine.pubsub.subscriptionCount(client.id)).toBe(3);
+
+      dispatcher.dispatch(state, subCtx, ['RESET']);
+      expect(state.subscribed).toBe(false);
+      expect(client.flagSubscribed).toBe(false);
+      expect(engine.pubsub.subscriptionCount(client.id)).toBe(0);
+    });
+
+    it('PING returns push-style array during subscriber mode lifecycle', () => {
+      dispatcher.dispatch(state, subCtx, ['SUBSCRIBE', 'ch1']);
+
+      const pingResult = dispatcher.dispatch(state, subCtx, ['PING']);
+      expect(pingResult).toEqual({
+        kind: 'array',
+        value: [
+          { kind: 'bulk', value: 'pong' },
+          { kind: 'bulk', value: '' },
+        ],
+      });
+    });
+
+    it('PING returns normal PONG after exiting subscriber mode', () => {
+      dispatcher.dispatch(state, subCtx, ['SUBSCRIBE', 'ch1']);
+      dispatcher.dispatch(state, subCtx, ['UNSUBSCRIBE', 'ch1']);
+
+      const pingResult = dispatcher.dispatch(state, subCtx, ['PING']);
+      expect(pingResult).toEqual({ kind: 'status', value: 'PONG' });
     });
   });
 });

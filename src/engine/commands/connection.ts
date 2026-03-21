@@ -24,8 +24,15 @@ const NO_PASSWORD_ERR = errorReply(
   'Client sent AUTH, but no password is set. Did you mean ACL SETUSER with >password?'
 );
 
-export function ping(args: string[]): Reply {
+export function ping(ctx: CommandContext, args: string[]): Reply {
   if (args.length > 1) return wrongArityError('ping');
+
+  // In subscriber mode, PING returns a push-style array ['pong', message]
+  if (ctx.client?.flagSubscribed) {
+    const message = args[0] ?? '';
+    return arrayReply([bulkReply('pong'), bulkReply(message)]);
+  }
+
   if (args.length === 0) return PONG;
   return bulkReply(args[0] ?? '');
 }
@@ -259,7 +266,7 @@ export function auth(ctx: CommandContext, args: string[]): Reply {
 export const specs: CommandSpec[] = [
   {
     name: 'ping',
-    handler: (_ctx, args) => ping(args),
+    handler: (ctx, args) => ping(ctx, args),
     arity: -1,
     flags: ['fast', 'stale', 'loading'],
     firstKey: 0,
