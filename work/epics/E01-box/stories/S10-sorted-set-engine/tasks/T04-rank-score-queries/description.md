@@ -1,5 +1,7 @@
 # T04: Rank and Score Queries
 
+**Status:** done
+
 Implement ZRANK, ZREVRANK, ZSCORE, ZMSCORE. ZRANK returns 0-based rank. ZREVRANK returns rank from high to low. ZMSCORE returns array of scores for multiple members.
 
 ## Acceptance Criteria

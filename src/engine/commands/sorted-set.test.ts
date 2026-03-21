@@ -1385,3 +1385,258 @@ describe('Dual index consistency', () => {
     expect(zset.dict.get('a')).toBe(6);
   });
 });
+
+// --- ZSCORE ---
+
+describe('ZSCORE', () => {
+  it('returns score of existing member', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1.5', 'a'], rng);
+    expect(sortedSet.zscore(db, ['k', 'a'])).toEqual(bulk('1.5'));
+  });
+
+  it('returns nil for non-existing member', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a'], rng);
+    expect(sortedSet.zscore(db, ['k', 'nosuch'])).toEqual(bulk(null));
+  });
+
+  it('returns nil for non-existing key', () => {
+    const { db } = createDb();
+    expect(sortedSet.zscore(db, ['nosuch', 'a'])).toEqual(bulk(null));
+  });
+
+  it('returns WRONGTYPE for non-zset key', () => {
+    const { db } = createDb();
+    string.set(db, () => 1000, ['k', 'v']);
+    expect(sortedSet.zscore(db, ['k', 'a'])).toEqual(WRONGTYPE);
+  });
+
+  it('returns integer scores without trailing zeros', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '5', 'a'], rng);
+    expect(sortedSet.zscore(db, ['k', 'a'])).toEqual(bulk('5'));
+  });
+
+  it('returns inf score', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '+inf', 'a'], rng);
+    expect(sortedSet.zscore(db, ['k', 'a'])).toEqual(bulk('inf'));
+  });
+
+  it('returns -inf score', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '-inf', 'a'], rng);
+    expect(sortedSet.zscore(db, ['k', 'a'])).toEqual(bulk('-inf'));
+  });
+
+  it('returns wrong arity for bad args', () => {
+    const { db } = createDb();
+    expect(sortedSet.zscore(db, ['k'])).toEqual(
+      err('ERR', "wrong number of arguments for 'zscore' command")
+    );
+  });
+});
+
+// --- ZMSCORE ---
+
+describe('ZMSCORE', () => {
+  it('returns scores for multiple members', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a', '2', 'b', '3', 'c'], rng);
+    const result = sortedSet.zmscore(db, ['k', 'a', 'b', 'c']);
+    expect(result).toEqual({
+      kind: 'array',
+      value: [bulk('1'), bulk('2'), bulk('3')],
+    });
+  });
+
+  it('returns nil for missing members', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a', '3', 'c'], rng);
+    const result = sortedSet.zmscore(db, ['k', 'a', 'nosuch', 'c']);
+    expect(result).toEqual({
+      kind: 'array',
+      value: [bulk('1'), bulk(null), bulk('3')],
+    });
+  });
+
+  it('returns all nils for non-existing key', () => {
+    const { db } = createDb();
+    const result = sortedSet.zmscore(db, ['nosuch', 'a', 'b']);
+    expect(result).toEqual({
+      kind: 'array',
+      value: [bulk(null), bulk(null)],
+    });
+  });
+
+  it('returns WRONGTYPE for non-zset key', () => {
+    const { db } = createDb();
+    string.set(db, () => 1000, ['k', 'v']);
+    expect(sortedSet.zmscore(db, ['k', 'a'])).toEqual(WRONGTYPE);
+  });
+
+  it('returns wrong arity for no members', () => {
+    const { db } = createDb();
+    expect(sortedSet.zmscore(db, ['k'])).toEqual(
+      err('ERR', "wrong number of arguments for 'zmscore' command")
+    );
+  });
+});
+
+// --- ZRANK ---
+
+describe('ZRANK', () => {
+  it('returns 0-based rank', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a', '2', 'b', '3', 'c'], rng);
+    expect(sortedSet.zrank(db, ['k', 'a'])).toEqual(integer(0));
+    expect(sortedSet.zrank(db, ['k', 'b'])).toEqual(integer(1));
+    expect(sortedSet.zrank(db, ['k', 'c'])).toEqual(integer(2));
+  });
+
+  it('returns nil for non-existing member', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a'], rng);
+    expect(sortedSet.zrank(db, ['k', 'nosuch'])).toEqual(bulk(null));
+  });
+
+  it('returns nil for non-existing key', () => {
+    const { db } = createDb();
+    expect(sortedSet.zrank(db, ['nosuch', 'a'])).toEqual(bulk(null));
+  });
+
+  it('returns WRONGTYPE for non-zset key', () => {
+    const { db } = createDb();
+    string.set(db, () => 1000, ['k', 'v']);
+    expect(sortedSet.zrank(db, ['k', 'a'])).toEqual(WRONGTYPE);
+  });
+
+  it('ranks by score then by lexicographic order', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'c', '1', 'a', '1', 'b'], rng);
+    expect(sortedSet.zrank(db, ['k', 'a'])).toEqual(integer(0));
+    expect(sortedSet.zrank(db, ['k', 'b'])).toEqual(integer(1));
+    expect(sortedSet.zrank(db, ['k', 'c'])).toEqual(integer(2));
+  });
+
+  it('returns WITHSCORE when requested', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1.5', 'a', '2.5', 'b'], rng);
+    const result = sortedSet.zrank(db, ['k', 'a', 'WITHSCORE']);
+    expect(result).toEqual({
+      kind: 'array',
+      value: [integer(0), bulk('1.5')],
+    });
+  });
+
+  it('returns nil for WITHSCORE when member not found', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a'], rng);
+    const result = sortedSet.zrank(db, ['k', 'nosuch', 'WITHSCORE']);
+    expect(result).toEqual({ kind: 'nil-array' });
+  });
+
+  it('returns nil-array for WITHSCORE when key not found', () => {
+    const { db } = createDb();
+    const result = sortedSet.zrank(db, ['nosuch', 'a', 'WITHSCORE']);
+    expect(result).toEqual({ kind: 'nil-array' });
+  });
+
+  it('returns syntax error for invalid third argument', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a'], rng);
+    expect(sortedSet.zrank(db, ['k', 'a', 'INVALID'])).toEqual(
+      err('ERR', 'syntax error')
+    );
+  });
+
+  it('returns wrong arity for bad args', () => {
+    const { db } = createDb();
+    expect(sortedSet.zrank(db, ['k'])).toEqual(
+      err('ERR', "wrong number of arguments for 'zrank' command")
+    );
+  });
+});
+
+// --- ZREVRANK ---
+
+describe('ZREVRANK', () => {
+  it('returns reverse 0-based rank', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a', '2', 'b', '3', 'c'], rng);
+    expect(sortedSet.zrevrank(db, ['k', 'a'])).toEqual(integer(2));
+    expect(sortedSet.zrevrank(db, ['k', 'b'])).toEqual(integer(1));
+    expect(sortedSet.zrevrank(db, ['k', 'c'])).toEqual(integer(0));
+  });
+
+  it('returns nil for non-existing member', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a'], rng);
+    expect(sortedSet.zrevrank(db, ['k', 'nosuch'])).toEqual(bulk(null));
+  });
+
+  it('returns nil for non-existing key', () => {
+    const { db } = createDb();
+    expect(sortedSet.zrevrank(db, ['nosuch', 'a'])).toEqual(bulk(null));
+  });
+
+  it('returns WRONGTYPE for non-zset key', () => {
+    const { db } = createDb();
+    string.set(db, () => 1000, ['k', 'v']);
+    expect(sortedSet.zrevrank(db, ['k', 'a'])).toEqual(WRONGTYPE);
+  });
+
+  it('ranks by reverse score then by reverse lexicographic order', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'c', '1', 'a', '1', 'b'], rng);
+    expect(sortedSet.zrevrank(db, ['k', 'a'])).toEqual(integer(2));
+    expect(sortedSet.zrevrank(db, ['k', 'b'])).toEqual(integer(1));
+    expect(sortedSet.zrevrank(db, ['k', 'c'])).toEqual(integer(0));
+  });
+
+  it('returns WITHSCORE when requested', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1.5', 'a', '2.5', 'b'], rng);
+    const result = sortedSet.zrevrank(db, ['k', 'b', 'WITHSCORE']);
+    expect(result).toEqual({
+      kind: 'array',
+      value: [integer(0), bulk('2.5')],
+    });
+  });
+
+  it('returns nil for WITHSCORE when member not found', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a'], rng);
+    const result = sortedSet.zrevrank(db, ['k', 'nosuch', 'WITHSCORE']);
+    expect(result).toEqual({ kind: 'nil-array' });
+  });
+
+  it('returns nil-array for WITHSCORE when key not found', () => {
+    const { db } = createDb();
+    const result = sortedSet.zrevrank(db, ['nosuch', 'a', 'WITHSCORE']);
+    expect(result).toEqual({ kind: 'nil-array' });
+  });
+
+  it('returns syntax error for invalid third argument', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a'], rng);
+    expect(sortedSet.zrevrank(db, ['k', 'a', 'INVALID'])).toEqual(
+      err('ERR', 'syntax error')
+    );
+  });
+
+  it('returns wrong arity for bad args', () => {
+    const { db } = createDb();
+    expect(sortedSet.zrevrank(db, ['k'])).toEqual(
+      err('ERR', "wrong number of arguments for 'zrevrank' command")
+    );
+  });
+
+  it('handles single element set', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '5', 'only'], rng);
+    expect(sortedSet.zrank(db, ['k', 'only'])).toEqual(integer(0));
+    expect(sortedSet.zrevrank(db, ['k', 'only'])).toEqual(integer(0));
+  });
+});
