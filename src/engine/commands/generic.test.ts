@@ -342,10 +342,34 @@ describe('OBJECT', () => {
     expect(reply).toEqual({ kind: 'integer', value: 5 });
   });
 
+  it('IDLETIME does not update LRU clock (LOOKUP_NOTOUCH)', () => {
+    const { db, setTime } = createDb(1000);
+    db.set('k', 'string', 'raw', 'v');
+    const clockBefore = db.getWithoutTouch('k')?.lruClock;
+
+    setTime(5000);
+    cmd.objectIdletimeWithClock(db, () => 5000, ['k']);
+    const clockAfter = db.getWithoutTouch('k')?.lruClock;
+
+    expect(clockAfter).toBe(clockBefore);
+  });
+
   it('FREQ returns frequency counter', () => {
     const { db } = createDb();
     db.set('k', 'string', 'raw', 'v');
     expect(cmd.objectFreq(db, ['k'])).toEqual({ kind: 'integer', value: 0 });
+  });
+
+  it('FREQ does not update LRU clock (LOOKUP_NOTOUCH)', () => {
+    const { db, setTime } = createDb(1000);
+    db.set('k', 'string', 'raw', 'v');
+    const clockBefore = db.getWithoutTouch('k')?.lruClock;
+
+    setTime(5000);
+    cmd.objectFreq(db, ['k']);
+    const clockAfter = db.getWithoutTouch('k')?.lruClock;
+
+    expect(clockAfter).toBe(clockBefore);
   });
 
   it('HELP returns array of help strings', () => {
