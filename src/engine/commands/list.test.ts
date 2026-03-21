@@ -391,6 +391,8 @@ describe('LLEN', () => {
 // --- Encoding ---
 
 describe('list encoding', () => {
+  // --- Threshold boundary tests ---
+
   it('uses listpack for small lists', () => {
     const { db } = createDb();
     list.rpush(db, ['k', 'a', 'b', 'c']);
@@ -399,52 +401,197 @@ describe('list encoding', () => {
     expect(entry?.type).toBe('list');
   });
 
-  it('transitions to quicklist when exceeding entry count', () => {
-    const { db } = createDb();
-    const args: string[] = ['k'];
-    for (let i = 0; i <= 128; i++) {
-      args.push(`v${i}`);
-    }
-    list.rpush(db, args);
-    const entry = db.get('k');
-    expect(entry?.encoding).toBe('quicklist');
-  });
-
-  it('transitions to quicklist when element exceeds value size', () => {
-    const { db } = createDb();
-    const longValue = 'x'.repeat(65); // > 64 bytes
-    list.rpush(db, ['k', longValue]);
-    const entry = db.get('k');
-    expect(entry?.encoding).toBe('quicklist');
-  });
-
-  it('stays listpack at exact threshold', () => {
+  it('stays listpack at exactly 128 entries', () => {
     const { db } = createDb();
     const args: string[] = ['k'];
     for (let i = 0; i < 128; i++) {
       args.push(`v${i}`);
     }
     list.rpush(db, args);
-    const entry = db.get('k');
-    expect(entry?.encoding).toBe('listpack');
+    expect(db.get('k')?.encoding).toBe('listpack');
   });
 
-  it('stays listpack at exact value size threshold', () => {
+  it('transitions to quicklist at 129 entries', () => {
     const { db } = createDb();
-    const exactValue = 'x'.repeat(64); // exactly 64 bytes
-    list.rpush(db, ['k', exactValue]);
-    const entry = db.get('k');
-    expect(entry?.encoding).toBe('listpack');
+    const args: string[] = ['k'];
+    for (let i = 0; i <= 128; i++) {
+      args.push(`v${i}`);
+    }
+    list.rpush(db, args);
+    expect(db.get('k')?.encoding).toBe('quicklist');
   });
 
-  it('never demotes from quicklist back to listpack', () => {
+  it('stays listpack at exact 64-byte value', () => {
+    const { db } = createDb();
+    const exactValue = 'x'.repeat(64);
+    list.rpush(db, ['k', exactValue]);
+    expect(db.get('k')?.encoding).toBe('listpack');
+  });
+
+  it('transitions to quicklist when value exceeds 64 bytes', () => {
+    const { db } = createDb();
+    const longValue = 'x'.repeat(65);
+    list.rpush(db, ['k', longValue]);
+    expect(db.get('k')?.encoding).toBe('quicklist');
+  });
+
+  it('measures byte length, not character count (multi-byte chars)', () => {
+    const { db } = createDb();
+    // 22 emoji × 4 bytes each = 88 bytes > 64
+    const multiByteValue = '😀'.repeat(22);
+    list.rpush(db, ['k', multiByteValue]);
+    expect(db.get('k')?.encoding).toBe('quicklist');
+  });
+
+  it('stays listpack when multi-byte string is within byte limit', () => {
+    const { db } = createDb();
+    // 16 emoji × 4 bytes each = 64 bytes — exactly at threshold
+    const multiByteValue = '😀'.repeat(16);
+    list.rpush(db, ['k', multiByteValue]);
+    expect(db.get('k')?.encoding).toBe('listpack');
+  });
+
+  // --- No demotion ---
+
+  it('never demotes from quicklist back to listpack after pop', () => {
     const { db } = createDb();
     const longValue = 'x'.repeat(65);
     list.rpush(db, ['k', 'keep', longValue]);
     expect(db.get('k')?.encoding).toBe('quicklist');
-
-    // Pop the long element — encoding stays quicklist (Redis never demotes)
     list.rpop(db, ['k']);
+    expect(db.get('k')?.encoding).toBe('quicklist');
+  });
+
+  it('never demotes from quicklist after LREM removes all large elements', () => {
+    const { db } = createDb();
+    const longValue = 'x'.repeat(65);
+    list.rpush(db, ['k', 'a', longValue, 'b']);
+    expect(db.get('k')?.encoding).toBe('quicklist');
+    list.lrem(db, ['k', '0', longValue]);
+    expect(db.get('k')?.encoding).toBe('quicklist');
+  });
+
+  it('never demotes from quicklist after LTRIM shrinks the list', () => {
+    const { db } = createDb();
+    const args: string[] = ['k'];
+    for (let i = 0; i <= 128; i++) args.push(`v${i}`);
+    list.rpush(db, args);
+    expect(db.get('k')?.encoding).toBe('quicklist');
+    list.ltrim(db, ['k', '0', '2']);
+    expect(db.get('k')?.encoding).toBe('quicklist');
+  });
+
+  // --- Transitions via different mutation commands ---
+
+  it('transitions via LPUSH', () => {
+    const { db } = createDb();
+    const longValue = 'x'.repeat(65);
+    list.lpush(db, ['k', longValue]);
+    expect(db.get('k')?.encoding).toBe('quicklist');
+  });
+
+  it('transitions via LPUSHX', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k', 'a']);
+    expect(db.get('k')?.encoding).toBe('listpack');
+    const longValue = 'x'.repeat(65);
+    list.lpushx(db, ['k', longValue]);
+    expect(db.get('k')?.encoding).toBe('quicklist');
+  });
+
+  it('transitions via RPUSHX', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k', 'a']);
+    expect(db.get('k')?.encoding).toBe('listpack');
+    const longValue = 'x'.repeat(65);
+    list.rpushx(db, ['k', longValue]);
+    expect(db.get('k')?.encoding).toBe('quicklist');
+  });
+
+  it('transitions via LSET replacing short value with long value', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k', 'a']);
+    expect(db.get('k')?.encoding).toBe('listpack');
+    list.lset(db, ['k', '0', 'x'.repeat(65)]);
+    expect(db.get('k')?.encoding).toBe('quicklist');
+  });
+
+  it('transitions via LINSERT', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k', 'a']);
+    expect(db.get('k')?.encoding).toBe('listpack');
+    list.linsert(db, ['k', 'AFTER', 'a', 'x'.repeat(65)]);
+    expect(db.get('k')?.encoding).toBe('quicklist');
+  });
+
+  it('transitions via LMOVE to destination', () => {
+    const { db } = createDb();
+    const longValue = 'x'.repeat(65);
+    list.rpush(db, ['src', longValue]);
+    list.rpush(db, ['dst', 'a']);
+    expect(db.get('dst')?.encoding).toBe('listpack');
+    list.lmove(db, ['src', 'dst', 'LEFT', 'RIGHT']);
+    expect(db.get('dst')?.encoding).toBe('quicklist');
+  });
+
+  it('transitions via LMOVE same-key rotation', () => {
+    const { db } = createDb();
+    const args: string[] = ['k'];
+    for (let i = 0; i < 128; i++) args.push(`v${i}`);
+    list.rpush(db, args);
+    expect(db.get('k')?.encoding).toBe('listpack');
+    // Rotate doesn't change count, stays listpack
+    list.lmove(db, ['k', 'k', 'LEFT', 'RIGHT']);
+    expect(db.get('k')?.encoding).toBe('listpack');
+  });
+
+  // --- OBJECT ENCODING integration ---
+
+  it('OBJECT ENCODING returns listpack for small list', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k', 'a', 'b', 'c']);
+    expect(db.get('k')?.encoding).toBe('listpack');
+  });
+
+  it('OBJECT ENCODING returns quicklist for large list', () => {
+    const { db } = createDb();
+    const args: string[] = ['k'];
+    for (let i = 0; i <= 128; i++) args.push(`v${i}`);
+    list.rpush(db, args);
+    expect(db.get('k')?.encoding).toBe('quicklist');
+  });
+
+  // --- Initial encoding ---
+
+  it('new list created by LPUSH starts as listpack', () => {
+    const { db } = createDb();
+    list.lpush(db, ['k', 'a']);
+    expect(db.get('k')?.encoding).toBe('listpack');
+  });
+
+  it('new list created by RPUSH starts as listpack', () => {
+    const { db } = createDb();
+    list.rpush(db, ['k', 'a']);
+    expect(db.get('k')?.encoding).toBe('listpack');
+  });
+
+  it('new list created by LMOVE to new destination starts as listpack', () => {
+    const { db } = createDb();
+    list.rpush(db, ['src', 'a']);
+    list.lmove(db, ['src', 'dst', 'LEFT', 'RIGHT']);
+    expect(db.get('dst')?.encoding).toBe('listpack');
+  });
+
+  // --- Entry count transition with incremental pushes ---
+
+  it('stays listpack during incremental pushes up to 128', () => {
+    const { db } = createDb();
+    for (let i = 0; i < 128; i++) {
+      list.rpush(db, ['k', `v${i}`]);
+    }
+    expect(db.get('k')?.encoding).toBe('listpack');
+    // 129th element triggers transition
+    list.rpush(db, ['k', 'overflow']);
     expect(db.get('k')?.encoding).toBe('quicklist');
   });
 });
