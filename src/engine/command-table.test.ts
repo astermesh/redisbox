@@ -399,6 +399,11 @@ describe('createCommandTable (registry)', () => {
       'replconf',
       'psync',
       'waitaof',
+      'bgsave',
+      'bgrewriteaof',
+      'save',
+      'lastsave',
+      'shutdown',
     ];
 
     for (const name of expectedCommands) {
