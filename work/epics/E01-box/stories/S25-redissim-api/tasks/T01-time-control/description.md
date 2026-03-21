@@ -1,5 +1,7 @@
 # T01: Time Control
 
+**Status:** done
+
 Implement advanceTime(ms), freezeTime(), setTime(timestamp), unfreezeTime(). Time control affects expiration, OBJECT IDLETIME, stream IDs, blocking timeouts.
 
 ## Acceptance Criteria
