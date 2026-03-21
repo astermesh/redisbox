@@ -4,6 +4,12 @@
  * Implements all 8 Redis eviction policies. Before executing write commands
  * (those with the `denyoom` flag), the dispatcher calls `tryEvict()` to
  * ensure memory is within the configured `maxmemory` limit.
+ *
+ * LRU eviction uses Redis's approximated LRU algorithm:
+ * - Each key stores a 24-bit last-access timestamp (seconds resolution)
+ * - On eviction, sample `maxmemory-samples` random keys per database
+ * - Maintain an eviction pool (sorted array of 16 candidates by idle time)
+ * - Evict the candidate with the highest idle time from the pool
  */
 
 import type { RedisEngine } from './engine.ts';
@@ -12,6 +18,7 @@ import type { Database } from './database.ts';
 import type { Reply } from './types.ts';
 import { errorReply } from './types.ts';
 import { parseMemorySize } from './memory.ts';
+import { getLruClock, estimateIdleTime } from './lru.ts';
 
 export type EvictionPolicy =
   | 'noeviction'
@@ -34,9 +41,28 @@ const OOM_REPLY: Reply = errorReply(
  */
 const MAX_EVICTION_ITERATIONS = 10000;
 
+/** Size of the eviction pool, matching Redis EVPOOL_SIZE. */
+const EVPOOL_SIZE = 16;
+
+interface EvictionPoolEntry {
+  /** Idle time in milliseconds. */
+  idle: number;
+  /** Key name. */
+  key: string;
+  /** Database index. */
+  dbIndex: number;
+}
+
 export class EvictionManager {
   private readonly engine: RedisEngine;
   private readonly config: ConfigStore;
+
+  /**
+   * Eviction pool: sorted by idle time ascending (lowest idle first).
+   * The candidate with the highest idle time is at the end.
+   * Persists across eviction cycles for better approximation.
+   */
+  private readonly lruPool: EvictionPoolEntry[] = [];
 
   constructor(engine: RedisEngine, config: ConfigStore) {
     this.engine = engine;
@@ -160,14 +186,19 @@ export class EvictionManager {
   }
 
   /**
-   * Sample keys and evict the one with the oldest access time (smallest lruClock).
+   * Populate the eviction pool with sampled keys, then evict the candidate
+   * with the highest idle time. The pool persists across eviction cycles
+   * for better LRU approximation.
+   *
+   * This matches Redis's `evictionPoolPopulate()` + pool-based eviction.
    */
   private evictByLru(volatileOnly: boolean, samples: number): boolean {
-    let bestKey: string | null = null;
-    let bestDb: Database | null = null;
-    let bestClock = Infinity;
+    const currentClock = getLruClock(this.engine.clock());
 
-    for (const db of this.engine.databases) {
+    // Populate pool from all databases
+    for (let dbIdx = 0; dbIdx < this.engine.databases.length; dbIdx++) {
+      const db = this.engine.databases[dbIdx];
+      if (!db) continue;
       const keys = volatileOnly
         ? db.sampleVolatileKeys(samples, this.engine.rng)
         : db.sampleKeys(samples, this.engine.rng);
@@ -175,17 +206,76 @@ export class EvictionManager {
       for (const key of keys) {
         const entry = db.getRaw(key);
         if (!entry) continue;
-        if (entry.lruClock < bestClock) {
-          bestClock = entry.lruClock;
-          bestKey = key;
-          bestDb = db;
-        }
+
+        const idle = estimateIdleTime(currentClock, entry.lruClock);
+        this.insertIntoPool(idle, key, dbIdx);
       }
     }
 
-    if (bestKey && bestDb) {
-      bestDb.delete(bestKey);
-      return true;
+    // Evict from pool: scan from the end (highest idle) to find a valid key
+    return this.evictFromPool();
+  }
+
+  /**
+   * Insert a candidate into the eviction pool.
+   * The pool is sorted by idle time ascending (lowest first).
+   * If the pool is full and the candidate's idle time is less than or equal
+   * to the minimum in the pool, it is not inserted.
+   */
+  private insertIntoPool(idle: number, key: string, dbIndex: number): void {
+    // Skip if pool is full and this candidate is not more idle than the minimum
+    const poolMin = this.lruPool[0];
+    if (this.lruPool.length >= EVPOOL_SIZE && poolMin && poolMin.idle >= idle) {
+      return;
+    }
+
+    // Check if this key is already in the pool — if so, update its idle time
+    for (const existing of this.lruPool) {
+      if (existing.key === key && existing.dbIndex === dbIndex) {
+        existing.idle = idle;
+        this.lruPool.sort((a, b) => a.idle - b.idle);
+        return;
+      }
+    }
+
+    // Find insertion point (binary search for sorted insert)
+    let lo = 0;
+    let hi = this.lruPool.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      const midEntry = this.lruPool[mid];
+      if (midEntry && midEntry.idle < idle) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+
+    this.lruPool.splice(lo, 0, { idle, key, dbIndex });
+
+    // Trim pool to max size by removing the entry with lowest idle time
+    if (this.lruPool.length > EVPOOL_SIZE) {
+      this.lruPool.shift();
+    }
+  }
+
+  /**
+   * Evict the best candidate from the pool (highest idle time, at the end).
+   * Scans from the end to find a key that still exists.
+   * Returns true if a key was evicted.
+   */
+  private evictFromPool(): boolean {
+    while (this.lruPool.length > 0) {
+      const candidate = this.lruPool.pop();
+      if (!candidate) break;
+      const db = this.engine.databases[candidate.dbIndex];
+      if (!db) continue;
+
+      // Verify the key still exists (it may have been deleted since pool population)
+      if (db.getRaw(candidate.key)) {
+        db.delete(candidate.key);
+        return true;
+      }
     }
     return false;
   }

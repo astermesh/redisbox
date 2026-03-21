@@ -91,7 +91,8 @@ describe('Database', () => {
       db.set('k', 'string', 'raw', 'v');
       setTime(2000);
       const entry = db.get('k');
-      expect(entry?.lruClock).toBe(2000);
+      // lruClock is a 24-bit second-resolution value: 2000ms → 2
+      expect(entry?.lruClock).toBe(2);
     });
 
     it('getWithoutTouch does not update lruClock', () => {
@@ -99,7 +100,8 @@ describe('Database', () => {
       db.set('k', 'string', 'raw', 'v');
       setTime(2000);
       const entry = db.getWithoutTouch('k');
-      expect(entry?.lruClock).toBe(1000);
+      // lruClock stays at set-time: 1000ms → 1
+      expect(entry?.lruClock).toBe(1);
     });
 
     it('touch updates lruClock', () => {
@@ -107,7 +109,8 @@ describe('Database', () => {
       db.set('k', 'string', 'raw', 'v');
       setTime(3000);
       db.touch('k');
-      expect(db.getWithoutTouch('k')?.lruClock).toBe(3000);
+      // 3000ms → 3
+      expect(db.getWithoutTouch('k')?.lruClock).toBe(3);
     });
   });
 

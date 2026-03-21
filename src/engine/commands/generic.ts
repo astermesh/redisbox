@@ -17,6 +17,7 @@ import {
   unknownSubcommandError,
 } from '../types.ts';
 import type { CommandSpec } from '../command-table.ts';
+import { getLruClock, estimateIdleTime } from '../lru.ts';
 
 export function del(db: Database, args: string[]): Reply {
   let count = 0;
@@ -153,7 +154,8 @@ export function objectIdletimeWithClock(
   const key = args[0] ?? '';
   const entry = db.getWithoutTouch(key);
   if (!entry) return NIL;
-  return integerReply(Math.floor((clock() - entry.lruClock) / 1000));
+  const idle = estimateIdleTime(getLruClock(clock()), entry.lruClock);
+  return integerReply(Math.floor(idle / 1000));
 }
 
 export function objectFreq(db: Database, args: string[]): Reply {
