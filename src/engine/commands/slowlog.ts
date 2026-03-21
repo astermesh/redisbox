@@ -8,13 +8,18 @@ import type { Reply, CommandContext } from '../types.ts';
 import {
   arrayReply,
   bulkReply,
+  errorReply,
   integerReply,
   unknownSubcommandError,
-  NOT_INTEGER_ERR,
   OK,
   EMPTY_ARRAY,
 } from '../types.ts';
 import type { CommandSpec } from '../command-table.ts';
+
+const SLOWLOG_COUNT_ERR = errorReply(
+  'ERR',
+  'count should be greater than or equal to -1'
+);
 
 // ---------------------------------------------------------------------------
 // Subcommand handlers
@@ -25,13 +30,18 @@ export function slowlogGet(ctx: CommandContext, args: string[]): Reply {
 
   let count: number | undefined;
   if (args.length > 0) {
-    const n = parseInt(args[0] ?? '', 10);
-    if (isNaN(n) || (args[0] ?? '') !== String(n)) {
-      return NOT_INTEGER_ERR;
+    const raw = args[0] ?? '';
+    const n = parseInt(raw, 10);
+    if (isNaN(n) || raw !== String(n)) {
+      return SLOWLOG_COUNT_ERR;
+    }
+    if (n < -1) {
+      return SLOWLOG_COUNT_ERR;
     }
     count = n;
   }
 
+  // When count is undefined, SlowlogManager.get() returns default 10
   const entries = slowlog.get(count);
   if (entries.length === 0) return EMPTY_ARRAY;
 
@@ -63,12 +73,12 @@ export function slowlogHelp(): Reply {
   const lines = [
     'SLOWLOG <subcommand> [<arg> [value] [opt] ...]. Subcommands are:',
     'GET [<count>]',
-    '    Return top <count> entries from the slowlog (default: 128, -1 mean all).',
+    '    Return top <count> entries from the slowlog (default: 10, -1 mean all).',
     '    Entries are made of:',
     '        id, timestamp, time in microseconds, arguments vector, client',
     '        IP and port, client name',
     'LEN',
-    '    Return the number of entries in the slowlog.',
+    '    Return the length of the slowlog.',
     'RESET',
     '    Reset the slowlog.',
     'HELP',

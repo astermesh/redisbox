@@ -58,7 +58,7 @@ describe('SlowlogManager', () => {
       mgr.record(100, 0, 3, 1000 + i, ['CMD', String(i)], '', '');
     }
     expect(mgr.len()).toBe(3);
-    const entries = mgr.get();
+    const entries = mgr.get(-1);
     expect(entries[0]?.args).toEqual(['CMD', '4']);
     expect(entries[2]?.args).toEqual(['CMD', '2']);
   });
@@ -67,9 +67,18 @@ describe('SlowlogManager', () => {
     const mgr = new SlowlogManager();
     mgr.record(100, 0, 128, 1000, ['FIRST'], '', '');
     mgr.record(200, 0, 128, 2000, ['SECOND'], '', '');
-    const entries = mgr.get();
+    const entries = mgr.get(-1);
     expect(entries[0]?.args).toEqual(['SECOND']);
     expect(entries[1]?.args).toEqual(['FIRST']);
+  });
+
+  it('get without count returns default 10 entries', () => {
+    const mgr = new SlowlogManager();
+    for (let i = 0; i < 20; i++) {
+      mgr.record(100, 0, 128, 1000, ['CMD', String(i)], '', '');
+    }
+    expect(mgr.len()).toBe(20);
+    expect(mgr.get()).toHaveLength(10);
   });
 
   it('get with count returns limited entries', () => {
@@ -83,17 +92,17 @@ describe('SlowlogManager', () => {
 
   it('get with negative count returns all entries', () => {
     const mgr = new SlowlogManager();
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 15; i++) {
       mgr.record(100, 0, 128, 1000, ['CMD'], '', '');
     }
-    expect(mgr.get(-1)).toHaveLength(5);
+    expect(mgr.get(-1)).toHaveLength(15);
   });
 
   it('auto-increments IDs', () => {
     const mgr = new SlowlogManager();
     mgr.record(100, 0, 128, 1000, ['A'], '', '');
     mgr.record(100, 0, 128, 1000, ['B'], '', '');
-    const entries = mgr.get();
+    const entries = mgr.get(-1);
     expect(entries[0]?.id).toBe(1);
     expect(entries[1]?.id).toBe(0);
   });
@@ -104,7 +113,7 @@ describe('SlowlogManager', () => {
     mgr.record(100, 0, 128, 1000, ['CMD'], '', '');
     mgr.reset();
     expect(mgr.len()).toBe(0);
-    expect(mgr.get()).toEqual([]);
+    expect(mgr.get(-1)).toEqual([]);
   });
 
   it('IDs continue incrementing after reset', () => {
@@ -122,5 +131,38 @@ describe('SlowlogManager', () => {
     const entries = mgr.get();
     expect(entries[0]?.clientAddr).toBe('10.0.0.1:5000');
     expect(entries[0]?.clientName).toBe('my-client');
+  });
+
+  it('truncates arguments exceeding 32 entries', () => {
+    const mgr = new SlowlogManager();
+    const manyArgs = Array.from({ length: 50 }, (_, i) => `arg${i}`);
+    mgr.record(100, 0, 128, 1000, manyArgs, '', '');
+    const entry = mgr.get()[0];
+    expect(entry).toBeDefined();
+    if (!entry) return;
+    expect(entry.args).toHaveLength(32);
+    expect(entry.args[31]).toBe('... (19 more arguments)');
+  });
+
+  it('truncates individual arguments exceeding 128 bytes', () => {
+    const mgr = new SlowlogManager();
+    const longArg = 'x'.repeat(200);
+    mgr.record(100, 0, 128, 1000, ['SET', 'key', longArg], '', '');
+    const entry = mgr.get()[0];
+    expect(entry).toBeDefined();
+    if (!entry) return;
+    expect(entry.args[2]).toBe('x'.repeat(128) + '... (72 more bytes)');
+  });
+
+  it('truncates both arg count and arg length simultaneously', () => {
+    const mgr = new SlowlogManager();
+    const manyLongArgs = Array.from({ length: 40 }, () => 'y'.repeat(200));
+    mgr.record(100, 0, 128, 1000, manyLongArgs, '', '');
+    const entry = mgr.get()[0];
+    expect(entry).toBeDefined();
+    if (!entry) return;
+    expect(entry.args).toHaveLength(32);
+    expect(entry.args[30]).toBe('y'.repeat(128) + '... (72 more bytes)');
+    expect(entry.args[31]).toBe('... (9 more arguments)');
   });
 });

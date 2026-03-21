@@ -3,7 +3,16 @@
  *
  * Records commands whose execution time exceeds slowlog-log-slower-than
  * microseconds. Maintains a bounded FIFO buffer of slowlog-max-len entries.
+ *
+ * Matches Redis behavior:
+ * - Arguments are truncated to SLOWLOG_ENTRY_MAX_ARGC (32) entries
+ * - Individual argument strings are truncated to SLOWLOG_ENTRY_MAX_STRING (128) bytes
  */
+
+/** Max number of arguments stored per slowlog entry (Redis: SLOWLOG_ENTRY_MAX_ARGC) */
+const MAX_ARGC = 32;
+/** Max string length per argument (Redis: SLOWLOG_ENTRY_MAX_STRING) */
+const MAX_STRING = 128;
 
 export interface SlowlogEntry {
   /** Unique auto-incrementing ID */
@@ -12,12 +21,38 @@ export interface SlowlogEntry {
   timestamp: number;
   /** Execution duration in microseconds */
   duration: number;
-  /** Command and its arguments */
+  /** Command and its arguments (truncated per Redis rules) */
   args: string[];
   /** Client IP:port or empty string */
   clientAddr: string;
   /** Client name (from CLIENT SETNAME) or empty string */
   clientName: string;
+}
+
+/**
+ * Truncate argument list to match Redis slowlog behavior.
+ * - Max 32 args; extra args replaced with "... (N more arguments)"
+ * - Each arg truncated to 128 bytes; excess replaced with "... (N more bytes)"
+ */
+function truncateArgs(args: string[]): string[] {
+  let result: string[];
+  if (args.length > MAX_ARGC) {
+    result = args.slice(0, MAX_ARGC - 1);
+    result.push(`... (${args.length - MAX_ARGC + 1} more arguments)`);
+  } else {
+    result = args.slice();
+  }
+
+  for (let i = 0; i < result.length; i++) {
+    const arg = result[i] ?? '';
+    if (arg.length > MAX_STRING) {
+      result[i] =
+        arg.slice(0, MAX_STRING) +
+        `... (${arg.length - MAX_STRING} more bytes)`;
+    }
+  }
+
+  return result;
 }
 
 export class SlowlogManager {
@@ -54,7 +89,7 @@ export class SlowlogManager {
       id: this.nextId++,
       timestamp: timestampSec,
       duration: durationUs,
-      args,
+      args: truncateArgs(args),
       clientAddr,
       clientName,
     };
@@ -70,7 +105,10 @@ export class SlowlogManager {
 
   /** Return entries, optionally limited to count. Newest first. */
   get(count?: number): SlowlogEntry[] {
-    if (count === undefined || count < 0) {
+    if (count === undefined) {
+      return this.entries.slice(0, 10);
+    }
+    if (count < 0) {
       return this.entries.slice();
     }
     return this.entries.slice(0, count);

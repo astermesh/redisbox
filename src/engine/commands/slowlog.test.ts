@@ -72,6 +72,26 @@ describe('SLOWLOG GET', () => {
     expect(entry.value[5]).toEqual({ kind: 'bulk', value: 'app' });
   });
 
+  it('defaults to 10 entries without count', () => {
+    const ctx = createCtx();
+    for (let i = 0; i < 20; i++) {
+      ctx.engine.slowlog.record(
+        15000,
+        10000,
+        128,
+        1000,
+        ['CMD', String(i)],
+        '',
+        ''
+      );
+    }
+
+    const reply = slowlogGet(ctx, []);
+    expect(reply.kind).toBe('array');
+    if (reply.kind !== 'array') return;
+    expect(reply.value).toHaveLength(10);
+  });
+
   it('respects count parameter', () => {
     const ctx = createCtx();
     for (let i = 0; i < 5; i++) {
@@ -98,19 +118,29 @@ describe('SLOWLOG GET', () => {
     expect(reply).toEqual({
       kind: 'error',
       prefix: 'ERR',
-      message: 'value is not an integer or out of range',
+      message: 'count should be greater than or equal to -1',
     });
   });
 
-  it('returns all entries for negative count', () => {
+  it('returns error for count less than -1', () => {
     const ctx = createCtx();
-    for (let i = 0; i < 5; i++) {
+    const reply = slowlogGet(ctx, ['-2']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'count should be greater than or equal to -1',
+    });
+  });
+
+  it('returns all entries for count -1', () => {
+    const ctx = createCtx();
+    for (let i = 0; i < 15; i++) {
       ctx.engine.slowlog.record(15000, 10000, 128, 1000, ['CMD'], '', '');
     }
     const reply = slowlogGet(ctx, ['-1']);
     expect(reply.kind).toBe('array');
     if (reply.kind !== 'array') return;
-    expect(reply.value).toHaveLength(5);
+    expect(reply.value).toHaveLength(15);
   });
 
   it('returns empty for count 0', () => {
@@ -153,6 +183,15 @@ describe('SLOWLOG HELP', () => {
     for (const line of reply.value) {
       expect(line.kind).toBe('bulk');
     }
+  });
+
+  it('mentions default count of 10', () => {
+    const reply = slowlogHelp();
+    if (reply.kind !== 'array') return;
+    const text = reply.value
+      .map((v) => (v.kind === 'bulk' ? v.value : ''))
+      .join('\n');
+    expect(text).toContain('default: 10');
   });
 });
 

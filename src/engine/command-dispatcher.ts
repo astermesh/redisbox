@@ -311,8 +311,32 @@ export class CommandDispatcher {
       }
     }
 
-    // Execute handler
+    // Execute handler with timing for slowlog
+    const startUs = performance.now() * 1000;
     const result = def.handler(ctx, args);
+    const durationUs = Math.round(performance.now() * 1000 - startUs);
+
+    // Record to slowlog if duration exceeds threshold
+    if (ctx.config) {
+      const thresholdUs = parseInt(
+        ctx.config.get('slowlog-log-slower-than')[1] ?? '10000',
+        10
+      );
+      const maxLen = parseInt(
+        ctx.config.get('slowlog-max-len')[1] ?? '128',
+        10
+      );
+      const timestampSec = Math.floor(ctx.engine.clock() / 1000);
+      ctx.engine.slowlog.record(
+        durationUs,
+        thresholdUs,
+        maxLen,
+        timestampSec,
+        rawArgs,
+        '',
+        ctx.client?.name ?? ''
+      );
+    }
 
     // Sync subscriber mode from client state (set by SUBSCRIBE/UNSUBSCRIBE handlers)
     if (ctx.client) {
