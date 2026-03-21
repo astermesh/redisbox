@@ -251,7 +251,13 @@ export async function registerRedisBridge(
     redis = {}
 
     redis.call = function(...)
-      local raw = raw_call(...)
+      local ok, raw = pcall(raw_call, ...)
+      if not ok then
+        -- Match Redis: prefix error with @user_script:LINE:
+        local info = debug.getinfo(2, "Sl")
+        local line = info and info.currentline or 0
+        error("@user_script:" .. line .. ": " .. tostring(raw), 0)
+      end
       return decode(raw)
     end
 

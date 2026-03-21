@@ -301,6 +301,15 @@ describe('registerRedisBridge', () => {
       ).rejects.toThrow(/unknown command/);
     });
 
+    it('error includes @user_script prefix', async () => {
+      const executor = mockExecutor(new Map());
+      await registerRedisBridge(engine, executor);
+
+      await expect(
+        engine.execute('return redis.call("BADCMD")')
+      ).rejects.toThrow(/@user_script:-?\d+:/);
+    });
+
     it('propagates WRONGTYPE error', async () => {
       const executor = mockExecutor(
         new Map([
@@ -498,6 +507,152 @@ describe('registerRedisBridge', () => {
         'return redis.call("ECHO", "hello world")'
       );
       expect(result.values).toEqual(['hello world']);
+    });
+  });
+
+  // --- redis.call error caught by Lua pcall ---
+
+  describe('redis.call error caught by Lua pcall', () => {
+    it('pcall(redis.call) catches error with @user_script prefix', async () => {
+      const executor = mockExecutor(new Map());
+      await registerRedisBridge(engine, executor);
+
+      const result = await engine.execute(`
+        local ok, err = pcall(redis.call, "BADCMD")
+        return tostring(err)
+      `);
+      expect(result.values[0]).toMatch(/@user_script:-?\d+:.*unknown command/);
+    });
+
+    it('redis.pcall returns error without @user_script prefix', async () => {
+      const executor = mockExecutor(new Map());
+      await registerRedisBridge(engine, executor);
+
+      const result = await engine.execute(`
+        local r = redis.pcall("BADCMD")
+        return r.err
+      `);
+      // pcall error table should NOT have @user_script prefix
+      expect(result.values[0]).not.toMatch(/@user_script/);
+      expect(result.values[0]).toMatch(/unknown command/);
+    });
+  });
+
+  // --- nested array handling ---
+
+  describe('nested array handling', () => {
+    it('handles nested arrays from executor', async () => {
+      const executor = mockExecutor(
+        new Map([
+          [
+            'TEST',
+            arrayReply([
+              arrayReply([bulkReply('a'), bulkReply('b')]),
+              arrayReply([integerReply(1), integerReply(2)]),
+            ]),
+          ],
+        ])
+      );
+      await registerRedisBridge(engine, executor);
+
+      const result = await engine.execute(`
+        local r = redis.call("TEST")
+        return r[1][1] .. r[1][2] .. r[2][1] .. r[2][2]
+      `);
+      expect(result.values).toEqual(['ab12']);
+    });
+
+    it('handles nil elements in arrays (converted to false)', async () => {
+      const executor = mockExecutor(
+        new Map([
+          [
+            'TEST',
+            arrayReply([bulkReply('a'), bulkReply(null), bulkReply('c')]),
+          ],
+        ])
+      );
+      await registerRedisBridge(engine, executor);
+
+      const result = await engine.execute(`
+        local r = redis.call("TEST")
+        return tostring(r[1]) .. "," .. tostring(r[2]) .. "," .. tostring(r[3])
+      `);
+      expect(result.values).toEqual(['a,false,c']);
+    });
+
+    it('handles empty array reply', async () => {
+      const executor = mockExecutor(new Map([['KEYS', arrayReply([])]]));
+      await registerRedisBridge(engine, executor);
+
+      const result = await engine.execute(`
+        local r = redis.call("KEYS", "*")
+        return #r
+      `);
+      expect(result.values).toEqual([0]);
+    });
+  });
+
+  // --- error reply within array ---
+
+  describe('mixed reply types in arrays', () => {
+    it('handles error elements in array replies', async () => {
+      const executor = mockExecutor(
+        new Map([
+          [
+            'EXEC',
+            arrayReply([
+              statusReply('OK'),
+              errorReply('ERR', 'some error'),
+              integerReply(42),
+            ]),
+          ],
+        ])
+      );
+      await registerRedisBridge(engine, executor);
+
+      // Note: redis.call doesn't raise on error elements within arrays,
+      // only on top-level error replies
+      const result = await engine.execute(`
+        local r = redis.call("EXEC")
+        return r[1].ok .. "," .. r[2].err .. "," .. r[3]
+      `);
+      expect(result.values).toEqual(['OK,ERR some error,42']);
+    });
+  });
+
+  // --- nil-array reply ---
+
+  describe('nil-array reply', () => {
+    it('returns false for nil-array reply via redis.call', async () => {
+      const executor = mockExecutor(new Map([['TEST', NIL_ARRAY]]));
+      await registerRedisBridge(engine, executor);
+
+      const result = await engine.execute(`
+        return redis.call("TEST")
+      `);
+      expect(result.values).toEqual([false]);
+    });
+  });
+
+  // --- multiple sequential calls ---
+
+  describe('multiple sequential calls', () => {
+    it('handles multiple redis.call invocations', async () => {
+      let callCount = 0;
+      const executor: CommandExecutor = (args: string[]) => {
+        callCount++;
+        if (args[0]?.toUpperCase() === 'SET') return statusReply('OK');
+        if (args[0]?.toUpperCase() === 'GET')
+          return bulkReply('val' + callCount);
+        return errorReply('ERR', 'unknown');
+      };
+      await registerRedisBridge(engine, executor);
+
+      const result = await engine.execute(`
+        redis.call("SET", "k", "v")
+        return redis.call("GET", "k")
+      `);
+      expect(result.values).toEqual(['val2']);
     });
   });
 });
