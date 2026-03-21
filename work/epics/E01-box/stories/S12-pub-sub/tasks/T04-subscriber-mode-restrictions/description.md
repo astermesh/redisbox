@@ -1,5 +1,7 @@
 # T04: Subscriber Mode Restrictions
 
+**Status:** done
+
 When client has active subscriptions (channel or pattern count > 0), restrict to: SUBSCRIBE, UNSUBSCRIBE, PSUBSCRIBE, PUNSUBSCRIBE, SSUBSCRIBE, SUNSUBSCRIBE, PING, RESET, QUIT. All other commands return error: `-ERR Can't execute '<cmd>': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context`.
 
 ## Edge Cases
