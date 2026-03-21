@@ -8,6 +8,7 @@ import {
   wrongArityError,
   ZERO,
   NIL,
+  NIL_ARRAY,
   EMPTY_ARRAY,
   WRONGTYPE_ERR,
   NOT_FLOAT_ERR,
@@ -1061,27 +1062,31 @@ export function zrank(db: Database, args: string[]): Reply {
 
   const key = args[0] as string;
   const member = args[1] as string;
-  const withScore =
-    args.length === 3 && (args[2] as string).toUpperCase() === 'WITHSCORE';
+
+  let withScore = false;
+  if (args.length === 3) {
+    if ((args[2] as string).toUpperCase() === 'WITHSCORE') {
+      withScore = true;
+    } else {
+      return SYNTAX_ERR;
+    }
+  }
 
   const { zset, error } = getExistingZset(db, key);
   if (error) return error;
 
   if (!zset) {
-    if (withScore) return arrayReply([NIL, NIL]);
-    return NIL;
+    return withScore ? NIL_ARRAY : NIL;
   }
 
   const score = zset.dict.get(member);
   if (score === undefined) {
-    if (withScore) return arrayReply([NIL, NIL]);
-    return NIL;
+    return withScore ? NIL_ARRAY : NIL;
   }
 
   const rank = zset.sl.getRank(score, member);
   if (rank < 0) {
-    if (withScore) return arrayReply([NIL, NIL]);
-    return NIL;
+    return withScore ? NIL_ARRAY : NIL;
   }
 
   if (withScore) {
@@ -1099,27 +1104,31 @@ export function zrevrank(db: Database, args: string[]): Reply {
 
   const key = args[0] as string;
   const member = args[1] as string;
-  const withScore =
-    args.length === 3 && (args[2] as string).toUpperCase() === 'WITHSCORE';
+
+  let withScore = false;
+  if (args.length === 3) {
+    if ((args[2] as string).toUpperCase() === 'WITHSCORE') {
+      withScore = true;
+    } else {
+      return SYNTAX_ERR;
+    }
+  }
 
   const { zset, error } = getExistingZset(db, key);
   if (error) return error;
 
   if (!zset) {
-    if (withScore) return arrayReply([NIL, NIL]);
-    return NIL;
+    return withScore ? NIL_ARRAY : NIL;
   }
 
   const score = zset.dict.get(member);
   if (score === undefined) {
-    if (withScore) return arrayReply([NIL, NIL]);
-    return NIL;
+    return withScore ? NIL_ARRAY : NIL;
   }
 
   const rank = zset.sl.getRank(score, member);
   if (rank < 0) {
-    if (withScore) return arrayReply([NIL, NIL]);
-    return NIL;
+    return withScore ? NIL_ARRAY : NIL;
   }
 
   const revRank = zset.dict.size - 1 - rank;

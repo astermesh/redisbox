@@ -1530,14 +1530,25 @@ describe('ZRANK', () => {
     });
   });
 
-  it('returns nil array for WITHSCORE when member not found', () => {
+  it('returns nil for WITHSCORE when member not found', () => {
     const { db, rng } = createDb();
     sortedSet.zadd(db, ['k', '1', 'a'], rng);
     const result = sortedSet.zrank(db, ['k', 'nosuch', 'WITHSCORE']);
-    expect(result).toEqual({
-      kind: 'array',
-      value: [bulk(null), bulk(null)],
-    });
+    expect(result).toEqual({ kind: 'nil-array' });
+  });
+
+  it('returns nil-array for WITHSCORE when key not found', () => {
+    const { db } = createDb();
+    const result = sortedSet.zrank(db, ['nosuch', 'a', 'WITHSCORE']);
+    expect(result).toEqual({ kind: 'nil-array' });
+  });
+
+  it('returns syntax error for invalid third argument', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a'], rng);
+    expect(sortedSet.zrank(db, ['k', 'a', 'INVALID'])).toEqual(
+      err('ERR', 'syntax error')
+    );
   });
 
   it('returns wrong arity for bad args', () => {
@@ -1594,14 +1605,25 @@ describe('ZREVRANK', () => {
     });
   });
 
-  it('returns nil array for WITHSCORE when member not found', () => {
+  it('returns nil for WITHSCORE when member not found', () => {
     const { db, rng } = createDb();
     sortedSet.zadd(db, ['k', '1', 'a'], rng);
     const result = sortedSet.zrevrank(db, ['k', 'nosuch', 'WITHSCORE']);
-    expect(result).toEqual({
-      kind: 'array',
-      value: [bulk(null), bulk(null)],
-    });
+    expect(result).toEqual({ kind: 'nil-array' });
+  });
+
+  it('returns nil-array for WITHSCORE when key not found', () => {
+    const { db } = createDb();
+    const result = sortedSet.zrevrank(db, ['nosuch', 'a', 'WITHSCORE']);
+    expect(result).toEqual({ kind: 'nil-array' });
+  });
+
+  it('returns syntax error for invalid third argument', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a'], rng);
+    expect(sortedSet.zrevrank(db, ['k', 'a', 'INVALID'])).toEqual(
+      err('ERR', 'syntax error')
+    );
   });
 
   it('returns wrong arity for bad args', () => {
