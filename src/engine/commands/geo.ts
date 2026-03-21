@@ -201,7 +201,8 @@ function parseUnit(unit: string): number | null {
 }
 
 function formatDist(meters: number, unitFactor: number): string {
-  return formatFloat(meters / unitFactor);
+  // Redis uses %.4f formatting for distances (4 fixed decimal places)
+  return (meters / unitFactor).toFixed(4);
 }
 
 // --- Sorted set helpers (reuse pattern from sorted-set.ts) ---
@@ -541,7 +542,7 @@ export function geoadd(db: Database, args: string[], rng: () => number): Reply {
 // --- GEOPOS ---
 
 export function geopos(db: Database, args: string[]): Reply {
-  if (args.length < 2) {
+  if (args.length < 1) {
     return errorReply('ERR', "wrong number of arguments for 'geopos' command");
   }
 
@@ -602,7 +603,7 @@ export function geodist(db: Database, args: string[]): Reply {
 // --- GEOHASH ---
 
 export function geohash(db: Database, args: string[]): Reply {
-  if (args.length < 2) {
+  if (args.length < 1) {
     return errorReply('ERR', "wrong number of arguments for 'geohash' command");
   }
 
@@ -734,6 +735,9 @@ function parseGeoSearchArgs(
       if (!Number.isInteger(countVal) || countVal < 0) {
         return errorReply('ERR', 'value is not an integer or out of range');
       }
+      if (countVal === 0) {
+        return errorReply('ERR', 'COUNT must be > 0');
+      }
       count = countVal;
       i++;
       // Check for ANY
@@ -804,8 +808,6 @@ export function geosearch(db: Database, args: string[]): Reply {
 
   if (!zset) return EMPTY_ARRAY;
 
-  if (params.count === 0) return EMPTY_ARRAY;
-
   const results = geoSearch(
     zset,
     params.fromLon,
@@ -865,11 +867,6 @@ export function geosearchstore(
     return ZERO;
   }
 
-  if (params.count === 0) {
-    db.delete(dst);
-    return ZERO;
-  }
-
   const results = geoSearch(
     srcZset,
     params.fromLon,
@@ -910,7 +907,7 @@ export function georadius(
   args: string[],
   rng: () => number
 ): Reply {
-  if (args.length < 6) {
+  if (args.length < 5) {
     return errorReply(
       'ERR',
       "wrong number of arguments for 'georadius' command"
@@ -969,6 +966,7 @@ export function georadius(
       const countVal = Number(args[i]);
       if (!Number.isInteger(countVal) || countVal < 0)
         return errorReply('ERR', 'value is not an integer or out of range');
+      if (countVal === 0) return errorReply('ERR', 'COUNT must be > 0');
       count = countVal;
       i++;
       if (i < args.length && (args[i] as string).toUpperCase() === 'ANY') {
@@ -1001,11 +999,6 @@ export function georadius(
   const { zset, error } = getExistingZset(db, key);
   if (error) return error;
   if (!zset) {
-    if (storeKey || storeDistKey) return ZERO;
-    return EMPTY_ARRAY;
-  }
-
-  if (count === 0) {
     if (storeKey || storeDistKey) return ZERO;
     return EMPTY_ARRAY;
   }
@@ -1056,7 +1049,7 @@ export function georadiusbymember(
   args: string[],
   rng: () => number
 ): Reply {
-  if (args.length < 5) {
+  if (args.length < 4) {
     return errorReply(
       'ERR',
       "wrong number of arguments for 'georadiusbymember' command"
@@ -1083,7 +1076,7 @@ export function georadiusbymember(
 // --- GEORADIUS_RO ---
 
 export function georadius_ro(db: Database, args: string[]): Reply {
-  if (args.length < 6) {
+  if (args.length < 5) {
     return errorReply(
       'ERR',
       "wrong number of arguments for 'georadius_ro' command"
@@ -1106,7 +1099,7 @@ export function georadius_ro(db: Database, args: string[]): Reply {
 // --- GEORADIUSBYMEMBER_RO ---
 
 export function georadiusbymember_ro(db: Database, args: string[]): Reply {
-  if (args.length < 5) {
+  if (args.length < 4) {
     return errorReply(
       'ERR',
       "wrong number of arguments for 'georadiusbymember_ro' command"
