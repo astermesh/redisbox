@@ -31,9 +31,10 @@ export const EVENT_FLAGS = {
   STREAM: 1 << 10, // t
   KEY_MISS: 1 << 11, // m
   MODULE: 1 << 12, // d
+  NEW: 1 << 13, // n
 } as const;
 
-/** All type flags combined — the A alias. Does NOT include K, E, m, or d. */
+/** All type flags combined — the A alias. Includes MODULE, but NOT K, E, m, or n. */
 const ALL_TYPE_FLAGS =
   EVENT_FLAGS.GENERIC |
   EVENT_FLAGS.STRING |
@@ -43,7 +44,8 @@ const ALL_TYPE_FLAGS =
   EVENT_FLAGS.SORTEDSET |
   EVENT_FLAGS.EXPIRED |
   EVENT_FLAGS.EVICTED |
-  EVENT_FLAGS.STREAM;
+  EVENT_FLAGS.STREAM |
+  EVENT_FLAGS.MODULE;
 
 // Character → flag mapping
 const CHAR_TO_FLAG: Record<string, number> = {
@@ -60,7 +62,29 @@ const CHAR_TO_FLAG: Record<string, number> = {
   t: EVENT_FLAGS.STREAM,
   m: EVENT_FLAGS.KEY_MISS,
   d: EVENT_FLAGS.MODULE,
+  n: EVENT_FLAGS.NEW,
 };
+
+/**
+ * Ordered flag→char pairs for serialization.
+ * Order matches Redis `keyspaceEventsFlagsToString()`.
+ */
+const FLAG_TO_CHAR: [number, string][] = [
+  [EVENT_FLAGS.GENERIC, 'g'],
+  [EVENT_FLAGS.STRING, '$'],
+  [EVENT_FLAGS.LIST, 'l'],
+  [EVENT_FLAGS.SET, 's'],
+  [EVENT_FLAGS.HASH, 'h'],
+  [EVENT_FLAGS.SORTEDSET, 'z'],
+  [EVENT_FLAGS.EXPIRED, 'x'],
+  [EVENT_FLAGS.EVICTED, 'e'],
+  [EVENT_FLAGS.STREAM, 't'],
+  [EVENT_FLAGS.MODULE, 'd'],
+  [EVENT_FLAGS.NEW, 'n'],
+  [EVENT_FLAGS.KEYSPACE, 'K'],
+  [EVENT_FLAGS.KEYEVENT, 'E'],
+  [EVENT_FLAGS.KEY_MISS, 'm'],
+];
 
 // ---------------------------------------------------------------------------
 // Flag parsing
@@ -69,6 +93,7 @@ const CHAR_TO_FLAG: Record<string, number> = {
 /**
  * Parse a `notify-keyspace-events` config string into a bitmask.
  * Mirrors `keyspaceEventsStringToFlags()` from Redis `config.c`.
+ * Returns -1 if the string contains invalid characters.
  */
 export function parseKeyspaceEventFlags(config: string): number {
   let flags = 0;
@@ -77,12 +102,52 @@ export function parseKeyspaceEventFlags(config: string): number {
       flags |= ALL_TYPE_FLAGS;
     } else {
       const flag = CHAR_TO_FLAG[ch];
-      if (flag !== undefined) {
-        flags |= flag;
+      if (flag === undefined) {
+        return -1;
       }
+      flags |= flag;
     }
   }
   return flags;
+}
+
+/**
+ * Convert a bitmask back to a canonical config string.
+ * Mirrors `keyspaceEventsFlagsToString()` from Redis `notify.c`.
+ * Collapses all type flags to 'A' when appropriate.
+ */
+export function keyspaceEventsFlagsToString(flags: number): string {
+  if (flags === 0) return '';
+
+  let result = '';
+
+  // Collapse to 'A' if all type flags are set
+  if ((flags & ALL_TYPE_FLAGS) === ALL_TYPE_FLAGS) {
+    result += 'A';
+    // Emit remaining non-type flags
+    for (const [flag, ch] of FLAG_TO_CHAR) {
+      if (flag & ALL_TYPE_FLAGS) continue; // skip type flags — covered by A
+      if (flags & flag) result += ch;
+    }
+  } else {
+    for (const [flag, ch] of FLAG_TO_CHAR) {
+      if (flags & flag) result += ch;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Validate and normalize a `notify-keyspace-events` config value.
+ * Returns the normalized string, or null if invalid characters are present.
+ * Used by ConfigStore as a normalizer for this parameter.
+ */
+export function normalizeKeyspaceEventConfig(value: string): string | null {
+  if (value === '') return '';
+  const flags = parseKeyspaceEventFlags(value);
+  if (flags === -1) return null;
+  return keyspaceEventsFlagsToString(flags);
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +184,7 @@ export function notifyKeyspaceEvent(
   }
 
   const flags = parseKeyspaceEventFlags(configValue);
+  if (flags <= 0) return;
 
   // Must have at least one of K or E, plus the event type must be enabled
   if (!(flags & (EVENT_FLAGS.KEYSPACE | EVENT_FLAGS.KEYEVENT))) {

@@ -4,6 +4,8 @@ import { ConfigStore } from '../config-store.ts';
 import {
   notifyKeyspaceEvent,
   parseKeyspaceEventFlags,
+  keyspaceEventsFlagsToString,
+  normalizeKeyspaceEventConfig,
   EVENT_FLAGS,
 } from './keyspace-events.ts';
 import type { Reply } from './types.ts';
@@ -23,7 +25,7 @@ describe('parseKeyspaceEventFlags', () => {
     expect(flags & EVENT_FLAGS.KEYEVENT).not.toBe(0);
   });
 
-  it('parses A flag as alias for g$lshzxet', () => {
+  it('parses A flag as alias for g$lshzxetd', () => {
     const flags = parseKeyspaceEventFlags('A');
     expect(flags & EVENT_FLAGS.GENERIC).not.toBe(0);
     expect(flags & EVENT_FLAGS.STRING).not.toBe(0);
@@ -34,9 +36,12 @@ describe('parseKeyspaceEventFlags', () => {
     expect(flags & EVENT_FLAGS.EXPIRED).not.toBe(0);
     expect(flags & EVENT_FLAGS.EVICTED).not.toBe(0);
     expect(flags & EVENT_FLAGS.STREAM).not.toBe(0);
-    // A does NOT include K or E
+    expect(flags & EVENT_FLAGS.MODULE).not.toBe(0);
+    // A does NOT include K, E, m, or n
     expect(flags & EVENT_FLAGS.KEYSPACE).toBe(0);
     expect(flags & EVENT_FLAGS.KEYEVENT).toBe(0);
+    expect(flags & EVENT_FLAGS.KEY_MISS).toBe(0);
+    expect(flags & EVENT_FLAGS.NEW).toBe(0);
   });
 
   it('parses combined flags', () => {
@@ -59,12 +64,71 @@ describe('parseKeyspaceEventFlags', () => {
     expect(parseKeyspaceEventFlags('t') & EVENT_FLAGS.STREAM).not.toBe(0);
     expect(parseKeyspaceEventFlags('m') & EVENT_FLAGS.KEY_MISS).not.toBe(0);
     expect(parseKeyspaceEventFlags('d') & EVENT_FLAGS.MODULE).not.toBe(0);
+    expect(parseKeyspaceEventFlags('n') & EVENT_FLAGS.NEW).not.toBe(0);
   });
 
-  it('ignores unknown characters', () => {
-    const flags = parseKeyspaceEventFlags('KQZ');
-    expect(flags & EVENT_FLAGS.KEYSPACE).not.toBe(0);
-    // Q and Z are not valid flags — should be ignored
+  it('returns -1 for unknown characters', () => {
+    expect(parseKeyspaceEventFlags('KQZ')).toBe(-1);
+    expect(parseKeyspaceEventFlags('Q')).toBe(-1);
+    expect(parseKeyspaceEventFlags('Kg!')).toBe(-1);
+  });
+});
+
+describe('keyspaceEventsFlagsToString', () => {
+  it('returns empty string for 0', () => {
+    expect(keyspaceEventsFlagsToString(0)).toBe('');
+  });
+
+  it('round-trips individual flags', () => {
+    expect(keyspaceEventsFlagsToString(EVENT_FLAGS.KEYSPACE)).toBe('K');
+    expect(keyspaceEventsFlagsToString(EVENT_FLAGS.KEYEVENT)).toBe('E');
+    expect(keyspaceEventsFlagsToString(EVENT_FLAGS.GENERIC)).toBe('g');
+    expect(keyspaceEventsFlagsToString(EVENT_FLAGS.STRING)).toBe('$');
+    expect(keyspaceEventsFlagsToString(EVENT_FLAGS.KEY_MISS)).toBe('m');
+    expect(keyspaceEventsFlagsToString(EVENT_FLAGS.NEW)).toBe('n');
+  });
+
+  it('collapses all type flags to A', () => {
+    const flags = parseKeyspaceEventFlags('AK');
+    expect(keyspaceEventsFlagsToString(flags)).toBe('AK');
+  });
+
+  it('does not use A when not all type flags present', () => {
+    const flags = parseKeyspaceEventFlags('Kg$l');
+    const result = keyspaceEventsFlagsToString(flags);
+    expect(result).not.toContain('A');
+    expect(result).toContain('K');
+    expect(result).toContain('g');
+    expect(result).toContain('$');
+    expect(result).toContain('l');
+  });
+
+  it('normalizes order — type flags before K/E/m', () => {
+    const flags = parseKeyspaceEventFlags('Kg');
+    expect(keyspaceEventsFlagsToString(flags)).toBe('gK');
+  });
+
+  it('deduplicates via round-trip', () => {
+    const flags = parseKeyspaceEventFlags('KKKggg');
+    expect(keyspaceEventsFlagsToString(flags)).toBe('gK');
+  });
+});
+
+describe('normalizeKeyspaceEventConfig', () => {
+  it('returns empty for empty', () => {
+    expect(normalizeKeyspaceEventConfig('')).toBe('');
+  });
+
+  it('returns null for invalid chars', () => {
+    expect(normalizeKeyspaceEventConfig('KQ')).toBeNull();
+  });
+
+  it('normalizes valid config', () => {
+    expect(normalizeKeyspaceEventConfig('KKKggg')).toBe('gK');
+  });
+
+  it('normalizes to A when all type flags present', () => {
+    expect(normalizeKeyspaceEventConfig('Kg$lshzxetd')).toBe('AK');
   });
 });
 
@@ -168,6 +232,18 @@ describe('notifyKeyspaceEvent', () => {
 
     messages.length = 0;
     notifyKeyspaceEvent(config, pubsub, EVENT_FLAGS.HASH, 'hset', 'mykey', 0);
+    expect(messages).toHaveLength(1);
+
+    // A includes MODULE
+    messages.length = 0;
+    notifyKeyspaceEvent(
+      config,
+      pubsub,
+      EVENT_FLAGS.MODULE,
+      'module-event',
+      'mykey',
+      0
+    );
     expect(messages).toHaveLength(1);
   });
 
@@ -285,5 +361,30 @@ describe('notifyKeyspaceEvent', () => {
       0
     );
     expect(messages).toHaveLength(1);
+  });
+
+  it('handles new key (n) event type', () => {
+    config.set('notify-keyspace-events', 'Kn');
+    pubsub.subscribe(1, '__keyspace@0__:mykey');
+    notifyKeyspaceEvent(config, pubsub, EVENT_FLAGS.NEW, 'new', 'mykey', 0);
+    expect(messages).toHaveLength(1);
+  });
+
+  it('config normalization rejects invalid characters', () => {
+    const err = config.set('notify-keyspace-events', 'KQ');
+    expect(err).not.toBeNull();
+    expect(err).toContain('Invalid argument');
+  });
+
+  it('config normalizes and round-trips through flags', () => {
+    config.set('notify-keyspace-events', 'KKKggg');
+    const result = config.get('notify-keyspace-events');
+    expect(result[1]).toBe('gK');
+  });
+
+  it('config collapses to A when all type flags present', () => {
+    config.set('notify-keyspace-events', 'KEg$lshzxetd');
+    const result = config.get('notify-keyspace-events');
+    expect(result[1]).toBe('AKE');
   });
 });
