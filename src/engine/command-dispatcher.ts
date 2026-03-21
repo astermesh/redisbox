@@ -10,6 +10,8 @@ import {
   wrongArityError,
 } from './types.ts';
 import type { AclUser } from './acl-store.ts';
+import { resolveIbiHooks } from './hooks/ibi.ts';
+import type { CommandHookCtx } from './hooks/ibi.ts';
 
 export interface QueuedCommand {
   def: CommandDefinition;
@@ -453,5 +455,72 @@ export class CommandDispatcher {
     }
 
     return result;
+  }
+
+  /**
+   * Async dispatch that routes commands through IBI hooks.
+   *
+   * Falls back to synchronous dispatch when no IBI hooks are registered.
+   * The hook chain is: redis:command → family hooks → actual handler.
+   */
+  async dispatchAsync(
+    state: TransactionState,
+    ctx: CommandContext,
+    rawArgs: string[]
+  ): Promise<Reply> {
+    const ibi = ctx.ibi;
+
+    // Fast path: no hooks registered — skip async overhead
+    if (!ibi || !ibi.hasHooks) {
+      return this.dispatch(state, ctx, rawArgs);
+    }
+
+    // We need to identify the command definition to determine categories
+    // for hook resolution. Re-do minimal lookup here.
+    if (rawArgs.length === 0) {
+      return this.dispatch(state, ctx, rawArgs);
+    }
+
+    const cmdName = rawArgs[0] ?? '';
+    const upperName = cmdName.toUpperCase();
+    const args = rawArgs.slice(1);
+
+    // Skip hooks for control-flow commands that are handled specially
+    // (subscribe mode, MULTI/EXEC/DISCARD, RESET, WATCH/UNWATCH)
+    if (
+      state.subscribed ||
+      state.inMulti ||
+      upperName === 'MULTI' ||
+      upperName === 'EXEC' ||
+      upperName === 'DISCARD' ||
+      upperName === 'WATCH' ||
+      upperName === 'UNWATCH' ||
+      upperName === 'RESET'
+    ) {
+      return this.dispatch(state, ctx, rawArgs);
+    }
+
+    const def = this.table.get(cmdName);
+    if (!def) {
+      return this.dispatch(state, ctx, rawArgs);
+    }
+
+    // Build hook context
+    const hookCtx: CommandHookCtx = {
+      command: upperName,
+      args,
+      clientId: ctx.client?.id ?? 0,
+      db: ctx.client?.dbIndex ?? 0,
+      meta: {
+        categories: def.categories,
+        flags: def.flags,
+      },
+    };
+
+    const familyHooks = resolveIbiHooks(def.categories);
+
+    return ibi.execute(hookCtx, familyHooks, () =>
+      this.dispatch(state, ctx, rawArgs)
+    );
   }
 }
