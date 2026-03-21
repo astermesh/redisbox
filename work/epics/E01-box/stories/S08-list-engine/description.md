@@ -1,5 +1,7 @@
 # S08: List Type Engine
 
+**Status:** done
+
 Implement all non-blocking list commands (~15 non-blocking). Lists are ordered sequences supporting push/pop from both ends. Must support encoding transitions (listpack to quicklist). Blocking list commands covered in S14.
 
 ---
