@@ -900,4 +900,244 @@ describe('CommandDispatcher', () => {
       expect(pingResult).toEqual({ kind: 'status', value: 'PONG' });
     });
   });
+
+  describe('ACL permission enforcement', () => {
+    let engine: import('./engine.ts').RedisEngine;
+    let client: ClientStateObj;
+    let aclCtx: CommandContext;
+
+    beforeEach(() => {
+      const setup = createCtx();
+      engine = setup.engine;
+      client = new ClientStateObj(1, 100);
+      client.authenticated = true;
+      client.username = 'testuser';
+      aclCtx = {
+        db: engine.db(0),
+        engine,
+        client,
+        acl: engine.acl,
+      };
+    });
+
+    it('allows commands when user has allCommands', () => {
+      const user = engine.acl.createOrGetUser('testuser');
+      user.enabled = true;
+      user.allCommands = true;
+      user.allKeys = true;
+
+      aclCtx.db.set('k', 'string', 'raw', 'val');
+      const result = dispatcher.dispatch(state, aclCtx, ['GET', 'k']);
+      expect(result).toEqual({ kind: 'bulk', value: 'val' });
+    });
+
+    it('rejects commands when user lacks allCommands', () => {
+      const user = engine.acl.createOrGetUser('testuser');
+      user.enabled = true;
+      user.allCommands = false;
+      user.allKeys = true;
+
+      const result = dispatcher.dispatch(state, aclCtx, ['GET', 'k']);
+      expect(result).toEqual({
+        kind: 'error',
+        prefix: 'NOPERM',
+        message: "this user has no permissions to run the 'get' command",
+      });
+    });
+
+    it('rejects key access when user lacks allKeys', () => {
+      const user = engine.acl.createOrGetUser('testuser');
+      user.enabled = true;
+      user.allCommands = true;
+      user.allKeys = false;
+
+      const result = dispatcher.dispatch(state, aclCtx, ['GET', 'mykey']);
+      expect(result).toEqual({
+        kind: 'error',
+        prefix: 'NOPERM',
+        message:
+          'this user has no permissions to access one of the keys used as arguments',
+      });
+    });
+
+    it('allows keyless commands when user lacks allKeys', () => {
+      const user = engine.acl.createOrGetUser('testuser');
+      user.enabled = true;
+      user.allCommands = true;
+      user.allKeys = false;
+
+      const result = dispatcher.dispatch(state, aclCtx, ['PING']);
+      expect(result).toEqual({ kind: 'status', value: 'PONG' });
+    });
+
+    it('rejects pubsub commands when user lacks allChannels', () => {
+      const user = engine.acl.createOrGetUser('testuser');
+      user.enabled = true;
+      user.allCommands = true;
+      user.allKeys = true;
+      user.allChannels = false;
+
+      aclCtx.pubsub = engine.pubsub;
+      const result = dispatcher.dispatch(state, aclCtx, ['SUBSCRIBE', 'ch1']);
+      expect(result).toEqual({
+        kind: 'error',
+        prefix: 'NOPERM',
+        message:
+          'this user has no permissions to access one of the channels used as arguments',
+      });
+    });
+
+    it('allows pubsub when user has allChannels', () => {
+      const user = engine.acl.createOrGetUser('testuser');
+      user.enabled = true;
+      user.allCommands = true;
+      user.allKeys = true;
+      user.allChannels = true;
+
+      aclCtx.pubsub = engine.pubsub;
+      const result = dispatcher.dispatch(state, aclCtx, ['SUBSCRIBE', 'ch1']);
+      expect(result.kind).not.toBe('error');
+    });
+
+    it('skips ACL check for noauth commands (AUTH)', () => {
+      const user = engine.acl.createOrGetUser('testuser');
+      user.enabled = true;
+      user.allCommands = false;
+      user.allKeys = false;
+
+      const result = dispatcher.dispatch(state, aclCtx, ['AUTH', 'pass']);
+      // AUTH has noauth flag — should not be blocked by ACL
+      if (result.kind === 'error') {
+        const err = result as {
+          kind: 'error';
+          prefix: string;
+          message: string;
+        };
+        expect(err.prefix).not.toBe('NOPERM');
+      }
+    });
+
+    it('skips ACL check when no ACL store is present', () => {
+      const noAclCtx: CommandContext = {
+        db: aclCtx.db,
+        engine,
+        client,
+      };
+      noAclCtx.db.set('k', 'string', 'raw', 'val');
+      const result = dispatcher.dispatch(state, noAclCtx, ['GET', 'k']);
+      expect(result).toEqual({ kind: 'bulk', value: 'val' });
+    });
+
+    it('skips ACL check when no client is present', () => {
+      const noClientCtx: CommandContext = {
+        db: aclCtx.db,
+        engine,
+        acl: engine.acl,
+      };
+      noClientCtx.db.set('k', 'string', 'raw', 'val');
+      const result = dispatcher.dispatch(state, noClientCtx, ['GET', 'k']);
+      expect(result).toEqual({ kind: 'bulk', value: 'val' });
+    });
+
+    it('allows default user with full permissions', () => {
+      client.username = 'default';
+      aclCtx.db.set('k', 'string', 'raw', 'val');
+      const result = dispatcher.dispatch(state, aclCtx, ['GET', 'k']);
+      expect(result).toEqual({ kind: 'bulk', value: 'val' });
+    });
+
+    it('rejects commands for nonexistent user', () => {
+      client.username = 'ghost';
+      const result = dispatcher.dispatch(state, aclCtx, ['GET', 'k']);
+      expect(result).toEqual({
+        kind: 'error',
+        prefix: 'NOPERM',
+        message: "this user has no permissions to run the 'get' command",
+      });
+    });
+
+    it('logs command denial to ACL log', () => {
+      const user = engine.acl.createOrGetUser('testuser');
+      user.enabled = true;
+      user.allCommands = false;
+
+      dispatcher.dispatch(state, aclCtx, ['GET', 'k']);
+      const log = engine.acl.getLog();
+      expect(log.length).toBeGreaterThan(0);
+      expect(log[0]?.reason).toBe('command');
+      expect(log[0]?.object).toBe('get');
+      expect(log[0]?.username).toBe('testuser');
+    });
+
+    it('logs key denial to ACL log', () => {
+      const user = engine.acl.createOrGetUser('testuser');
+      user.enabled = true;
+      user.allCommands = true;
+      user.allKeys = false;
+
+      dispatcher.dispatch(state, aclCtx, ['GET', 'mykey']);
+      const log = engine.acl.getLog();
+      expect(log.length).toBeGreaterThan(0);
+      expect(log[0]?.reason).toBe('key');
+      expect(log[0]?.object).toBe('mykey');
+      expect(log[0]?.username).toBe('testuser');
+    });
+
+    it('logs channel denial to ACL log', () => {
+      const user = engine.acl.createOrGetUser('testuser');
+      user.enabled = true;
+      user.allCommands = true;
+      user.allKeys = true;
+      user.allChannels = false;
+
+      aclCtx.pubsub = engine.pubsub;
+      dispatcher.dispatch(state, aclCtx, ['SUBSCRIBE', 'secret-ch']);
+      const log = engine.acl.getLog();
+      expect(log.length).toBeGreaterThan(0);
+      expect(log[0]?.reason).toBe('channel');
+      expect(log[0]?.object).toBe('secret-ch');
+      expect(log[0]?.username).toBe('testuser');
+    });
+
+    it('rejects commands in MULTI mode and returns NOPERM instead of QUEUED', () => {
+      const user = engine.acl.createOrGetUser('testuser');
+      user.enabled = true;
+      user.allCommands = false;
+
+      state.inMulti = true;
+      const result = dispatcher.dispatch(state, aclCtx, ['GET', 'k']);
+      expect(result).toEqual({
+        kind: 'error',
+        prefix: 'NOPERM',
+        message: "this user has no permissions to run the 'get' command",
+      });
+      // Should NOT be queued
+      expect(state.multiQueue).toHaveLength(0);
+    });
+
+    it('checks key permission for multi-key commands', () => {
+      const user = engine.acl.createOrGetUser('testuser');
+      user.enabled = true;
+      user.allCommands = true;
+      user.allKeys = false;
+
+      const result = dispatcher.dispatch(state, aclCtx, ['MGET', 'k1', 'k2']);
+      expect(result).toEqual({
+        kind: 'error',
+        prefix: 'NOPERM',
+        message:
+          'this user has no permissions to access one of the keys used as arguments',
+      });
+    });
+
+    it('uses lowercase command name in NOPERM message', () => {
+      const user = engine.acl.createOrGetUser('testuser');
+      user.enabled = true;
+      user.allCommands = false;
+
+      const result = dispatcher.dispatch(state, aclCtx, ['SET', 'k', 'v']);
+      const err = result as { kind: 'error'; prefix: string; message: string };
+      expect(err.message).toContain("'set'");
+    });
+  });
 });

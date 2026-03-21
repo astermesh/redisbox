@@ -9,6 +9,7 @@ import {
   unknownCommandError,
   wrongArityError,
 } from './types.ts';
+import type { AclUser } from './acl-store.ts';
 
 export interface QueuedCommand {
   def: CommandDefinition;
@@ -35,6 +36,23 @@ export function createTransactionState(): TransactionState {
 
 const QUEUED: Reply = statusReply('QUEUED');
 const NOAUTH_ERR: Reply = errorReply('NOAUTH', 'Authentication required.');
+
+function nopermCommandError(cmdName: string): Reply {
+  return errorReply(
+    'NOPERM',
+    `this user has no permissions to run the '${cmdName.toLowerCase()}' command`
+  );
+}
+
+const NOPERM_KEY_ERR: Reply = errorReply(
+  'NOPERM',
+  'this user has no permissions to access one of the keys used as arguments'
+);
+
+const NOPERM_CHANNEL_ERR: Reply = errorReply(
+  'NOPERM',
+  'this user has no permissions to access one of the channels used as arguments'
+);
 
 /**
  * Commands allowed in subscribe mode (Redis 7.0+).
@@ -83,6 +101,77 @@ function requiresAuth(ctx: CommandContext): boolean {
   const result = ctx.config.get('requirepass');
   const pass = result[1] ?? '';
   return pass.length > 0;
+}
+
+/**
+ * Check ACL permissions for the current user against the command and its args.
+ * Returns null if permitted, or a NOPERM Reply if denied.
+ */
+function checkAclPermission(
+  ctx: CommandContext,
+  def: CommandDefinition,
+  args: string[]
+): Reply | null {
+  if (!ctx.acl || !ctx.client) return null;
+
+  const user: AclUser | undefined = ctx.acl.getUser(ctx.client.username);
+
+  // Unknown user — deny command
+  if (!user) {
+    ctx.acl.addLogEntry(
+      'command',
+      'toplevel',
+      def.name.toLowerCase(),
+      ctx.client.username,
+      `id=${ctx.client.id}`,
+      ctx.engine.clock()
+    );
+    return nopermCommandError(def.name);
+  }
+
+  // Command permission check
+  if (!user.allCommands) {
+    ctx.acl.addLogEntry(
+      'command',
+      'toplevel',
+      def.name.toLowerCase(),
+      ctx.client.username,
+      `id=${ctx.client.id}`,
+      ctx.engine.clock()
+    );
+    return nopermCommandError(def.name);
+  }
+
+  // Key permission check — only for commands that access keys
+  if (!user.allKeys && def.firstKey > 0) {
+    // Find the first key for logging
+    const firstKeyArg = args[def.firstKey - 1] ?? '';
+    ctx.acl.addLogEntry(
+      'key',
+      'toplevel',
+      firstKeyArg,
+      ctx.client.username,
+      `id=${ctx.client.id}`,
+      ctx.engine.clock()
+    );
+    return NOPERM_KEY_ERR;
+  }
+
+  // Channel permission check — only for pubsub commands
+  if (!user.allChannels && def.flags.has('pubsub') && args.length > 0) {
+    const firstChannel = args[0] ?? '';
+    ctx.acl.addLogEntry(
+      'channel',
+      'toplevel',
+      firstChannel,
+      ctx.client.username,
+      `id=${ctx.client.id}`,
+      ctx.engine.clock()
+    );
+    return NOPERM_CHANNEL_ERR;
+  }
+
+  return null;
 }
 
 export class CommandDispatcher {
@@ -263,6 +352,12 @@ export class CommandDispatcher {
     // Auth check: reject commands without noauth flag when not authenticated
     if (!def.flags.has('noauth') && requiresAuth(ctx)) {
       return NOAUTH_ERR;
+    }
+
+    // ACL permission check: skip for noauth commands (AUTH, HELLO, QUIT, RESET)
+    if (!def.flags.has('noauth')) {
+      const aclDenied = checkAclPermission(ctx, def, args);
+      if (aclDenied) return aclDenied;
     }
 
     // MULTI: enter transaction mode

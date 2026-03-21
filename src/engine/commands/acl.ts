@@ -576,6 +576,14 @@ function aclDryrun(ctx: CommandContext, args: string[]): Reply {
     }
   }
 
+  // Check channel permission for pubsub commands
+  if (!user.allChannels && def.flags.has('pubsub') && args.length > 2) {
+    const channel = args[2];
+    return bulkReply(
+      `This user has no permissions to access the '${channel}' channel`
+    );
+  }
+
   return statusReply('OK');
 }
 
