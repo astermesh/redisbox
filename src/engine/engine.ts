@@ -4,6 +4,7 @@ import { PubSubManager } from './pubsub-manager.ts';
 import { BlockingManager } from './blocking-manager.ts';
 import { estimateKeyMemory } from './memory.ts';
 import { AclStore } from './acl-store.ts';
+import { SlowlogManager } from './slowlog.ts';
 
 const NUM_DATABASES = 16;
 
@@ -19,6 +20,7 @@ export class RedisEngine {
   readonly pubsub = new PubSubManager();
   readonly blocking = new BlockingManager();
   readonly acl = new AclStore();
+  readonly slowlog = new SlowlogManager();
   readonly startTime: number;
 
   constructor(deps?: Partial<EngineDeps>) {
