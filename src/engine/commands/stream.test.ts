@@ -1229,7 +1229,7 @@ describe('XGROUP DELCONSUMER', () => {
   });
 });
 
-describe('XGROUP unknown subcommand', () => {
+describe('XGROUP edge cases', () => {
   it('returns error for unknown subcommand', () => {
     const ctx = createDb(1000);
     seedStream(ctx.db, ctx);
@@ -1239,6 +1239,165 @@ describe('XGROUP unknown subcommand', () => {
       prefix: 'ERR',
       message:
         "unknown subcommand or wrong number of arguments for 'xgroup|BADCMD' command",
+    });
+  });
+
+  it('returns error with no args', () => {
+    const ctx = createDb(1000);
+    const reply = execXgroup(ctx, []);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: "wrong number of arguments for 'xgroup' command",
+    });
+  });
+
+  it('handles case-insensitive subcommands', () => {
+    const ctx = createDb(1000);
+    seedStream(ctx.db, ctx);
+    const r1 = execXgroup(ctx, ['create', 's', 'g1', '$']);
+    expect(r1).toEqual({ kind: 'status', value: 'OK' });
+    const r2 = execXgroup(ctx, ['destroy', 's', 'g1']);
+    expect(r2).toEqual({ kind: 'integer', value: 1 });
+  });
+
+  it('XGROUP CREATE rejects non-integer ENTRIESREAD', () => {
+    const ctx = createDb(1000);
+    seedStream(ctx.db, ctx);
+    const reply = execXgroup(ctx, [
+      'CREATE',
+      's',
+      'g1',
+      '0',
+      'ENTRIESREAD',
+      'abc',
+    ]);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'value is not an integer or out of range',
+    });
+  });
+
+  it('XGROUP CREATE rejects negative ENTRIESREAD', () => {
+    const ctx = createDb(1000);
+    seedStream(ctx.db, ctx);
+    const reply = execXgroup(ctx, [
+      'CREATE',
+      's',
+      'g1',
+      '0',
+      'ENTRIESREAD',
+      '-1',
+    ]);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'value is not an integer or out of range',
+    });
+  });
+
+  it('XGROUP CREATE rejects ENTRIESREAD without value', () => {
+    const ctx = createDb(1000);
+    seedStream(ctx.db, ctx);
+    const reply = execXgroup(ctx, ['CREATE', 's', 'g1', '0', 'ENTRIESREAD']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
+  });
+
+  it('XGROUP SETID with ENTRIESREAD option', () => {
+    const ctx = createDb(1000);
+    seedStream(ctx.db, ctx);
+    execXgroup(ctx, ['CREATE', 's', 'g1', '0']);
+    const reply = execXgroup(ctx, [
+      'SETID',
+      's',
+      'g1',
+      '$',
+      'ENTRIESREAD',
+      '3',
+    ]);
+    expect(reply).toEqual({ kind: 'status', value: 'OK' });
+  });
+
+  it('XGROUP SETID rejects invalid ENTRIESREAD', () => {
+    const ctx = createDb(1000);
+    seedStream(ctx.db, ctx);
+    execXgroup(ctx, ['CREATE', 's', 'g1', '0']);
+    const reply = execXgroup(ctx, [
+      'SETID',
+      's',
+      'g1',
+      '$',
+      'ENTRIESREAD',
+      'bad',
+    ]);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'value is not an integer or out of range',
+    });
+  });
+
+  it('XGROUP CREATE with MKSTREAM and ENTRIESREAD together', () => {
+    const ctx = createDb(1000);
+    const reply = execXgroup(ctx, [
+      'CREATE',
+      'newkey',
+      'g1',
+      '$',
+      'MKSTREAM',
+      'ENTRIESREAD',
+      '0',
+    ]);
+    expect(reply).toEqual({ kind: 'status', value: 'OK' });
+    expect(ctx.db.get('newkey')?.type).toBe('stream');
+  });
+
+  it('XGROUP DESTROY returns WRONGTYPE for non-stream key', () => {
+    const ctx = createDb(1000);
+    ctx.db.set('str', 'string', 'raw', 'hello');
+    const reply = execXgroup(ctx, ['DESTROY', 'str', 'g1']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'WRONGTYPE',
+      message: 'Operation against a key holding the wrong kind of value',
+    });
+  });
+
+  it('XGROUP DELCONSUMER returns WRONGTYPE for non-stream key', () => {
+    const ctx = createDb(1000);
+    ctx.db.set('str', 'string', 'raw', 'hello');
+    const reply = execXgroup(ctx, ['DELCONSUMER', 'str', 'g1', 'alice']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'WRONGTYPE',
+      message: 'Operation against a key holding the wrong kind of value',
+    });
+  });
+
+  it('XGROUP CREATECONSUMER returns WRONGTYPE for non-stream key', () => {
+    const ctx = createDb(1000);
+    ctx.db.set('str', 'string', 'raw', 'hello');
+    const reply = execXgroup(ctx, ['CREATECONSUMER', 'str', 'g1', 'alice']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'WRONGTYPE',
+      message: 'Operation against a key holding the wrong kind of value',
+    });
+  });
+
+  it('XGROUP SETID returns WRONGTYPE for non-stream key', () => {
+    const ctx = createDb(1000);
+    ctx.db.set('str', 'string', 'raw', 'hello');
+    const reply = execXgroup(ctx, ['SETID', 'str', 'g1', '$']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'WRONGTYPE',
+      message: 'Operation against a key holding the wrong kind of value',
     });
   });
 });
