@@ -1,5 +1,7 @@
 # T01: HyperLogLog Core Commands
 
+**Status:** done
+
 Implement PFADD, PFCOUNT, and PFMERGE with both sparse and dense representations.
 
 ## Details
