@@ -55,10 +55,32 @@ export function compareStreamIds(a: StreamId, b: StreamId): number {
   return 0;
 }
 
+export interface PendingEntry {
+  entryId: string;
+  consumer: string;
+  deliveryTime: number;
+  deliveryCount: number;
+}
+
+export interface StreamConsumer {
+  name: string;
+  seenTime: number;
+  pending: Map<string, PendingEntry>;
+}
+
+export interface ConsumerGroup {
+  name: string;
+  lastDeliveredId: StreamId;
+  consumers: Map<string, StreamConsumer>;
+  pel: Map<string, PendingEntry>;
+  entriesRead: number;
+}
+
 export class RedisStream {
   private entries: StreamEntry[] = [];
   private _lastId: StreamId = { ms: 0, seq: 0 };
   private _length = 0;
+  private _groups = new Map<string, ConsumerGroup>();
 
   get length(): number {
     return this._length;
@@ -280,5 +302,69 @@ export class RedisStream {
    */
   lastEntry(): StreamEntry | null {
     return this.entries[this.entries.length - 1] ?? null;
+  }
+
+  // ─── Consumer Group Operations ──────────────────────────────────────
+
+  getGroup(name: string): ConsumerGroup | undefined {
+    return this._groups.get(name);
+  }
+
+  get groups(): Map<string, ConsumerGroup> {
+    return this._groups;
+  }
+
+  createGroup(
+    name: string,
+    lastDeliveredId: StreamId,
+    entriesRead: number
+  ): boolean {
+    if (this._groups.has(name)) return false;
+    this._groups.set(name, {
+      name,
+      lastDeliveredId: { ...lastDeliveredId },
+      consumers: new Map(),
+      pel: new Map(),
+      entriesRead,
+    });
+    return true;
+  }
+
+  destroyGroup(name: string): boolean {
+    return this._groups.delete(name);
+  }
+
+  setGroupId(name: string, id: StreamId, entriesRead: number): boolean {
+    const group = this._groups.get(name);
+    if (!group) return false;
+    group.lastDeliveredId = { ...id };
+    group.entriesRead = entriesRead;
+    return true;
+  }
+
+  createConsumer(groupName: string, consumerName: string): 0 | 1 | null {
+    const group = this._groups.get(groupName);
+    if (!group) return null;
+    if (group.consumers.has(consumerName)) return 0;
+    group.consumers.set(consumerName, {
+      name: consumerName,
+      seenTime: 0,
+      pending: new Map(),
+    });
+    return 1;
+  }
+
+  deleteConsumer(groupName: string, consumerName: string): number | null {
+    const group = this._groups.get(groupName);
+    if (!group) return null;
+    const consumer = group.consumers.get(consumerName);
+    if (!consumer) return 0;
+    const pendingCount = consumer.pending.size;
+    // Remove consumer's entries from group PEL
+    for (const entryId of consumer.pending.keys()) {
+      group.pel.delete(entryId);
+    }
+    group.consumers.delete(consumerName);
+    return pendingCount;
   }
 }
