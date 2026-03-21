@@ -398,7 +398,7 @@ describe('BLMPOP', () => {
       expect(result).toEqual({
         kind: 'error',
         prefix: 'ERR',
-        message: "numkeys can't be non-positive value",
+        message: 'value is not an integer or out of range',
       });
     });
 
@@ -460,6 +460,69 @@ describe('BLMPOP', () => {
         message: 'count should be greater than 0',
       });
     });
+
+    it('rejects negative COUNT', () => {
+      const { ctx, db } = createDb();
+      list.rpush(db, ['k', 'a']);
+      const result = blockingList.blmpop(ctx, [
+        '0',
+        '1',
+        'k',
+        'LEFT',
+        'COUNT',
+        '-1',
+      ]);
+      expect(result).toEqual({
+        kind: 'error',
+        prefix: 'ERR',
+        message: 'value is not an integer or out of range',
+      });
+    });
+
+    it('rejects non-integer COUNT', () => {
+      const { ctx, db } = createDb();
+      list.rpush(db, ['k', 'a']);
+      const result = blockingList.blmpop(ctx, [
+        '0',
+        '1',
+        'k',
+        'LEFT',
+        'COUNT',
+        'abc',
+      ]);
+      expect(result).toEqual({
+        kind: 'error',
+        prefix: 'ERR',
+        message: 'value is not an integer or out of range',
+      });
+    });
+
+    it('rejects float numkeys', () => {
+      const { ctx } = createDb();
+      const result = blockingList.blmpop(ctx, ['0', '1.5', 'k', 'LEFT']);
+      expect(result).toEqual({
+        kind: 'error',
+        prefix: 'ERR',
+        message: 'value is not an integer or out of range',
+      });
+    });
+
+    it('rejects unknown option after direction', () => {
+      const { ctx, db } = createDb();
+      list.rpush(db, ['k', 'a']);
+      const result = blockingList.blmpop(ctx, [
+        '0',
+        '1',
+        'k',
+        'LEFT',
+        'UNKNOWN',
+      ]);
+      expect(result).toEqual({
+        kind: 'error',
+        prefix: 'ERR',
+        message: 'syntax error',
+      });
+    });
   });
 });
 
@@ -494,6 +557,33 @@ describe('BRPOPLPUSH', () => {
       const { ctx } = createDb();
       const result = blockingList.brpoplpush(ctx, ['src', 'dst', '0']);
       expect(result).toEqual(NIL_ARRAY);
+    });
+  });
+
+  describe('error handling', () => {
+    it('returns WRONGTYPE for non-list source', () => {
+      const { ctx, db } = createDb();
+      db.set('src', 'string', 'raw', 'val');
+      const result = blockingList.brpoplpush(ctx, ['src', 'dst', '0']);
+      expect(result).toEqual(WRONGTYPE);
+    });
+
+    it('returns WRONGTYPE for non-list destination', () => {
+      const { ctx, db } = createDb();
+      list.rpush(db, ['src', 'a']);
+      db.set('dst', 'string', 'raw', 'val');
+      const result = blockingList.brpoplpush(ctx, ['src', 'dst', '0']);
+      expect(result).toEqual(WRONGTYPE);
+    });
+
+    it('rejects negative timeout', () => {
+      const { ctx } = createDb();
+      const result = blockingList.brpoplpush(ctx, ['src', 'dst', '-1']);
+      expect(result).toEqual({
+        kind: 'error',
+        prefix: 'ERR',
+        message: 'timeout is not a float or out of range',
+      });
     });
   });
 });

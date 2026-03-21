@@ -16,6 +16,7 @@ import {
   arrayReply,
   errorReply,
   NIL_ARRAY,
+  NOT_INTEGER_ERR,
   WRONGTYPE_ERR,
   SYNTAX_ERR,
 } from '../types.ts';
@@ -161,12 +162,15 @@ export function blmpop(ctx: CommandContext, args: string[]): Reply {
   const { error: timeoutErr } = parseTimeout(timeoutStr);
   if (timeoutErr) return timeoutErr;
 
-  // Parse numkeys
+  // Parse numkeys (same logic as LMPOP: non-integer → NOT_INTEGER_ERR, ≤0 → specific message)
   const numkeysStr = args[1] ?? '';
   if (!/^-?\d+$/.test(numkeysStr)) {
-    return errorReply('ERR', "numkeys can't be non-positive value");
+    return NOT_INTEGER_ERR;
   }
   const numkeys = Number(numkeysStr);
+  if (!Number.isInteger(numkeys)) {
+    return NOT_INTEGER_ERR;
+  }
   if (numkeys <= 0) {
     return errorReply('ERR', "numkeys can't be non-positive value");
   }
@@ -187,14 +191,14 @@ export function blmpop(ctx: CommandContext, args: string[]): Reply {
       const countStr = args[i + 1];
       if (countStr === undefined) return SYNTAX_ERR;
       if (!/^-?\d+$/.test(countStr)) {
-        return errorReply('ERR', 'value is not an integer or out of range');
+        return NOT_INTEGER_ERR;
       }
       const c = Number(countStr);
-      if (c <= 0) {
-        if (c === 0) {
-          return errorReply('ERR', 'count should be greater than 0');
-        }
-        return errorReply('ERR', 'value is not an integer or out of range');
+      if (!Number.isInteger(c) || c < 0) {
+        return NOT_INTEGER_ERR;
+      }
+      if (c === 0) {
+        return errorReply('ERR', 'count should be greater than 0');
       }
       count = c;
       i += 2;
