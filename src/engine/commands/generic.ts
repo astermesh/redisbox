@@ -160,7 +160,7 @@ export function objectIdletimeWithClock(
 
 export function objectFreq(db: Database, args: string[]): Reply {
   const key = args[0] ?? '';
-  const entry = db.get(key);
+  const entry = db.getWithoutTouch(key);
   if (!entry) return NIL;
   return integerReply(entry.lruFreq);
 }

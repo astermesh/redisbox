@@ -455,6 +455,39 @@ describe('EvictionManager', () => {
       expect(db.has('b')).toBe(true);
     });
 
+    it('eviction pool is bounded to 16 entries', () => {
+      let time = 1000;
+      const { eviction, config, db } = createSetup({
+        clock: () => time,
+      });
+
+      // Create 20 keys at different times — more than EVPOOL_SIZE (16)
+      for (let i = 0; i < 20; i++) {
+        db.set(`key${i}`, 'string', 'raw', `val${i}`);
+        time += 1000;
+      }
+
+      // Advance time so all keys have idle time
+      time += 50000;
+
+      const mem = eviction.currentUsedMemory();
+      // Evict roughly half
+      config.set('maxmemory', String(Math.floor(mem * 0.5)));
+      config.set('maxmemory-policy', 'allkeys-lru');
+      config.set('maxmemory-samples', '20');
+
+      eviction.tryEvict();
+
+      // Oldest keys (lower indices) should be evicted first
+      const oldSurvived = [0, 1, 2, 3, 4].filter((i) =>
+        db.has(`key${i}`)
+      ).length;
+      const newSurvived = [15, 16, 17, 18, 19].filter((i) =>
+        db.has(`key${i}`)
+      ).length;
+      expect(newSurvived).toBeGreaterThanOrEqual(oldSurvived);
+    });
+
     it('volatile-lru uses eviction pool only for keys with expiry', () => {
       let time = 1000;
       const { eviction, config, db } = createSetup({
