@@ -1,5 +1,7 @@
 # T02: Failure Injection
 
+**Status:** done
+
 Implement injectLatency(ms, options?{commands?}), injectError(error, options?{commands?, probability?}), simulateSlowCommand(command, durationMs). Latency added before command execution via pre-phase delay. Errors returned via pre-phase fail.
 
 ## Acceptance Criteria
