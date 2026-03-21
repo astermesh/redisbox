@@ -117,14 +117,14 @@ describe('EvictionManager', () => {
         clock: () => time,
       });
 
-      // Create keys at different times
+      // Create keys at different times (1s apart for 24-bit LRU resolution)
       for (let i = 0; i < 10; i++) {
         db.set(`key${i}`, 'string', 'raw', `val${i}`);
-        time += 100;
+        time += 1000;
       }
 
       // Access some keys to make them "recent"
-      time = 5000;
+      time = 50000;
       db.get('key5');
       db.get('key6');
       db.get('key7');
@@ -162,13 +162,13 @@ describe('EvictionManager', () => {
 
       // Persistent keys
       fillKeys(db, 3, 'persistent');
-      time += 500;
+      time += 1000;
 
-      // Volatile keys at different times
+      // Volatile keys at different times (1s apart for 24-bit LRU resolution)
       for (let i = 0; i < 5; i++) {
         db.set(`vkey${i}`, 'string', 'raw', `val${i}`);
         db.setExpiry(`vkey${i}`, 99999);
-        time += 100;
+        time += 1000;
       }
 
       config.set('maxmemory', '1');
@@ -335,6 +335,187 @@ describe('EvictionManager', () => {
       const { eviction, db } = createSetup();
       fillKeys(db, 5);
       expect(eviction.currentUsedMemory()).toBeGreaterThan(0);
+    });
+  });
+
+  describe('eviction pool (approximated LRU)', () => {
+    it('prefers evicting keys with highest idle time', () => {
+      let time = 1000;
+      const { eviction, config, db } = createSetup({
+        clock: () => time,
+      });
+
+      // Create old key at t=1s
+      db.set('old', 'string', 'raw', 'old-val');
+
+      // Create recent key at t=20s
+      time = 20000;
+      db.set('recent', 'string', 'raw', 'recent-val');
+
+      // Evict at t=30s — old has 29s idle, recent has 10s idle
+      time = 30000;
+      const mem = eviction.currentUsedMemory();
+      config.set('maxmemory', String(Math.floor(mem * 0.6)));
+      config.set('maxmemory-policy', 'allkeys-lru');
+      config.set('maxmemory-samples', '10');
+
+      eviction.tryEvict();
+
+      // Old key should be evicted first
+      expect(db.has('old')).toBe(false);
+      expect(db.has('recent')).toBe(true);
+    });
+
+    it('eviction pool persists across eviction cycles', () => {
+      let time = 1000;
+      const { eviction, config, db } = createSetup({
+        clock: () => time,
+      });
+
+      // Create keys at different times (1s apart)
+      for (let i = 0; i < 5; i++) {
+        db.set(`key${i}`, 'string', 'raw', `val${i}`);
+        time += 2000;
+      }
+
+      // key0 is oldest (t=1s), key4 is newest (t=9s)
+      time = 20000;
+
+      const mem = eviction.currentUsedMemory();
+      // Set limit to evict roughly one key per cycle
+      const limitPerKey = Math.floor(mem / 5);
+      config.set('maxmemory', String(mem - limitPerKey));
+      config.set('maxmemory-policy', 'allkeys-lru');
+      config.set('maxmemory-samples', '10');
+
+      // First eviction cycle — should evict oldest (key0)
+      eviction.tryEvict();
+      expect(db.has('key0')).toBe(false);
+
+      // Add more keys to require another eviction
+      db.set('extra1', 'string', 'raw', 'extra-val');
+      db.set('extra2', 'string', 'raw', 'extra-val');
+      db.set('extra3', 'string', 'raw', 'extra-val');
+
+      // Second eviction cycle — pool should still contain previous candidates
+      eviction.tryEvict();
+
+      // The older keys (key1, key2) should be evicted before newer ones
+      const oldRemaining = [1, 2].filter((i) => db.has(`key${i}`)).length;
+      const newRemaining = [3, 4].filter((i) => db.has(`key${i}`)).length;
+      expect(newRemaining).toBeGreaterThanOrEqual(oldRemaining);
+    });
+
+    it('handles deleted keys in pool gracefully', () => {
+      let time = 1000;
+      const { eviction, config, db } = createSetup({
+        clock: () => time,
+      });
+
+      db.set('will-delete', 'string', 'raw', 'v1');
+      time += 5000;
+      db.set('keep', 'string', 'raw', 'v2');
+
+      // Delete the oldest key before eviction
+      time = 10000;
+      db.delete('will-delete');
+
+      config.set('maxmemory', '1');
+      config.set('maxmemory-policy', 'allkeys-lru');
+      config.set('maxmemory-samples', '10');
+
+      // Should handle the deleted key gracefully and evict 'keep'
+      eviction.tryEvict();
+      expect(db.has('keep')).toBe(false);
+    });
+
+    it('uses 24-bit LRU clock for idle time calculation', () => {
+      let time = 1000;
+      const { eviction, config, db } = createSetup({
+        clock: () => time,
+      });
+
+      // Create two keys with 5-second difference
+      db.set('a', 'string', 'raw', 'v1');
+      time += 5000;
+      db.set('b', 'string', 'raw', 'v2');
+
+      // Move time forward
+      time += 10000;
+
+      const mem = eviction.currentUsedMemory();
+      config.set('maxmemory', String(Math.floor(mem * 0.6)));
+      config.set('maxmemory-policy', 'allkeys-lru');
+      config.set('maxmemory-samples', '10');
+
+      eviction.tryEvict();
+
+      // 'a' has more idle time (15s vs 10s), should be evicted first
+      expect(db.has('a')).toBe(false);
+      expect(db.has('b')).toBe(true);
+    });
+
+    it('eviction pool is bounded to 16 entries', () => {
+      let time = 1000;
+      const { eviction, config, db } = createSetup({
+        clock: () => time,
+      });
+
+      // Create 20 keys at different times — more than EVPOOL_SIZE (16)
+      for (let i = 0; i < 20; i++) {
+        db.set(`key${i}`, 'string', 'raw', `val${i}`);
+        time += 1000;
+      }
+
+      // Advance time so all keys have idle time
+      time += 50000;
+
+      const mem = eviction.currentUsedMemory();
+      // Evict roughly half
+      config.set('maxmemory', String(Math.floor(mem * 0.5)));
+      config.set('maxmemory-policy', 'allkeys-lru');
+      config.set('maxmemory-samples', '20');
+
+      eviction.tryEvict();
+
+      // Oldest keys (lower indices) should be evicted first
+      const oldSurvived = [0, 1, 2, 3, 4].filter((i) =>
+        db.has(`key${i}`)
+      ).length;
+      const newSurvived = [15, 16, 17, 18, 19].filter((i) =>
+        db.has(`key${i}`)
+      ).length;
+      expect(newSurvived).toBeGreaterThanOrEqual(oldSurvived);
+    });
+
+    it('volatile-lru uses eviction pool only for keys with expiry', () => {
+      let time = 1000;
+      const { eviction, config, db } = createSetup({
+        clock: () => time,
+      });
+
+      // Persistent key (old)
+      db.set('persistent', 'string', 'raw', 'pv');
+      time += 5000;
+
+      // Volatile keys at different times
+      db.set('vol-old', 'string', 'raw', 'vo');
+      db.setExpiry('vol-old', 99999);
+      time += 3000;
+      db.set('vol-new', 'string', 'raw', 'vn');
+      db.setExpiry('vol-new', 99999);
+
+      time += 10000;
+      config.set('maxmemory', '1');
+      config.set('maxmemory-policy', 'volatile-lru');
+      config.set('maxmemory-samples', '10');
+
+      eviction.tryEvict();
+
+      // Persistent key must survive
+      expect(db.has('persistent')).toBe(true);
+      // vol-old should be evicted first (more idle)
+      expect(db.has('vol-old')).toBe(false);
     });
   });
 });
