@@ -569,6 +569,21 @@ describe('CommandDispatcher', () => {
       expect(state.subscribed).toBe(false);
     });
 
+    it('resets client username to default', () => {
+      const client = new ClientStateObj(1, 100);
+      client.username = 'alice';
+      client.authenticated = true;
+      const resetCtx: CommandContext = {
+        db: ctx.db,
+        engine: ctx.engine,
+        client,
+      };
+      const result = dispatcher.dispatch(state, resetCtx, ['RESET']);
+      expect(result).toEqual({ kind: 'status', value: 'RESET' });
+      expect(client.username).toBe('default');
+      expect(client.authenticated).toBe(false);
+    });
+
     it('rejects extra arguments', () => {
       const result = dispatcher.dispatch(state, ctx, ['RESET', 'extra']);
       expect(result).toEqual({
@@ -1128,6 +1143,32 @@ describe('CommandDispatcher', () => {
         message:
           'this user has no permissions to access one of the keys used as arguments',
       });
+    });
+
+    it('rejects commands when user is disabled', () => {
+      const user = engine.acl.createOrGetUser('testuser');
+      user.enabled = false;
+      user.allCommands = true;
+      user.allKeys = true;
+
+      const result = dispatcher.dispatch(state, aclCtx, ['GET', 'k']);
+      expect(result).toEqual({
+        kind: 'error',
+        prefix: 'NOPERM',
+        message: "this user has no permissions to run the 'get' command",
+      });
+    });
+
+    it('logs disabled user denial to ACL log', () => {
+      const user = engine.acl.createOrGetUser('testuser');
+      user.enabled = false;
+      user.allCommands = true;
+
+      dispatcher.dispatch(state, aclCtx, ['GET', 'k']);
+      const log = engine.acl.getLog();
+      expect(log.length).toBeGreaterThan(0);
+      expect(log[0]?.reason).toBe('command');
+      expect(log[0]?.username).toBe('testuser');
     });
 
     it('uses lowercase command name in NOPERM message', () => {

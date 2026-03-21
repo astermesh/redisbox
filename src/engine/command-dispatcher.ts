@@ -129,6 +129,19 @@ function checkAclPermission(
     return nopermCommandError(def.name);
   }
 
+  // Disabled user — deny everything
+  if (!user.enabled) {
+    ctx.acl.addLogEntry(
+      'command',
+      'toplevel',
+      def.name.toLowerCase(),
+      ctx.client.username,
+      `id=${ctx.client.id}`,
+      ctx.engine.clock()
+    );
+    return nopermCommandError(def.name);
+  }
+
   // Command permission check
   if (!user.allCommands) {
     ctx.acl.addLogEntry(
@@ -283,6 +296,7 @@ export class CommandDispatcher {
         ctx.client.flagMulti = false;
         ctx.client.flagSubscribed = false;
         ctx.client.authenticated = false;
+        ctx.client.username = 'default';
         ctx.db = ctx.engine.db(0);
       }
 
