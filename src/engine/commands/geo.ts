@@ -163,7 +163,7 @@ function degToRad(deg: number): number {
 
 /**
  * Calculate distance between two points using the Haversine formula.
- * Returns distance in meters.
+ * Matches Redis geohashGetDistance exactly: 2R·asin(√a).
  */
 function haversineDistance(
   lon1: number,
@@ -171,16 +171,23 @@ function haversineDistance(
   lon2: number,
   lat2: number
 ): number {
-  const dLat = degToRad(lat2 - lat1);
-  const dLon = degToRad(lon2 - lon1);
-  const rLat1 = degToRad(lat1);
-  const rLat2 = degToRad(lat2);
+  const lon1r = degToRad(lon1);
+  const lon2r = degToRad(lon2);
+  const v = Math.sin((lon2r - lon1r) / 2);
 
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(rLat1) * Math.cos(rLat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return EARTH_RADIUS_M * c;
+  // Redis optimization: if longitude difference is zero, only compute lat distance
+  if (v === 0.0) {
+    const lat1r = degToRad(lat1);
+    const lat2r = degToRad(lat2);
+    const u = Math.sin((lat2r - lat1r) / 2);
+    return 2.0 * EARTH_RADIUS_M * Math.asin(Math.abs(u));
+  }
+
+  const lat1r = degToRad(lat1);
+  const lat2r = degToRad(lat2);
+  const u = Math.sin((lat2r - lat1r) / 2);
+  const a = u * u + Math.cos(lat1r) * Math.cos(lat2r) * v * v;
+  return 2.0 * EARTH_RADIUS_M * Math.asin(Math.sqrt(a));
 }
 
 // --- Unit parsing ---
@@ -699,7 +706,8 @@ function parseGeoSearchArgs(
       i++;
       if (i + 1 >= args.length) return errorReply('ERR', 'syntax error');
       const radiusP = parseFloat64(args[i] as string);
-      if (!radiusP || radiusP.value < 0)
+      if (!radiusP) return errorReply('ERR', 'need numeric radius');
+      if (radiusP.value < 0)
         return errorReply('ERR', 'radius cannot be negative');
       const unit = parseUnit(args[i + 1] as string);
       if (unit === null) return UNIT_ERR;
@@ -710,9 +718,11 @@ function parseGeoSearchArgs(
       i++;
       if (i + 2 >= args.length) return errorReply('ERR', 'syntax error');
       const widthP = parseFloat64(args[i] as string);
+      if (!widthP) return errorReply('ERR', 'need numeric width');
       const heightP = parseFloat64(args[i + 1] as string);
-      if (!widthP || !heightP)
-        return errorReply('ERR', 'value is not a valid float');
+      if (!heightP) return errorReply('ERR', 'need numeric height');
+      if (widthP.value < 0 || heightP.value < 0)
+        return errorReply('ERR', 'height or width cannot be negative');
       const unit = parseUnit(args[i + 2] as string);
       if (unit === null) return UNIT_ERR;
       shape = {
@@ -925,7 +935,8 @@ export function georadius(
   if (coordErr) return coordErr;
 
   const radiusP = parseFloat64(args[3] as string);
-  if (!radiusP) return errorReply('ERR', 'value is not a valid float');
+  if (!radiusP) return errorReply('ERR', 'need numeric radius');
+  if (radiusP.value < 0) return errorReply('ERR', 'radius cannot be negative');
 
   const unitFactor = parseUnit(args[4] as string);
   if (unitFactor === null) return UNIT_ERR;
