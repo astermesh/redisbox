@@ -9,11 +9,13 @@ import {
   NIL_ARRAY,
   WRONGTYPE_ERR,
   ZERO,
+  OK,
   SYNTAX_ERR,
 } from '../types.ts';
 import { RedisStream, parseStreamId } from '../stream.ts';
 import type { StreamEntry, StreamId } from '../stream.ts';
 import type { CommandSpec } from '../command-table.ts';
+import type { CommandContext } from '../types.ts';
 
 const INVALID_STREAM_ID_ERR = errorReply(
   'ERR',
@@ -503,6 +505,267 @@ export function xread(db: Database, args: string[]): Reply {
   return arrayReply(resultStreams);
 }
 
+// ─── XGROUP ─────────────────────────────────────────────────────────
+
+function xgroupCreate(db: Database, args: string[]): Reply {
+  // XGROUP CREATE key groupname id-or-$ [MKSTREAM] [ENTRIESREAD entries-read]
+  if (args.length < 3) {
+    return errorReply(
+      'ERR',
+      "wrong number of arguments for 'xgroup|create' command"
+    );
+  }
+
+  const key = args[0] as string;
+  const groupName = args[1] as string;
+  const idArg = args[2] as string;
+  let mkstream = false;
+  let entriesRead = -1;
+
+  let i = 3;
+  while (i < args.length) {
+    const upper = (args[i] as string).toUpperCase();
+    if (upper === 'MKSTREAM') {
+      mkstream = true;
+      i++;
+    } else if (upper === 'ENTRIESREAD') {
+      i++;
+      const val = args[i];
+      if (val === undefined) return SYNTAX_ERR;
+      const n = Number(val);
+      if (!Number.isInteger(n) || n < 0) {
+        return errorReply('ERR', 'value is not an integer or out of range');
+      }
+      entriesRead = n;
+      i++;
+    } else {
+      return SYNTAX_ERR;
+    }
+  }
+
+  const existing = getStream(db, key);
+  if (existing.error) return existing.error;
+
+  let stream = existing.stream;
+
+  if (!stream) {
+    if (!mkstream) {
+      return errorReply(
+        'ERR',
+        'The XGROUP subcommand requires the key to exist. Note that for CREATE you may want to use the MKSTREAM option to create an empty stream automatically.'
+      );
+    }
+    stream = new RedisStream();
+    db.set(key, 'stream', 'stream', stream);
+  }
+
+  // Parse the ID
+  let lastDeliveredId: StreamId;
+  if (idArg === '$') {
+    lastDeliveredId = stream.lastId;
+  } else if (idArg === '0') {
+    lastDeliveredId = { ms: 0, seq: 0 };
+  } else {
+    const parsed = parseStreamId(idArg);
+    if (!parsed) return INVALID_STREAM_ID_ERR;
+    lastDeliveredId = parsed;
+  }
+
+  const created = stream.createGroup(
+    groupName,
+    lastDeliveredId,
+    entriesRead >= 0 ? entriesRead : 0
+  );
+  if (!created) {
+    return errorReply('BUSYGROUP', 'Consumer Group name already exists');
+  }
+
+  return OK;
+}
+
+function xgroupSetid(db: Database, args: string[]): Reply {
+  // XGROUP SETID key groupname id-or-$ [ENTRIESREAD entries-read]
+  if (args.length < 3) {
+    return errorReply(
+      'ERR',
+      "wrong number of arguments for 'xgroup|setid' command"
+    );
+  }
+
+  const key = args[0] as string;
+  const groupName = args[1] as string;
+  const idArg = args[2] as string;
+  let entriesRead = -1;
+
+  let i = 3;
+  while (i < args.length) {
+    const upper = (args[i] as string).toUpperCase();
+    if (upper === 'ENTRIESREAD') {
+      i++;
+      const val = args[i];
+      if (val === undefined) return SYNTAX_ERR;
+      const n = Number(val);
+      if (!Number.isInteger(n) || n < 0) {
+        return errorReply('ERR', 'value is not an integer or out of range');
+      }
+      entriesRead = n;
+      i++;
+    } else {
+      return SYNTAX_ERR;
+    }
+  }
+
+  const existing = getStream(db, key);
+  if (existing.error) return existing.error;
+  if (!existing.stream) {
+    return errorReply(
+      'ERR',
+      'The XGROUP subcommand requires the key to exist. Note that for CREATE you may want to use the MKSTREAM option to create an empty stream automatically.'
+    );
+  }
+
+  const stream = existing.stream;
+  const group = stream.getGroup(groupName);
+  if (!group) {
+    return errorReply(
+      'NOGROUP',
+      "No such consumer group '" + groupName + "' for key name '" + key + "'"
+    );
+  }
+
+  let newId: StreamId;
+  if (idArg === '$') {
+    newId = stream.lastId;
+  } else if (idArg === '0') {
+    newId = { ms: 0, seq: 0 };
+  } else {
+    const parsed = parseStreamId(idArg);
+    if (!parsed) return INVALID_STREAM_ID_ERR;
+    newId = parsed;
+  }
+
+  stream.setGroupId(groupName, newId, entriesRead >= 0 ? entriesRead : 0);
+  return OK;
+}
+
+function xgroupDestroy(db: Database, args: string[]): Reply {
+  // XGROUP DESTROY key groupname
+  if (args.length < 2) {
+    return errorReply(
+      'ERR',
+      "wrong number of arguments for 'xgroup|destroy' command"
+    );
+  }
+
+  const key = args[0] as string;
+  const groupName = args[1] as string;
+
+  const existing = getStream(db, key);
+  if (existing.error) return existing.error;
+  if (!existing.stream) {
+    return errorReply(
+      'ERR',
+      'The XGROUP subcommand requires the key to exist. Note that for CREATE you may want to use the MKSTREAM option to create an empty stream automatically.'
+    );
+  }
+
+  const destroyed = existing.stream.destroyGroup(groupName);
+  return integerReply(destroyed ? 1 : 0);
+}
+
+function xgroupDelconsumer(db: Database, args: string[]): Reply {
+  // XGROUP DELCONSUMER key groupname consumername
+  if (args.length < 3) {
+    return errorReply(
+      'ERR',
+      "wrong number of arguments for 'xgroup|delconsumer' command"
+    );
+  }
+
+  const key = args[0] as string;
+  const groupName = args[1] as string;
+  const consumerName = args[2] as string;
+
+  const existing = getStream(db, key);
+  if (existing.error) return existing.error;
+  if (!existing.stream) {
+    return errorReply(
+      'ERR',
+      'The XGROUP subcommand requires the key to exist. Note that for CREATE you may want to use the MKSTREAM option to create an empty stream automatically.'
+    );
+  }
+
+  const group = existing.stream.getGroup(groupName);
+  if (!group) {
+    return errorReply(
+      'NOGROUP',
+      "No such consumer group '" + groupName + "' for key name '" + key + "'"
+    );
+  }
+
+  const pendingCount = existing.stream.deleteConsumer(groupName, consumerName);
+  return integerReply(pendingCount ?? 0);
+}
+
+function xgroupCreateconsumer(db: Database, args: string[]): Reply {
+  // XGROUP CREATECONSUMER key groupname consumername
+  if (args.length < 3) {
+    return errorReply(
+      'ERR',
+      "wrong number of arguments for 'xgroup|createconsumer' command"
+    );
+  }
+
+  const key = args[0] as string;
+  const groupName = args[1] as string;
+  const consumerName = args[2] as string;
+
+  const existing = getStream(db, key);
+  if (existing.error) return existing.error;
+  if (!existing.stream) {
+    return errorReply(
+      'ERR',
+      'The XGROUP subcommand requires the key to exist. Note that for CREATE you may want to use the MKSTREAM option to create an empty stream automatically.'
+    );
+  }
+
+  const result = existing.stream.createConsumer(groupName, consumerName);
+  if (result === null) {
+    return errorReply(
+      'NOGROUP',
+      "No such consumer group '" + groupName + "' for key name '" + key + "'"
+    );
+  }
+  return integerReply(result);
+}
+
+function xgroup(ctx: CommandContext, args: string[]): Reply {
+  if (args.length === 0) {
+    return errorReply('ERR', "wrong number of arguments for 'xgroup' command");
+  }
+
+  const subcommand = (args[0] as string).toUpperCase();
+  const subArgs = args.slice(1);
+
+  switch (subcommand) {
+    case 'CREATE':
+      return xgroupCreate(ctx.db, subArgs);
+    case 'SETID':
+      return xgroupSetid(ctx.db, subArgs);
+    case 'DESTROY':
+      return xgroupDestroy(ctx.db, subArgs);
+    case 'DELCONSUMER':
+      return xgroupDelconsumer(ctx.db, subArgs);
+    case 'CREATECONSUMER':
+      return xgroupCreateconsumer(ctx.db, subArgs);
+    default:
+      return errorReply(
+        'ERR',
+        `unknown subcommand or wrong number of arguments for 'xgroup|${args[0]}' command`
+      );
+  }
+}
+
 export const specs: CommandSpec[] = [
   {
     name: 'xadd',
@@ -553,5 +816,67 @@ export const specs: CommandSpec[] = [
     lastKey: 0,
     keyStep: 0,
     categories: ['@read', '@stream', '@slow', '@blocking'],
+  },
+  {
+    name: 'xgroup',
+    handler: (ctx, args) => xgroup(ctx, args),
+    arity: -2,
+    flags: ['write'],
+    firstKey: 2,
+    lastKey: 2,
+    keyStep: 1,
+    categories: ['@write', '@stream', '@slow'],
+    subcommands: [
+      {
+        name: 'xgroup|create',
+        handler: (ctx, args) => xgroupCreate(ctx.db, args),
+        arity: -5,
+        flags: ['write'],
+        firstKey: 2,
+        lastKey: 2,
+        keyStep: 1,
+        categories: ['@write', '@stream', '@slow'],
+      },
+      {
+        name: 'xgroup|setid',
+        handler: (ctx, args) => xgroupSetid(ctx.db, args),
+        arity: -5,
+        flags: ['write'],
+        firstKey: 2,
+        lastKey: 2,
+        keyStep: 1,
+        categories: ['@write', '@stream', '@slow'],
+      },
+      {
+        name: 'xgroup|destroy',
+        handler: (ctx, args) => xgroupDestroy(ctx.db, args),
+        arity: 4,
+        flags: ['write'],
+        firstKey: 2,
+        lastKey: 2,
+        keyStep: 1,
+        categories: ['@write', '@stream', '@slow'],
+      },
+      {
+        name: 'xgroup|delconsumer',
+        handler: (ctx, args) => xgroupDelconsumer(ctx.db, args),
+        arity: 5,
+        flags: ['write'],
+        firstKey: 2,
+        lastKey: 2,
+        keyStep: 1,
+        categories: ['@write', '@stream', '@slow'],
+      },
+      {
+        name: 'xgroup|createconsumer',
+        handler: (ctx, args) => xgroupCreateconsumer(ctx.db, args),
+        arity: 5,
+        flags: ['write'],
+        firstKey: 2,
+        lastKey: 2,
+        keyStep: 1,
+        categories: ['@write', '@stream', '@slow'],
+      },
+    ],
   },
 ];

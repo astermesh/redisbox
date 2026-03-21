@@ -1,5 +1,7 @@
 # S15: Bitmap Commands
 
+**Status:** done
+
 Implement bitmap commands that operate on string values treated as bit arrays. Bitmaps are not a separate type — they use regular string values with bit-level manipulation.
 
 Note: HyperLogLog and Geo commands were extracted into separate stories (S26 and S27) due to their independent complexity.

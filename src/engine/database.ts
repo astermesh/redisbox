@@ -1,5 +1,6 @@
 import type { RedisEntry, RedisEncoding, RedisType } from './types.ts';
 import { partialShuffle } from './utils.ts';
+import { getLruClock } from './lru.ts';
 
 export class Database {
   private readonly store = new Map<string, RedisEntry>();
@@ -17,7 +18,7 @@ export class Database {
     if (this.expireIfNeeded(key)) return null;
     const entry = this.store.get(key);
     if (!entry) return null;
-    entry.lruClock = this.clock();
+    entry.lruClock = getLruClock(this.clock());
     return entry;
   }
 
@@ -37,12 +38,11 @@ export class Database {
     encoding: RedisEncoding,
     value: unknown
   ): void {
-    const now = this.clock();
     this.store.set(key, {
       type,
       encoding,
       value,
-      lruClock: now,
+      lruClock: getLruClock(this.clock()),
       lruFreq: 0,
     });
     this.bumpVersion(key);
@@ -94,7 +94,7 @@ export class Database {
     if (this.expireIfNeeded(key)) return false;
     const entry = this.store.get(key);
     if (!entry) return false;
-    entry.lruClock = this.clock();
+    entry.lruClock = getLruClock(this.clock());
     return true;
   }
 
@@ -168,7 +168,7 @@ export class Database {
       type: entry.type,
       encoding: entry.encoding,
       value: deepCopyValue(entry.value),
-      lruClock: this.clock(),
+      lruClock: getLruClock(this.clock()),
       lruFreq: 0,
     };
   }

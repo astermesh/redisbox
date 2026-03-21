@@ -6,16 +6,19 @@
  */
 
 import { matchGlob } from './engine/glob-pattern.ts';
+import { normalizeKeyspaceEventConfig } from './engine/keyspace-events.ts';
 
 // ---------------------------------------------------------------------------
 // Config parameter definitions
 // ---------------------------------------------------------------------------
 
 type ConfigValidator = (value: string) => boolean;
+type ConfigNormalizer = (value: string) => string | null;
 
 interface ConfigParam {
   defaultValue: string;
   validate?: ConfigValidator;
+  normalize?: ConfigNormalizer;
 }
 
 const isYesNo: ConfigValidator = (v) => v === 'yes' || v === 'no';
@@ -38,9 +41,10 @@ function buildDefaults(): Map<string, ConfigParam> {
   function add(
     key: string,
     defaultValue: string,
-    validate?: ConfigValidator
+    validate?: ConfigValidator,
+    normalize?: ConfigNormalizer
   ): void {
-    m.set(key, { defaultValue, validate });
+    m.set(key, { defaultValue, validate, normalize });
   }
 
   // --- Network ---
@@ -172,7 +176,7 @@ function buildDefaults(): Map<string, ConfigParam> {
   add('latency-monitor-threshold', '0', isNonNegInt);
 
   // --- Keyspace notifications ---
-  add('notify-keyspace-events', '');
+  add('notify-keyspace-events', '', undefined, normalizeKeyspaceEventConfig);
 
   // --- Data structure encoding thresholds ---
   add('hash-max-listpack-entries', '128', isNonNegInt);
@@ -323,10 +327,19 @@ export class ConfigStore {
       return `ERR Invalid argument '${value}' for CONFIG SET '${lowerKey}'`;
     }
 
+    let finalValue = value;
+    if (param.normalize) {
+      const normalized = param.normalize(value);
+      if (normalized === null) {
+        return `ERR Invalid argument '${value}' for CONFIG SET '${lowerKey}'`;
+      }
+      finalValue = normalized;
+    }
+
     const oldValue = this.values.get(lowerKey) ?? '';
-    this.values.set(lowerKey, value);
-    if (oldValue !== value) {
-      this.notify([{ key: lowerKey, value, oldValue }]);
+    this.values.set(lowerKey, finalValue);
+    if (oldValue !== finalValue) {
+      this.notify([{ key: lowerKey, value: finalValue, oldValue }]);
     }
     return null;
   }
@@ -337,7 +350,8 @@ export class ConfigStore {
    * On error, no changes are applied (all-or-nothing).
    */
   setMulti(pairs: [string, string][]): string | null {
-    // Validate all first
+    // Validate and normalize all first
+    const resolved: [string, string][] = [];
     for (const [key, value] of pairs) {
       const lowerKey = key.toLowerCase();
       const param = this.params.get(lowerKey);
@@ -349,16 +363,25 @@ export class ConfigStore {
       if (param.validate && !param.validate(value)) {
         return `ERR Invalid argument '${value}' for CONFIG SET '${lowerKey}'`;
       }
+
+      let finalValue = value;
+      if (param.normalize) {
+        const normalized = param.normalize(value);
+        if (normalized === null) {
+          return `ERR Invalid argument '${value}' for CONFIG SET '${lowerKey}'`;
+        }
+        finalValue = normalized;
+      }
+      resolved.push([lowerKey, finalValue]);
     }
 
     // Apply all and collect changes
     const changes: { key: string; value: string; oldValue: string }[] = [];
-    for (const [key, value] of pairs) {
-      const lowerKey = key.toLowerCase();
+    for (const [lowerKey, finalValue] of resolved) {
       const oldValue = this.values.get(lowerKey) ?? '';
-      this.values.set(lowerKey, value);
-      if (oldValue !== value) {
-        changes.push({ key: lowerKey, value, oldValue });
+      this.values.set(lowerKey, finalValue);
+      if (oldValue !== finalValue) {
+        changes.push({ key: lowerKey, value: finalValue, oldValue });
       }
     }
 
