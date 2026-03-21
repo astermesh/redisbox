@@ -410,6 +410,7 @@ describe('createCommandTable (registry)', () => {
       'replconf',
       'psync',
       'waitaof',
+      'slowlog',
     ];
 
     for (const name of expectedCommands) {
