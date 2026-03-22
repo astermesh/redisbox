@@ -1308,6 +1308,16 @@ describe('ZRANGESTORE', () => {
     ).toEqual(err('ERR', 'syntax error'));
   });
 
+  it('destination can be same as source', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a', '2', 'b', '3', 'c'], rng);
+    const result = sortedSet.zrangestore(db, ['k', 'k', '0', '-1'], rng);
+    expect(result).toEqual(integer(3));
+    expect(sortedSet.zcard(db, ['k'])).toEqual(integer(3));
+    expect(sortedSet.zscore(db, ['k', 'a'])).toEqual(bulk('1'));
+    expect(sortedSet.zscore(db, ['k', 'c'])).toEqual(bulk('3'));
+  });
+
   it('WRONGTYPE error on source', () => {
     const { db, rng } = createDb();
     string.set(db, () => 1000, ['src', 'hello']);
@@ -1703,6 +1713,14 @@ describe('ZPOPMIN', () => {
     sortedSet.zpopmin(db, ['k']);
     expect(sortedSet.zcard(db, ['k'])).toEqual(integer(0));
   });
+
+  it('rejects extra arguments', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a'], rng);
+    expect(sortedSet.zpopmin(db, ['k', '1', 'extra'])).toEqual(
+      err('ERR', "wrong number of arguments for 'zpopmin' command")
+    );
+  });
 });
 
 // --- ZPOPMAX ---
@@ -1740,6 +1758,14 @@ describe('ZPOPMAX', () => {
     const { db } = createDb();
     string.set(db, () => 1000, ['k', 'hello']);
     expect(sortedSet.zpopmax(db, ['k'])).toEqual(WRONGTYPE);
+  });
+
+  it('rejects extra arguments', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a'], rng);
+    expect(sortedSet.zpopmax(db, ['k', '1', 'extra'])).toEqual(
+      err('ERR', "wrong number of arguments for 'zpopmax' command")
+    );
   });
 });
 
@@ -2149,6 +2175,14 @@ describe('ZUNIONSTORE', () => {
       WRONGTYPE
     );
   });
+
+  it('rejects WITHSCORES option', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a'], rng);
+    expect(
+      sortedSet.zunionstore(db, ['out', '1', 'k1', 'WITHSCORES'], rng)
+    ).toEqual(err('ERR', 'syntax error'));
+  });
 });
 
 // --- ZINTERSTORE ---
@@ -2194,6 +2228,15 @@ describe('ZINTERSTORE', () => {
     expect(sortedSet.zinterstore(db, ['out', '1', 'k1'], rng)).toEqual(
       WRONGTYPE
     );
+  });
+
+  it('rejects WITHSCORES option', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a'], rng);
+    sortedSet.zadd(db, ['k2', '2', 'a'], rng);
+    expect(
+      sortedSet.zinterstore(db, ['out', '2', 'k1', 'k2', 'WITHSCORES'], rng)
+    ).toEqual(err('ERR', 'syntax error'));
   });
 });
 

@@ -958,35 +958,23 @@ export function zrangestore(
   if (rangeArgs.some((a) => a.toUpperCase() === 'WITHSCORES')) {
     return SYNTAX_ERR;
   }
-  const rangeResult = zrange(db, rangeArgs, rng);
 
-  if (rangeResult.kind === 'error') return rangeResult;
-  if (rangeResult.kind !== 'array') return ZERO;
+  // Collect with scores in a single pass before any mutation (handles dst = src)
+  const rangeArgsWithScores = [...rangeArgs, 'WITHSCORES'];
+  const withScoresResult = zrange(db, rangeArgsWithScores, rng);
 
-  const elements = rangeResult.value as Reply[];
-  if (elements.length === 0) {
-    // Delete destination if it exists
+  if (withScoresResult.kind === 'error') return withScoresResult;
+  if (withScoresResult.kind !== 'array') return ZERO;
+
+  const items = withScoresResult.value as Reply[];
+  if (items.length === 0) {
     db.delete(dst);
     return ZERO;
   }
 
-  // Delete existing destination
+  // Now safe to delete and recreate destination
   db.delete(dst);
 
-  // Create new sorted set at destination
-  // We need to get scores from source, so re-collect with scores
-  const rangeArgsWithScores = [...rangeArgs];
-  // Check if WITHSCORES is already there
-  const hasWithScores = rangeArgs.some((a) => a.toUpperCase() === 'WITHSCORES');
-  if (!hasWithScores) {
-    // Insert WITHSCORES after min max (index 2) but before options
-    rangeArgsWithScores.push('WITHSCORES');
-  }
-
-  const withScoresResult = zrange(db, rangeArgsWithScores, rng);
-  if (withScoresResult.kind !== 'array') return ZERO;
-
-  const items = withScoresResult.value as Reply[];
   const zset: SortedSetData = {
     sl: new SkipList(rng),
     dict: new Map(),
@@ -1145,15 +1133,15 @@ export function zrevrank(db: Database, args: string[]): Reply {
 // --- ZPOPMIN ---
 
 export function zpopmin(db: Database, args: string[]): Reply {
+  if (args.length > 2) return wrongArityError('zpopmin');
+
   const key = args[0] as string;
   const { zset, error } = getExistingZset(db, key);
   if (error) return error;
-  if (!zset || zset.dict.size === 0) {
-    return args.length > 1 ? EMPTY_ARRAY : EMPTY_ARRAY;
-  }
+  if (!zset || zset.dict.size === 0) return EMPTY_ARRAY;
 
   let count = 1;
-  if (args.length > 1) {
+  if (args.length === 2) {
     const parsed = parseInteger(args[1] as string);
     if (parsed === null) return NOT_INTEGER_ERR;
     count = Number(parsed);
@@ -1181,15 +1169,15 @@ export function zpopmin(db: Database, args: string[]): Reply {
 // --- ZPOPMAX ---
 
 export function zpopmax(db: Database, args: string[]): Reply {
+  if (args.length > 2) return wrongArityError('zpopmax');
+
   const key = args[0] as string;
   const { zset, error } = getExistingZset(db, key);
   if (error) return error;
-  if (!zset || zset.dict.size === 0) {
-    return EMPTY_ARRAY;
-  }
+  if (!zset || zset.dict.size === 0) return EMPTY_ARRAY;
 
   let count = 1;
-  if (args.length > 1) {
+  if (args.length === 2) {
     const parsed = parseInteger(args[1] as string);
     if (parsed === null) return NOT_INTEGER_ERR;
     count = Number(parsed);
@@ -1394,7 +1382,8 @@ function aggregateScore(a: number, b: number, func: AggregateFunc): number {
 function parseWeightsAndAggregate(
   args: string[],
   startIdx: number,
-  numkeys: number
+  numkeys: number,
+  allowWithScores: boolean
 ): {
   weights: number[];
   aggregate: AggregateFunc;
@@ -1434,7 +1423,7 @@ function parseWeightsAndAggregate(
       }
       aggregate = agg;
       i++;
-    } else if (opt === 'WITHSCORES') {
+    } else if (opt === 'WITHSCORES' && allowWithScores) {
       // handled by caller, skip
       i++;
     } else {
@@ -1606,7 +1595,7 @@ export function zunion(
     weights,
     aggregate,
     error: parseErr,
-  } = parseWeightsAndAggregate(args, numkeys + 1, numkeys);
+  } = parseWeightsAndAggregate(args, numkeys + 1, numkeys, true);
   if (parseErr) return parseErr;
 
   const { zsets, error } = collectZsets(db, keys);
@@ -1654,7 +1643,7 @@ export function zinter(
     weights,
     aggregate,
     error: parseErr,
-  } = parseWeightsAndAggregate(args, numkeys + 1, numkeys);
+  } = parseWeightsAndAggregate(args, numkeys + 1, numkeys, true);
   if (parseErr) return parseErr;
 
   const { zsets, error } = collectZsets(db, keys);
@@ -1774,7 +1763,7 @@ export function zunionstore(
     weights,
     aggregate,
     error: parseErr,
-  } = parseWeightsAndAggregate(args, numkeys + 2, numkeys);
+  } = parseWeightsAndAggregate(args, numkeys + 2, numkeys, false);
   if (parseErr) return parseErr;
 
   // Read all source sets before mutation (destination may be a source)
@@ -1817,7 +1806,7 @@ export function zinterstore(
     weights,
     aggregate,
     error: parseErr,
-  } = parseWeightsAndAggregate(args, numkeys + 2, numkeys);
+  } = parseWeightsAndAggregate(args, numkeys + 2, numkeys, false);
   if (parseErr) return parseErr;
 
   const { zsets, error } = collectZsets(db, keys);
