@@ -311,4 +311,33 @@ export class PubSubManager {
   get totalPatterns(): number {
     return this.patternSubs.size;
   }
+
+  /**
+   * Get all active channel names (channels with at least one subscriber).
+   * If a pattern is provided, only channels matching the glob pattern are returned.
+   */
+  activeChannels(pattern?: string): string[] {
+    const channels = [...this.channelSubscribers.keys()];
+    if (!pattern) return channels;
+    return channels.filter((ch) => matchGlob(pattern, ch));
+  }
+
+  /**
+   * Get subscriber count for specific channels.
+   * Returns an array of [channel, count] pairs.
+   */
+  numSub(channels: string[]): [string, number][] {
+    return channels.map((ch) => [
+      ch,
+      this.channelSubscribers.get(ch)?.size ?? 0,
+    ]);
+  }
+
+  /**
+   * Get total number of unique pattern subscriptions across all clients.
+   * Note: this counts unique patterns, not total client-pattern pairs.
+   */
+  numPat(): number {
+    return this.patternSubs.size;
+  }
 }

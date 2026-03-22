@@ -1,5 +1,7 @@
 # S12: Pub/Sub System
 
+**Status:** done
+
 Implement the Pub/Sub messaging system. Fire-and-forget message broadcasting with channel and pattern subscriptions. Includes subscriber mode state management and sharded pub/sub stubs.
 
 ## Tasks

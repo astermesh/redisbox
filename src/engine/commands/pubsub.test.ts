@@ -4,6 +4,7 @@ import { RedisEngine } from '../engine.ts';
 import { ClientState } from '../../server/client-state.ts';
 import type { CommandContext, Reply } from '../types.ts';
 import { PubSubManager } from '../pubsub-manager.ts';
+import type { CommandSpec } from '../command-table.ts';
 
 function createCtx(opts?: { clientId?: number }): {
   ctx: CommandContext;
@@ -762,5 +763,363 @@ describe('PUBLISH', () => {
     cmd.publish(ctx, ['news', 'self']);
     expect(sent).toHaveLength(1);
     expect(sent[0]?.clientId).toBe(1);
+  });
+});
+
+// --- PUBSUB introspection ---
+
+describe('PUBSUB CHANNELS', () => {
+  it('returns empty array when no channels have subscribers', () => {
+    const { ctx } = createCtx();
+    const reply = cmd.pubsubChannels(ctx, []);
+    expect(reply).toEqual({ kind: 'array', value: [] });
+  });
+
+  it('returns all active channels', () => {
+    const { ctx } = createCtx();
+    cmd.subscribe(ctx, ['news', 'sports', 'weather']);
+    const reply = cmd.pubsubChannels(ctx, []);
+    expect(reply.kind).toBe('array');
+    if (reply.kind === 'array') {
+      const names = reply.value.map((r) =>
+        r.kind === 'bulk' ? r.value : null
+      );
+      expect(names).toEqual(['news', 'sports', 'weather']);
+    }
+  });
+
+  it('filters channels by glob pattern', () => {
+    const { ctx } = createCtx();
+    cmd.subscribe(ctx, ['news.uk', 'news.us', 'sports.uk']);
+    const reply = cmd.pubsubChannels(ctx, ['news.*']);
+    expect(reply.kind).toBe('array');
+    if (reply.kind === 'array') {
+      const names = reply.value.map((r) =>
+        r.kind === 'bulk' ? r.value : null
+      );
+      expect(names).toEqual(['news.uk', 'news.us']);
+    }
+  });
+
+  it('returns empty array when pattern matches nothing', () => {
+    const { ctx } = createCtx();
+    cmd.subscribe(ctx, ['news']);
+    const reply = cmd.pubsubChannels(ctx, ['xyz*']);
+    expect(reply).toEqual({ kind: 'array', value: [] });
+  });
+
+  it('returns sorted channels', () => {
+    const { ctx } = createCtx();
+    cmd.subscribe(ctx, ['z-chan', 'a-chan', 'm-chan']);
+    const reply = cmd.pubsubChannels(ctx, []);
+    if (reply.kind === 'array') {
+      const names = reply.value.map((r) =>
+        r.kind === 'bulk' ? r.value : null
+      );
+      expect(names).toEqual(['a-chan', 'm-chan', 'z-chan']);
+    }
+  });
+});
+
+describe('PUBSUB NUMSUB', () => {
+  it('returns empty array when no channels given', () => {
+    const { ctx } = createCtx();
+    const reply = cmd.pubsubNumsub(ctx, []);
+    expect(reply).toEqual({ kind: 'array', value: [] });
+  });
+
+  it('returns channel name and subscriber count pairs', () => {
+    const { createClient } = createMultiClientCtx();
+    const { ctx: ctx1 } = createClient(1);
+    const { ctx: ctx2 } = createClient(2);
+
+    cmd.subscribe(ctx1, ['news']);
+    cmd.subscribe(ctx2, ['news']);
+    cmd.subscribe(ctx1, ['sports']);
+
+    const reply = cmd.pubsubNumsub(ctx1, ['news', 'sports', 'nonexistent']);
+    expect(reply).toEqual({
+      kind: 'array',
+      value: [
+        { kind: 'bulk', value: 'news' },
+        { kind: 'integer', value: 2 },
+        { kind: 'bulk', value: 'sports' },
+        { kind: 'integer', value: 1 },
+        { kind: 'bulk', value: 'nonexistent' },
+        { kind: 'integer', value: 0 },
+      ],
+    });
+  });
+});
+
+describe('PUBSUB NUMPAT', () => {
+  it('returns 0 when no pattern subscriptions', () => {
+    const { ctx } = createCtx();
+    const reply = cmd.pubsubNumpat(ctx);
+    expect(reply).toEqual({ kind: 'integer', value: 0 });
+  });
+
+  it('returns count of unique patterns', () => {
+    const { createClient } = createMultiClientCtx();
+    const { ctx: ctx1 } = createClient(1);
+    const { ctx: ctx2 } = createClient(2);
+
+    cmd.psubscribe(ctx1, ['news.*', 'sports.*']);
+    cmd.psubscribe(ctx2, ['news.*']); // same pattern, different client
+
+    const reply = cmd.pubsubNumpat(ctx1);
+    expect(reply).toEqual({ kind: 'integer', value: 2 });
+  });
+});
+
+describe('PUBSUB HELP', () => {
+  it('returns array of help lines', () => {
+    const reply = cmd.pubsubHelp();
+    expect(reply.kind).toBe('array');
+    if (reply.kind === 'array') {
+      expect(reply.value.length).toBeGreaterThan(0);
+      expect(reply.value[0]).toEqual({
+        kind: 'bulk',
+        value:
+          'PUBSUB <subcommand> [<arg> [value] [opt] ...]. subcommands are:',
+      });
+    }
+  });
+});
+
+describe('PUBSUB command dispatcher', () => {
+  it('returns wrong arity error with no subcommand', () => {
+    const { ctx } = createCtx();
+    const reply = cmd.pubsubCommand(ctx, []);
+    expect(reply.kind).toBe('error');
+    if (reply.kind === 'error') {
+      expect(reply.message).toContain("'pubsub'");
+    }
+  });
+
+  it('dispatches CHANNELS subcommand', () => {
+    const { ctx } = createCtx();
+    cmd.subscribe(ctx, ['news']);
+    const reply = cmd.pubsubCommand(ctx, ['CHANNELS']);
+    expect(reply.kind).toBe('array');
+    if (reply.kind === 'array') {
+      expect(reply.value).toHaveLength(1);
+    }
+  });
+
+  it('dispatches NUMSUB subcommand', () => {
+    const { ctx } = createCtx();
+    cmd.subscribe(ctx, ['news']);
+    const reply = cmd.pubsubCommand(ctx, ['NUMSUB', 'news']);
+    expect(reply.kind).toBe('array');
+    if (reply.kind === 'array') {
+      expect(reply.value).toHaveLength(2);
+    }
+  });
+
+  it('dispatches NUMPAT subcommand', () => {
+    const { ctx } = createCtx();
+    const reply = cmd.pubsubCommand(ctx, ['NUMPAT']);
+    expect(reply).toEqual({ kind: 'integer', value: 0 });
+  });
+
+  it('dispatches SHARDCHANNELS subcommand', () => {
+    const { ctx } = createCtx();
+    cmd.subscribe(ctx, ['news']);
+    const reply = cmd.pubsubCommand(ctx, ['SHARDCHANNELS']);
+    expect(reply.kind).toBe('array');
+    if (reply.kind === 'array') {
+      expect(reply.value).toHaveLength(1);
+    }
+  });
+
+  it('dispatches SHARDNUMSUB subcommand', () => {
+    const { ctx } = createCtx();
+    cmd.subscribe(ctx, ['news']);
+    const reply = cmd.pubsubCommand(ctx, ['SHARDNUMSUB', 'news']);
+    expect(reply.kind).toBe('array');
+    if (reply.kind === 'array') {
+      expect(reply.value).toHaveLength(2);
+    }
+  });
+
+  it('dispatches HELP subcommand', () => {
+    const reply = cmd.pubsubCommand(createCtx().ctx, ['HELP']);
+    expect(reply.kind).toBe('array');
+  });
+
+  it('is case-insensitive for subcommands', () => {
+    const { ctx } = createCtx();
+    const reply = cmd.pubsubCommand(ctx, ['numpat']);
+    expect(reply).toEqual({ kind: 'integer', value: 0 });
+  });
+
+  it('returns error for unknown subcommand', () => {
+    const { ctx } = createCtx();
+    const reply = cmd.pubsubCommand(ctx, ['BOGUS']);
+    expect(reply.kind).toBe('error');
+    if (reply.kind === 'error') {
+      expect(reply.message).toContain("'pubsub|bogus'");
+    }
+  });
+
+  it('returns error for CHANNELS with too many args', () => {
+    const { ctx } = createCtx();
+    const reply = cmd.pubsubCommand(ctx, ['CHANNELS', 'a', 'b']);
+    expect(reply.kind).toBe('error');
+  });
+
+  it('returns error for NUMPAT with extra args', () => {
+    const { ctx } = createCtx();
+    const reply = cmd.pubsubCommand(ctx, ['NUMPAT', 'extra']);
+    expect(reply.kind).toBe('error');
+  });
+});
+
+// --- Sharded pub/sub ---
+
+describe('SSUBSCRIBE', () => {
+  it('subscribes to a single channel with ssubscribe reply type', () => {
+    const { ctx } = createCtx();
+    const reply = cmd.ssubscribe(ctx, ['news']);
+    const replies = multiReplies(reply);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toEqual({
+      kind: 'array',
+      value: [
+        { kind: 'bulk', value: 'ssubscribe' },
+        { kind: 'bulk', value: 'news' },
+        { kind: 'integer', value: 1 },
+      ],
+    });
+  });
+
+  it('subscribes to multiple channels with incrementing count', () => {
+    const { ctx } = createCtx();
+    const reply = cmd.ssubscribe(ctx, ['ch1', 'ch2']);
+    const replies = multiReplies(reply);
+    expect(replies).toHaveLength(2);
+    expect(replies[1]).toEqual({
+      kind: 'array',
+      value: [
+        { kind: 'bulk', value: 'ssubscribe' },
+        { kind: 'bulk', value: 'ch2' },
+        { kind: 'integer', value: 2 },
+      ],
+    });
+  });
+
+  it('sets flagSubscribed on the client', () => {
+    const { ctx, client } = createCtx();
+    expect(client.flagSubscribed).toBe(false);
+    cmd.ssubscribe(ctx, ['news']);
+    expect(client.flagSubscribed).toBe(true);
+  });
+
+  it('shares subscription state with regular subscribe', () => {
+    const { ctx, pubsub, client } = createCtx();
+    cmd.subscribe(ctx, ['ch1']);
+    cmd.ssubscribe(ctx, ['ch2']);
+    expect(pubsub.channelCount(client.id)).toBe(2);
+  });
+});
+
+describe('SUNSUBSCRIBE', () => {
+  it('unsubscribes from a single channel with sunsubscribe reply type', () => {
+    const { ctx } = createCtx();
+    cmd.ssubscribe(ctx, ['news']);
+    const reply = cmd.sunsubscribe(ctx, ['news']);
+    const replies = multiReplies(reply);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toEqual({
+      kind: 'array',
+      value: [
+        { kind: 'bulk', value: 'sunsubscribe' },
+        { kind: 'bulk', value: 'news' },
+        { kind: 'integer', value: 0 },
+      ],
+    });
+  });
+
+  it('unsubscribes from all channels when no args', () => {
+    const { ctx, client } = createCtx();
+    cmd.ssubscribe(ctx, ['ch1', 'ch2']);
+    const reply = cmd.sunsubscribe(ctx, []);
+    const replies = multiReplies(reply);
+    expect(replies).toHaveLength(2);
+    expect(client.flagSubscribed).toBe(false);
+  });
+
+  it('sends null channel reply when no subscriptions and no args', () => {
+    const { ctx } = createCtx();
+    const reply = cmd.sunsubscribe(ctx, []);
+    const replies = multiReplies(reply);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toEqual({
+      kind: 'array',
+      value: [
+        { kind: 'bulk', value: 'sunsubscribe' },
+        { kind: 'bulk', value: null },
+        { kind: 'integer', value: 0 },
+      ],
+    });
+  });
+
+  it('clears flagSubscribed when count reaches 0', () => {
+    const { ctx, client } = createCtx();
+    cmd.ssubscribe(ctx, ['news']);
+    cmd.sunsubscribe(ctx, ['news']);
+    expect(client.flagSubscribed).toBe(false);
+  });
+});
+
+describe('SPUBLISH', () => {
+  it('returns 0 when no subscribers', () => {
+    const { ctx } = createCtx();
+    const reply = cmd.spublish(ctx, ['news', 'hello']);
+    expect(reply).toEqual({ kind: 'integer', value: 0 });
+  });
+
+  it('delivers message to subscribers (same as PUBLISH)', () => {
+    const { createClient, sent } = createMultiClientCtx();
+    const { ctx: ctx1 } = createClient(1);
+    const { ctx: publisherCtx } = createClient(2);
+
+    cmd.subscribe(ctx1, ['news']);
+    const reply = cmd.spublish(publisherCtx, ['news', 'hello']);
+    expect(reply).toEqual({ kind: 'integer', value: 1 });
+    expect(sent).toHaveLength(1);
+  });
+});
+
+describe('specs', () => {
+  function findSpec(name: string): CommandSpec | undefined {
+    return cmd.specs.find((s) => s.name === name);
+  }
+
+  it('exports pubsub spec with subcommands', () => {
+    const spec = findSpec('pubsub');
+    expect(spec).toBeDefined();
+    expect(spec?.arity).toBe(-2);
+    expect(spec?.subcommands).toBeDefined();
+    expect(spec?.subcommands).toHaveLength(6);
+  });
+
+  it('exports ssubscribe spec', () => {
+    const spec = findSpec('ssubscribe');
+    expect(spec).toBeDefined();
+    expect(spec?.arity).toBe(-2);
+  });
+
+  it('exports sunsubscribe spec', () => {
+    const spec = findSpec('sunsubscribe');
+    expect(spec).toBeDefined();
+    expect(spec?.arity).toBe(-1);
+  });
+
+  it('exports spublish spec', () => {
+    const spec = findSpec('spublish');
+    expect(spec).toBeDefined();
+    expect(spec?.arity).toBe(3);
   });
 });

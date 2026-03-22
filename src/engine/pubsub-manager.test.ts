@@ -529,4 +529,69 @@ describe('PubSubManager', () => {
       expect(sent).toHaveLength(0);
     });
   });
+
+  describe('activeChannels', () => {
+    it('returns empty array when no subscriptions', () => {
+      const mgr = new PubSubManager();
+      expect(mgr.activeChannels()).toEqual([]);
+    });
+
+    it('returns all active channel names', () => {
+      const mgr = new PubSubManager();
+      mgr.subscribe(1, 'news');
+      mgr.subscribe(1, 'sports');
+      mgr.subscribe(2, 'news');
+      const channels = mgr.activeChannels();
+      expect(channels.sort()).toEqual(['news', 'sports']);
+    });
+
+    it('filters by glob pattern', () => {
+      const mgr = new PubSubManager();
+      mgr.subscribe(1, 'news.uk');
+      mgr.subscribe(1, 'news.us');
+      mgr.subscribe(1, 'sports.uk');
+      const channels = mgr.activeChannels('news.*');
+      expect(channels.sort()).toEqual(['news.uk', 'news.us']);
+    });
+
+    it('returns empty when pattern matches nothing', () => {
+      const mgr = new PubSubManager();
+      mgr.subscribe(1, 'news');
+      expect(mgr.activeChannels('xyz*')).toEqual([]);
+    });
+  });
+
+  describe('numSub', () => {
+    it('returns zero count for non-subscribed channels', () => {
+      const mgr = new PubSubManager();
+      expect(mgr.numSub(['nonexistent'])).toEqual([['nonexistent', 0]]);
+    });
+
+    it('returns correct counts for subscribed channels', () => {
+      const mgr = new PubSubManager();
+      mgr.subscribe(1, 'news');
+      mgr.subscribe(2, 'news');
+      mgr.subscribe(1, 'sports');
+      expect(mgr.numSub(['news', 'sports', 'weather'])).toEqual([
+        ['news', 2],
+        ['sports', 1],
+        ['weather', 0],
+      ]);
+    });
+  });
+
+  describe('numPat', () => {
+    it('returns 0 when no patterns', () => {
+      const mgr = new PubSubManager();
+      expect(mgr.numPat()).toBe(0);
+    });
+
+    it('returns count of unique patterns', () => {
+      const mgr = new PubSubManager();
+      mgr.psubscribe(1, 'news.*');
+      mgr.psubscribe(2, 'news.*');
+      mgr.psubscribe(1, 'sports.*');
+      expect(mgr.numPat()).toBe(2);
+    });
+  });
 });
