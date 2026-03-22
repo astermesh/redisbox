@@ -1026,6 +1026,138 @@ describe('GEORADIUSBYMEMBER_RO', () => {
   });
 });
 
+// --- Sort behavior ---
+
+describe('GEO sort behavior', () => {
+  it('GEOSEARCH without ASC/DESC returns unsorted (natural hash order)', () => {
+    const { db, rng } = createDb();
+    geo.geoadd(
+      db,
+      [
+        'k',
+        '13.361389',
+        '38.115556',
+        'Palermo',
+        '15.087269',
+        '37.502669',
+        'Catania',
+        '2.349014',
+        '48.864716',
+        'Paris',
+      ],
+      rng
+    );
+    // Without ASC/DESC, results are in natural skip list order (by geohash score)
+    const result = geo.geosearch(db, [
+      'k',
+      'FROMLONLAT',
+      '14.0',
+      '38.0',
+      'BYRADIUS',
+      '200',
+      'km',
+    ]);
+    const items = arrayItems(result);
+    expect(items.length).toBe(2);
+    // Just verify we get results, order is natural (not necessarily by distance)
+  });
+
+  it('GEOSEARCH COUNT without ANY forces ASC sort', () => {
+    const { db, rng } = createDb();
+    geo.geoadd(
+      db,
+      [
+        'k',
+        '13.361389',
+        '38.115556',
+        'Palermo',
+        '15.087269',
+        '37.502669',
+        'Catania',
+      ],
+      rng
+    );
+    // COUNT without ANY and no ASC/DESC → Redis forces ASC
+    const result = geo.geosearch(db, [
+      'k',
+      'FROMLONLAT',
+      '14.0',
+      '38.0',
+      'BYRADIUS',
+      '200',
+      'km',
+      'COUNT',
+      '2',
+    ]);
+    const items = arrayItems(result);
+    expect(items.length).toBe(2);
+    // Should be ASC order: closer first — matches explicit ASC
+    const ascResult = geo.geosearch(db, [
+      'k',
+      'FROMLONLAT',
+      '14.0',
+      '38.0',
+      'BYRADIUS',
+      '200',
+      'km',
+      'ASC',
+      'COUNT',
+      '2',
+    ]);
+    expect(result).toEqual(ascResult);
+  });
+
+  it('GEORADIUS without ASC/DESC returns unsorted', () => {
+    const { db, rng } = createDb();
+    geo.geoadd(
+      db,
+      [
+        'k',
+        '13.361389',
+        '38.115556',
+        'Palermo',
+        '15.087269',
+        '37.502669',
+        'Catania',
+      ],
+      rng
+    );
+    const result = geo.georadius(db, ['k', '15', '37', '200', 'km'], rng);
+    const items = arrayItems(result);
+    expect(items.length).toBe(2);
+    // Just verify we get results, no order guarantee
+  });
+
+  it('GEORADIUS COUNT without ANY forces ASC sort', () => {
+    const { db, rng } = createDb();
+    geo.geoadd(
+      db,
+      [
+        'k',
+        '13.361389',
+        '38.115556',
+        'Palermo',
+        '15.087269',
+        '37.502669',
+        'Catania',
+      ],
+      rng
+    );
+    const result = geo.georadius(
+      db,
+      ['k', '14', '38', '200', 'km', 'COUNT', '2'],
+      rng
+    );
+    const ascResult = geo.georadius(
+      db,
+      ['k', '14', '38', '200', 'km', 'ASC', 'COUNT', '2'],
+      rng
+    );
+    // COUNT without ANY should produce same order as explicit ASC
+    expect(result).toEqual(ascResult);
+  });
+});
+
 // --- Edge cases ---
 
 describe('GEO edge cases', () => {

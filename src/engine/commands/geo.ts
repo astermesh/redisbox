@@ -343,7 +343,7 @@ function geoSearch(
     | { type: 'radius'; radiusM: number }
     | { type: 'box'; widthM: number; heightM: number },
   unitFactor: number,
-  asc: boolean,
+  sort: 'asc' | 'desc' | 'none',
   count: number,
   any: boolean
 ): GeoResult[] {
@@ -399,10 +399,12 @@ function geoSearch(
     node = node.lvl(0).forward;
   }
 
-  // Sort by distance
-  if (asc) {
+  // Sort by distance (Redis: SORT_NONE when no ASC/DESC specified,
+  // but COUNT without ANY forces ASC)
+  const effectiveSort = sort === 'none' && count > 0 && !any ? 'asc' : sort;
+  if (effectiveSort === 'asc') {
     results.sort((a, b) => a.dist - b.dist || a.member.localeCompare(b.member));
-  } else {
+  } else if (effectiveSort === 'desc') {
     results.sort((a, b) => b.dist - a.dist || a.member.localeCompare(b.member));
   }
 
@@ -645,7 +647,7 @@ interface GeoSearchParams {
     | { type: 'radius'; radiusM: number }
     | { type: 'box'; widthM: number; heightM: number };
   unitFactor: number;
-  asc: boolean;
+  sort: 'asc' | 'desc' | 'none';
   count: number;
   any: boolean;
   withDist: boolean;
@@ -662,7 +664,7 @@ function parseGeoSearchArgs(
   let fromLat: number | null = null;
   let shape: GeoSearchParams['shape'] | null = null;
   let unitFactor = UNIT_M;
-  let asc = true;
+  let sort: 'asc' | 'desc' | 'none' = 'none';
   let count = -1;
   let any = false;
   let withDist = false;
@@ -714,6 +716,12 @@ function parseGeoSearchArgs(
       shape = { type: 'radius', radiusM: radiusP.value * unit };
       unitFactor = unit;
       i += 2;
+    } else if (opt === 'ASC') {
+      sort = 'asc';
+      i++;
+    } else if (opt === 'DESC') {
+      sort = 'desc';
+      i++;
     } else if (opt === 'BYBOX') {
       i++;
       if (i + 2 >= args.length) return errorReply('ERR', 'syntax error');
@@ -732,12 +740,6 @@ function parseGeoSearchArgs(
       };
       unitFactor = unit;
       i += 3;
-    } else if (opt === 'ASC') {
-      asc = true;
-      i++;
-    } else if (opt === 'DESC') {
-      asc = false;
-      i++;
     } else if (opt === 'COUNT') {
       i++;
       if (i >= args.length) return errorReply('ERR', 'syntax error');
@@ -772,13 +774,13 @@ function parseGeoSearchArgs(
   if (fromLon === null || fromLat === null) {
     return errorReply(
       'ERR',
-      'exactly one of FROMMEMBER or FROMLONLAT can be provided for GEOSEARCH'
+      'exactly one of FROMMEMBER or FROMLONLAT can be specified for GEOSEARCH'
     );
   }
   if (!shape) {
     return errorReply(
       'ERR',
-      'exactly one of BYRADIUS and BYBOX can be provided for GEOSEARCH'
+      'exactly one of BYRADIUS and BYBOX can be specified for GEOSEARCH'
     );
   }
 
@@ -792,7 +794,7 @@ function parseGeoSearchArgs(
     fromLat,
     shape,
     unitFactor,
-    asc,
+    sort,
     count,
     any,
     withDist,
@@ -824,7 +826,7 @@ export function geosearch(db: Database, args: string[]): Reply {
     params.fromLat,
     params.shape,
     params.unitFactor,
-    params.asc,
+    params.sort,
     params.count,
     params.any
   );
@@ -883,7 +885,7 @@ export function geosearchstore(
     params.fromLat,
     params.shape,
     params.unitFactor,
-    params.asc,
+    params.sort,
     params.count,
     params.any
   );
@@ -947,7 +949,7 @@ export function georadius(
   let withDist = false;
   let withHash = false;
   let withCoord = false;
-  let asc = true;
+  let sort: 'asc' | 'desc' | 'none' = 'none';
   let count = -1;
   let any = false;
   let storeKey: string | null = null;
@@ -966,10 +968,10 @@ export function georadius(
       withHash = true;
       i++;
     } else if (opt === 'ASC') {
-      asc = true;
+      sort = 'asc';
       i++;
     } else if (opt === 'DESC') {
-      asc = false;
+      sort = 'desc';
       i++;
     } else if (opt === 'COUNT') {
       i++;
@@ -1020,7 +1022,7 @@ export function georadius(
     centerLat,
     { type: 'radius', radiusM },
     unitFactor,
-    asc,
+    sort,
     count,
     any
   );
