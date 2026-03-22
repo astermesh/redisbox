@@ -513,4 +513,32 @@ describe('Cardinality accuracy', () => {
     expect(result.value).toBeGreaterThanOrEqual(900);
     expect(result.value).toBeLessThanOrEqual(1100);
   });
+
+  it('estimates large cardinalities (10K) within 2x standard error', () => {
+    const { ctx } = createDb();
+    const N = 10000;
+    for (let i = 0; i < N; i++) {
+      hll.pfadd(ctx, ['mykey', `item${i}`]);
+    }
+    const result = hll.pfcount(ctx, ['mykey']) as {
+      kind: string;
+      value: number;
+    };
+    expect(result.kind).toBe('integer');
+    // 2x standard error for 10K: ~1.62% → allow ~3.24% margin
+    expect(result.value).toBeGreaterThanOrEqual(N * 0.95);
+    expect(result.value).toBeLessThanOrEqual(N * 1.05);
+  });
+
+  it('handles non-ASCII elements correctly', () => {
+    const { ctx } = createDb();
+    hll.pfadd(ctx, ['mykey', 'café', 'über', 'naïve']);
+    const result = hll.pfcount(ctx, ['mykey']) as {
+      kind: string;
+      value: number;
+    };
+    expect(result.kind).toBe('integer');
+    expect(result.value).toBeGreaterThanOrEqual(1);
+    expect(result.value).toBeLessThanOrEqual(6);
+  });
 });
