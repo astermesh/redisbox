@@ -1640,3 +1640,723 @@ describe('ZREVRANK', () => {
     expect(sortedSet.zrevrank(db, ['k', 'only'])).toEqual(integer(0));
   });
 });
+
+// --- ZPOPMIN ---
+
+describe('ZPOPMIN', () => {
+  it('pops element with lowest score', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a', '2', 'b', '3', 'c'], rng);
+    expect(sortedSet.zpopmin(db, ['k'])).toEqual({
+      kind: 'array',
+      value: [bulk('a'), bulk('1')],
+    });
+    expect(sortedSet.zcard(db, ['k'])).toEqual(integer(2));
+  });
+
+  it('pops multiple elements with count', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a', '2', 'b', '3', 'c'], rng);
+    expect(sortedSet.zpopmin(db, ['k', '2'])).toEqual({
+      kind: 'array',
+      value: [bulk('a'), bulk('1'), bulk('b'), bulk('2')],
+    });
+    expect(sortedSet.zcard(db, ['k'])).toEqual(integer(1));
+  });
+
+  it('count larger than set size returns all elements', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a', '2', 'b'], rng);
+    expect(sortedSet.zpopmin(db, ['k', '10'])).toEqual({
+      kind: 'array',
+      value: [bulk('a'), bulk('1'), bulk('b'), bulk('2')],
+    });
+    expect(sortedSet.zcard(db, ['k'])).toEqual(integer(0));
+  });
+
+  it('returns empty array for nonexistent key', () => {
+    const { db } = createDb();
+    expect(sortedSet.zpopmin(db, ['k'])).toEqual({
+      kind: 'array',
+      value: [],
+    });
+  });
+
+  it('count 0 returns empty array', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a'], rng);
+    expect(sortedSet.zpopmin(db, ['k', '0'])).toEqual({
+      kind: 'array',
+      value: [],
+    });
+  });
+
+  it('returns WRONGTYPE for non-zset', () => {
+    const { db } = createDb();
+    string.set(db, () => 1000, ['k', 'hello']);
+    expect(sortedSet.zpopmin(db, ['k'])).toEqual(WRONGTYPE);
+  });
+
+  it('deletes key when all elements popped', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a'], rng);
+    sortedSet.zpopmin(db, ['k']);
+    expect(sortedSet.zcard(db, ['k'])).toEqual(integer(0));
+  });
+});
+
+// --- ZPOPMAX ---
+
+describe('ZPOPMAX', () => {
+  it('pops element with highest score', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a', '2', 'b', '3', 'c'], rng);
+    expect(sortedSet.zpopmax(db, ['k'])).toEqual({
+      kind: 'array',
+      value: [bulk('c'), bulk('3')],
+    });
+    expect(sortedSet.zcard(db, ['k'])).toEqual(integer(2));
+  });
+
+  it('pops multiple elements from highest', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a', '2', 'b', '3', 'c'], rng);
+    expect(sortedSet.zpopmax(db, ['k', '2'])).toEqual({
+      kind: 'array',
+      value: [bulk('c'), bulk('3'), bulk('b'), bulk('2')],
+    });
+    expect(sortedSet.zcard(db, ['k'])).toEqual(integer(1));
+  });
+
+  it('returns empty array for nonexistent key', () => {
+    const { db } = createDb();
+    expect(sortedSet.zpopmax(db, ['k'])).toEqual({
+      kind: 'array',
+      value: [],
+    });
+  });
+
+  it('returns WRONGTYPE for non-zset', () => {
+    const { db } = createDb();
+    string.set(db, () => 1000, ['k', 'hello']);
+    expect(sortedSet.zpopmax(db, ['k'])).toEqual(WRONGTYPE);
+  });
+});
+
+// --- ZMPOP ---
+
+describe('ZMPOP', () => {
+  it('pops min from first non-empty key', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a', '2', 'b'], rng);
+    const result = sortedSet.zmpop(db, ['1', 'k1', 'MIN'], rng);
+    expect(result).toEqual({
+      kind: 'array',
+      value: [
+        bulk('k1'),
+        {
+          kind: 'array',
+          value: [{ kind: 'array', value: [bulk('a'), bulk('1')] }],
+        },
+      ],
+    });
+  });
+
+  it('pops max from first non-empty key', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a', '2', 'b'], rng);
+    const result = sortedSet.zmpop(db, ['1', 'k1', 'MAX'], rng);
+    expect(result).toEqual({
+      kind: 'array',
+      value: [
+        bulk('k1'),
+        {
+          kind: 'array',
+          value: [{ kind: 'array', value: [bulk('b'), bulk('2')] }],
+        },
+      ],
+    });
+  });
+
+  it('skips empty keys', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k2', '5', 'x'], rng);
+    const result = sortedSet.zmpop(db, ['2', 'k1', 'k2', 'MIN'], rng);
+    expect(result).toEqual({
+      kind: 'array',
+      value: [
+        bulk('k2'),
+        {
+          kind: 'array',
+          value: [{ kind: 'array', value: [bulk('x'), bulk('5')] }],
+        },
+      ],
+    });
+  });
+
+  it('pops multiple with COUNT', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a', '2', 'b', '3', 'c'], rng);
+    const result = sortedSet.zmpop(db, ['1', 'k1', 'MIN', 'COUNT', '2'], rng);
+    expect(result).toEqual({
+      kind: 'array',
+      value: [
+        bulk('k1'),
+        {
+          kind: 'array',
+          value: [
+            { kind: 'array', value: [bulk('a'), bulk('1')] },
+            { kind: 'array', value: [bulk('b'), bulk('2')] },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('returns nil-array when all keys empty', () => {
+    const { db, rng } = createDb();
+    expect(sortedSet.zmpop(db, ['1', 'k1', 'MIN'], rng)).toEqual({
+      kind: 'nil-array',
+    });
+  });
+
+  it('returns error for invalid numkeys', () => {
+    const { db, rng } = createDb();
+    expect(sortedSet.zmpop(db, ['0', 'k1', 'MIN'], rng)).toEqual(
+      err('ERR', 'numkeys should be greater than 0')
+    );
+  });
+
+  it('returns error for count 0', () => {
+    const { db, rng } = createDb();
+    expect(sortedSet.zmpop(db, ['1', 'k1', 'MIN', 'COUNT', '0'], rng)).toEqual(
+      err('ERR', 'count should be greater than 0')
+    );
+  });
+
+  it('returns WRONGTYPE for non-zset key', () => {
+    const { db, rng } = createDb();
+    string.set(db, () => 1000, ['k1', 'hello']);
+    expect(sortedSet.zmpop(db, ['1', 'k1', 'MIN'], rng)).toEqual(WRONGTYPE);
+  });
+});
+
+// --- ZRANDMEMBER ---
+
+describe('ZRANDMEMBER', () => {
+  it('returns single random member', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a', '2', 'b', '3', 'c'], rng);
+    const result = sortedSet.zrandmember(db, ['k'], rng);
+    expect(result.kind).toBe('bulk');
+    expect(['a', 'b', 'c']).toContain(
+      (result as { kind: 'bulk'; value: string }).value
+    );
+  });
+
+  it('returns nil for nonexistent key (no count)', () => {
+    const { db, rng } = createDb();
+    expect(sortedSet.zrandmember(db, ['k'], rng)).toEqual(bulk(null));
+  });
+
+  it('positive count returns unique elements', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a', '2', 'b', '3', 'c'], rng);
+    const result = sortedSet.zrandmember(db, ['k', '2'], rng);
+    expect(result.kind).toBe('array');
+    const arr = (result as { kind: 'array'; value: Reply[] }).value;
+    expect(arr.length).toBe(2);
+  });
+
+  it('positive count > size returns all', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a', '2', 'b'], rng);
+    const result = sortedSet.zrandmember(db, ['k', '10'], rng);
+    expect(result.kind).toBe('array');
+    const arr = (result as { kind: 'array'; value: Reply[] }).value;
+    expect(arr.length).toBe(2);
+  });
+
+  it('negative count may repeat elements', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a'], rng);
+    const result = sortedSet.zrandmember(db, ['k', '-3'], rng);
+    expect(result.kind).toBe('array');
+    const arr = (result as { kind: 'array'; value: Reply[] }).value;
+    expect(arr.length).toBe(3);
+    // All should be 'a' since it's the only element
+    for (const r of arr) {
+      expect(r).toEqual(bulk('a'));
+    }
+  });
+
+  it('WITHSCORES returns member-score pairs', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a', '2', 'b'], rng);
+    const result = sortedSet.zrandmember(db, ['k', '2', 'WITHSCORES'], rng);
+    expect(result.kind).toBe('array');
+    const arr = (result as { kind: 'array'; value: Reply[] }).value;
+    expect(arr.length).toBe(4); // 2 members * 2 (member + score)
+  });
+
+  it('returns empty array for nonexistent key with count', () => {
+    const { db, rng } = createDb();
+    expect(sortedSet.zrandmember(db, ['k', '3'], rng)).toEqual({
+      kind: 'array',
+      value: [],
+    });
+  });
+
+  it('count 0 returns empty array', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a'], rng);
+    expect(sortedSet.zrandmember(db, ['k', '0'], rng)).toEqual({
+      kind: 'array',
+      value: [],
+    });
+  });
+
+  it('returns WRONGTYPE for non-zset', () => {
+    const { db, rng } = createDb();
+    string.set(db, () => 1000, ['k', 'hello']);
+    expect(sortedSet.zrandmember(db, ['k'], rng)).toEqual(WRONGTYPE);
+  });
+});
+
+// --- ZUNION ---
+
+describe('ZUNION', () => {
+  it('returns union of two sets', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a', '2', 'b'], rng);
+    sortedSet.zadd(db, ['k2', '3', 'b', '4', 'c'], rng);
+    const result = sortedSet.zunion(db, ['2', 'k1', 'k2'], rng);
+    expect(result).toEqual({
+      kind: 'array',
+      value: [bulk('a'), bulk('c'), bulk('b')],
+    });
+  });
+
+  it('WITHSCORES returns scores', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a', '2', 'b'], rng);
+    sortedSet.zadd(db, ['k2', '3', 'b', '4', 'c'], rng);
+    const result = sortedSet.zunion(db, ['2', 'k1', 'k2', 'WITHSCORES'], rng);
+    expect(result).toEqual({
+      kind: 'array',
+      value: [bulk('a'), bulk('1'), bulk('c'), bulk('4'), bulk('b'), bulk('5')],
+    });
+  });
+
+  it('WEIGHTS applies multipliers', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a', '2', 'b'], rng);
+    sortedSet.zadd(db, ['k2', '3', 'b', '4', 'c'], rng);
+    const result = sortedSet.zunion(
+      db,
+      ['2', 'k1', 'k2', 'WEIGHTS', '2', '1', 'WITHSCORES'],
+      rng
+    );
+    expect(result).toEqual({
+      kind: 'array',
+      value: [bulk('a'), bulk('2'), bulk('c'), bulk('4'), bulk('b'), bulk('7')],
+    });
+  });
+
+  it('AGGREGATE MIN', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a', '5', 'b'], rng);
+    sortedSet.zadd(db, ['k2', '3', 'b', '4', 'c'], rng);
+    const result = sortedSet.zunion(
+      db,
+      ['2', 'k1', 'k2', 'AGGREGATE', 'MIN', 'WITHSCORES'],
+      rng
+    );
+    expect(result).toEqual({
+      kind: 'array',
+      value: [bulk('a'), bulk('1'), bulk('b'), bulk('3'), bulk('c'), bulk('4')],
+    });
+  });
+
+  it('AGGREGATE MAX', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a', '5', 'b'], rng);
+    sortedSet.zadd(db, ['k2', '3', 'b', '4', 'c'], rng);
+    const result = sortedSet.zunion(
+      db,
+      ['2', 'k1', 'k2', 'AGGREGATE', 'MAX', 'WITHSCORES'],
+      rng
+    );
+    expect(result).toEqual({
+      kind: 'array',
+      value: [bulk('a'), bulk('1'), bulk('c'), bulk('4'), bulk('b'), bulk('5')],
+    });
+  });
+
+  it('non-existent key treated as empty set', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a'], rng);
+    const result = sortedSet.zunion(db, ['2', 'k1', 'k2', 'WITHSCORES'], rng);
+    expect(result).toEqual({
+      kind: 'array',
+      value: [bulk('a'), bulk('1')],
+    });
+  });
+
+  it('returns WRONGTYPE for non-zset', () => {
+    const { db, rng } = createDb();
+    string.set(db, () => 1000, ['k1', 'hello']);
+    expect(sortedSet.zunion(db, ['1', 'k1'], rng)).toEqual(WRONGTYPE);
+  });
+});
+
+// --- ZINTER ---
+
+describe('ZINTER', () => {
+  it('returns intersection of two sets', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a', '2', 'b', '3', 'c'], rng);
+    sortedSet.zadd(db, ['k2', '4', 'b', '5', 'c', '6', 'd'], rng);
+    const result = sortedSet.zinter(db, ['2', 'k1', 'k2', 'WITHSCORES'], rng);
+    expect(result).toEqual({
+      kind: 'array',
+      value: [bulk('b'), bulk('6'), bulk('c'), bulk('8')],
+    });
+  });
+
+  it('empty intersection when key missing', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a'], rng);
+    expect(sortedSet.zinter(db, ['2', 'k1', 'k2'], rng)).toEqual({
+      kind: 'array',
+      value: [],
+    });
+  });
+
+  it('WEIGHTS and AGGREGATE MIN', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '10', 'a', '20', 'b'], rng);
+    sortedSet.zadd(db, ['k2', '1', 'a', '2', 'b'], rng);
+    const result = sortedSet.zinter(
+      db,
+      ['2', 'k1', 'k2', 'WEIGHTS', '1', '10', 'AGGREGATE', 'MIN', 'WITHSCORES'],
+      rng
+    );
+    expect(result).toEqual({
+      kind: 'array',
+      value: [bulk('a'), bulk('10'), bulk('b'), bulk('20')],
+    });
+  });
+
+  it('returns WRONGTYPE for non-zset', () => {
+    const { db, rng } = createDb();
+    string.set(db, () => 1000, ['k1', 'hello']);
+    expect(sortedSet.zinter(db, ['1', 'k1'], rng)).toEqual(WRONGTYPE);
+  });
+});
+
+// --- ZDIFF ---
+
+describe('ZDIFF', () => {
+  it('returns difference of two sets', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a', '2', 'b', '3', 'c'], rng);
+    sortedSet.zadd(db, ['k2', '4', 'b', '5', 'd'], rng);
+    const result = sortedSet.zdiff(db, ['2', 'k1', 'k2', 'WITHSCORES'], rng);
+    expect(result).toEqual({
+      kind: 'array',
+      value: [bulk('a'), bulk('1'), bulk('c'), bulk('3')],
+    });
+  });
+
+  it('all elements when second key missing', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a', '2', 'b'], rng);
+    const result = sortedSet.zdiff(db, ['2', 'k1', 'k2', 'WITHSCORES'], rng);
+    expect(result).toEqual({
+      kind: 'array',
+      value: [bulk('a'), bulk('1'), bulk('b'), bulk('2')],
+    });
+  });
+
+  it('empty result when first key missing', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k2', '1', 'a'], rng);
+    expect(sortedSet.zdiff(db, ['2', 'k1', 'k2'], rng)).toEqual({
+      kind: 'array',
+      value: [],
+    });
+  });
+
+  it('returns WRONGTYPE for non-zset', () => {
+    const { db, rng } = createDb();
+    string.set(db, () => 1000, ['k1', 'hello']);
+    expect(sortedSet.zdiff(db, ['1', 'k1'], rng)).toEqual(WRONGTYPE);
+  });
+});
+
+// --- ZUNIONSTORE ---
+
+describe('ZUNIONSTORE', () => {
+  it('stores union result', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a', '2', 'b'], rng);
+    sortedSet.zadd(db, ['k2', '3', 'b', '4', 'c'], rng);
+    expect(sortedSet.zunionstore(db, ['out', '2', 'k1', 'k2'], rng)).toEqual(
+      integer(3)
+    );
+    expect(sortedSet.zscore(db, ['out', 'a'])).toEqual(bulk('1'));
+    expect(sortedSet.zscore(db, ['out', 'b'])).toEqual(bulk('5'));
+    expect(sortedSet.zscore(db, ['out', 'c'])).toEqual(bulk('4'));
+  });
+
+  it('with WEIGHTS', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a'], rng);
+    sortedSet.zadd(db, ['k2', '2', 'a'], rng);
+    expect(
+      sortedSet.zunionstore(
+        db,
+        ['out', '2', 'k1', 'k2', 'WEIGHTS', '10', '1'],
+        rng
+      )
+    ).toEqual(integer(1));
+    expect(sortedSet.zscore(db, ['out', 'a'])).toEqual(bulk('12'));
+  });
+
+  it('overwrites destination', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['out', '99', 'old'], rng);
+    sortedSet.zadd(db, ['k1', '1', 'a'], rng);
+    sortedSet.zunionstore(db, ['out', '1', 'k1'], rng);
+    expect(sortedSet.zscore(db, ['out', 'old'])).toEqual(bulk(null));
+    expect(sortedSet.zscore(db, ['out', 'a'])).toEqual(bulk('1'));
+  });
+
+  it('destination can be a source key', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a', '2', 'b'], rng);
+    expect(sortedSet.zunionstore(db, ['k1', '1', 'k1'], rng)).toEqual(
+      integer(2)
+    );
+    expect(sortedSet.zscore(db, ['k1', 'a'])).toEqual(bulk('1'));
+  });
+
+  it('returns WRONGTYPE for non-zset', () => {
+    const { db, rng } = createDb();
+    string.set(db, () => 1000, ['k1', 'hello']);
+    expect(sortedSet.zunionstore(db, ['out', '1', 'k1'], rng)).toEqual(
+      WRONGTYPE
+    );
+  });
+});
+
+// --- ZINTERSTORE ---
+
+describe('ZINTERSTORE', () => {
+  it('stores intersection result', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a', '2', 'b'], rng);
+    sortedSet.zadd(db, ['k2', '3', 'b', '4', 'c'], rng);
+    expect(sortedSet.zinterstore(db, ['out', '2', 'k1', 'k2'], rng)).toEqual(
+      integer(1)
+    );
+    expect(sortedSet.zscore(db, ['out', 'b'])).toEqual(bulk('5'));
+  });
+
+  it('empty result when no intersection', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a'], rng);
+    sortedSet.zadd(db, ['k2', '2', 'b'], rng);
+    expect(sortedSet.zinterstore(db, ['out', '2', 'k1', 'k2'], rng)).toEqual(
+      integer(0)
+    );
+  });
+
+  it('with AGGREGATE MAX', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '10', 'a', '20', 'b'], rng);
+    sortedSet.zadd(db, ['k2', '1', 'a', '2', 'b'], rng);
+    expect(
+      sortedSet.zinterstore(
+        db,
+        ['out', '2', 'k1', 'k2', 'AGGREGATE', 'MAX'],
+        rng
+      )
+    ).toEqual(integer(2));
+    expect(sortedSet.zscore(db, ['out', 'a'])).toEqual(bulk('10'));
+    expect(sortedSet.zscore(db, ['out', 'b'])).toEqual(bulk('20'));
+  });
+
+  it('returns WRONGTYPE for non-zset', () => {
+    const { db, rng } = createDb();
+    string.set(db, () => 1000, ['k1', 'hello']);
+    expect(sortedSet.zinterstore(db, ['out', '1', 'k1'], rng)).toEqual(
+      WRONGTYPE
+    );
+  });
+});
+
+// --- ZDIFFSTORE ---
+
+describe('ZDIFFSTORE', () => {
+  it('stores difference result', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a', '2', 'b', '3', 'c'], rng);
+    sortedSet.zadd(db, ['k2', '4', 'b'], rng);
+    expect(sortedSet.zdiffstore(db, ['out', '2', 'k1', 'k2'], rng)).toEqual(
+      integer(2)
+    );
+    expect(sortedSet.zscore(db, ['out', 'a'])).toEqual(bulk('1'));
+    expect(sortedSet.zscore(db, ['out', 'c'])).toEqual(bulk('3'));
+    expect(sortedSet.zscore(db, ['out', 'b'])).toEqual(bulk(null));
+  });
+
+  it('empty result when all elements in other sets', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a'], rng);
+    sortedSet.zadd(db, ['k2', '2', 'a'], rng);
+    expect(sortedSet.zdiffstore(db, ['out', '2', 'k1', 'k2'], rng)).toEqual(
+      integer(0)
+    );
+  });
+
+  it('returns WRONGTYPE for non-zset', () => {
+    const { db, rng } = createDb();
+    string.set(db, () => 1000, ['k1', 'hello']);
+    expect(sortedSet.zdiffstore(db, ['out', '1', 'k1'], rng)).toEqual(
+      WRONGTYPE
+    );
+  });
+});
+
+// --- ZINTERCARD ---
+
+describe('ZINTERCARD', () => {
+  it('returns cardinality of intersection', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a', '2', 'b', '3', 'c'], rng);
+    sortedSet.zadd(db, ['k2', '4', 'b', '5', 'c', '6', 'd'], rng);
+    expect(sortedSet.zintercard(db, ['2', 'k1', 'k2'])).toEqual(integer(2));
+  });
+
+  it('with LIMIT stops early', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a', '2', 'b', '3', 'c'], rng);
+    sortedSet.zadd(db, ['k2', '4', 'a', '5', 'b', '6', 'c'], rng);
+    expect(sortedSet.zintercard(db, ['2', 'k1', 'k2', 'LIMIT', '2'])).toEqual(
+      integer(2)
+    );
+  });
+
+  it('returns 0 when key missing', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a'], rng);
+    expect(sortedSet.zintercard(db, ['2', 'k1', 'k2'])).toEqual(integer(0));
+  });
+
+  it('returns WRONGTYPE for non-zset', () => {
+    const { db, rng } = createDb();
+    string.set(db, () => 1000, ['k1', 'hello']);
+    sortedSet.zadd(db, ['k2', '1', 'a'], rng);
+    expect(sortedSet.zintercard(db, ['2', 'k1', 'k2'])).toEqual(WRONGTYPE);
+  });
+
+  it('rejects negative LIMIT', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k1', '1', 'a'], rng);
+    expect(sortedSet.zintercard(db, ['1', 'k1', 'LIMIT', '-1'])).toEqual(
+      err('ERR', "LIMIT can't be negative")
+    );
+  });
+
+  it('rejects numkeys 0', () => {
+    const { db } = createDb();
+    expect(sortedSet.zintercard(db, ['0', 'k1'])).toEqual(
+      err('ERR', 'numkeys should be greater than 0')
+    );
+  });
+});
+
+// --- ZSCAN ---
+
+describe('ZSCAN', () => {
+  it('scans all members', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a', '2', 'b', '3', 'c'], rng);
+    const result = sortedSet.zscan(db, ['k', '0']);
+    expect(result).toEqual({
+      kind: 'array',
+      value: [
+        bulk('0'),
+        {
+          kind: 'array',
+          value: [
+            bulk('a'),
+            bulk('1'),
+            bulk('b'),
+            bulk('2'),
+            bulk('c'),
+            bulk('3'),
+          ],
+        },
+      ],
+    });
+  });
+
+  it('scans with MATCH pattern', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'alpha', '2', 'beta', '3', 'gamma'], rng);
+    const result = sortedSet.zscan(db, ['k', '0', 'MATCH', 'a*']);
+    expect(result).toEqual({
+      kind: 'array',
+      value: [bulk('0'), { kind: 'array', value: [bulk('alpha'), bulk('1')] }],
+    });
+  });
+
+  it('scans with COUNT', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a', '2', 'b', '3', 'c'], rng);
+    const result = sortedSet.zscan(db, ['k', '0', 'COUNT', '2']);
+    expect(result.kind).toBe('array');
+    const arr = (result as { kind: 'array'; value: Reply[] }).value;
+    // cursor should be non-zero since not all scanned
+    expect(arr[0]).toEqual(bulk('2'));
+  });
+
+  it('returns cursor 0 and empty array for nonexistent key', () => {
+    const { db } = createDb();
+    expect(sortedSet.zscan(db, ['k', '0'])).toEqual({
+      kind: 'array',
+      value: [bulk('0'), { kind: 'array', value: [] }],
+    });
+  });
+
+  it('returns WRONGTYPE for non-zset', () => {
+    const { db } = createDb();
+    string.set(db, () => 1000, ['k', 'hello']);
+    expect(sortedSet.zscan(db, ['k', '0'])).toEqual(WRONGTYPE);
+  });
+
+  it('continues from cursor position', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a', '2', 'b', '3', 'c'], rng);
+    // First scan with count 1
+    const first = sortedSet.zscan(db, ['k', '0', 'COUNT', '1']);
+    const firstArr = (first as { kind: 'array'; value: Reply[] }).value;
+    const cursor = (firstArr[0] as { kind: 'bulk'; value: string }).value;
+
+    // Continue from cursor
+    const second = sortedSet.zscan(db, ['k', cursor, 'COUNT', '1']);
+    const secondArr = (second as { kind: 'array'; value: Reply[] }).value;
+    const cursor2 = (secondArr[0] as { kind: 'bulk'; value: string }).value;
+
+    // Third scan
+    const third = sortedSet.zscan(db, ['k', cursor2, 'COUNT', '1']);
+    const thirdArr = (third as { kind: 'array'; value: Reply[] }).value;
+    const cursor3 = (thirdArr[0] as { kind: 'bulk'; value: string }).value;
+
+    // After scanning all 3 elements, cursor should be 0
+    expect(cursor3).toBe('0');
+  });
+});
