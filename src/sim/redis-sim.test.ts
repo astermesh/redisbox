@@ -177,6 +177,45 @@ describe('RedisSim', () => {
     });
   });
 
+  describe('time control affects stream IDs', () => {
+    it('XADD auto-generated IDs use virtual clock time', () => {
+      const sim = new RedisSim();
+      sim.freezeTime();
+      sim.setTime(1000000);
+
+      const table = createCommandTable();
+      const dispatcher = new CommandDispatcher(table);
+      const state = createTransactionState();
+      const ctx: CommandContext = {
+        db: sim.engine.db(0),
+        engine: sim.engine,
+      };
+
+      // XADD with * ID — should use virtual clock (1000000ms = 1000000)
+      const result1 = dispatcher.dispatch(state, ctx, [
+        'XADD',
+        'mystream',
+        '*',
+        'field1',
+        'value1',
+      ]);
+      expect(result1.kind).toBe('bulk');
+      expect((result1 as { value: string }).value).toBe('1000000-0');
+
+      // Advance time and add another entry
+      sim.advanceTime(5000);
+      const result2 = dispatcher.dispatch(state, ctx, [
+        'XADD',
+        'mystream',
+        '*',
+        'field2',
+        'value2',
+      ]);
+      expect(result2.kind).toBe('bulk');
+      expect((result2 as { value: string }).value).toBe('1005000-0');
+    });
+  });
+
   describe('freeze-advance-unfreeze cycle', () => {
     it('correctly manages time through full cycle', () => {
       const sim = new RedisSim();
