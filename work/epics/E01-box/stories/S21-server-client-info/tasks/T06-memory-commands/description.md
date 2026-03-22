@@ -1,5 +1,7 @@
 # T06: MEMORY Commands
 
+**Status:** done
+
 Implement the MEMORY introspection commands (since Redis 4.0).
 
 ## Commands
