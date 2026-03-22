@@ -226,13 +226,14 @@ class RedisSim {
   advanceTime(ms: number): void
   freezeTime(): void
   setTime(timestamp: number): void
+  unfreezeTime(): void
 
-  // Failure Injection
-  injectLatency(ms: number, options?: { commands?: string[] }): void
-  injectError(error: string, options?: { commands?: string[], probability?: number }): void
-  injectEviction(keys: string[]): void
+  // Failure Injection (returns disposers)
+  injectLatency(ms: number, options?: { commands?: string[] }): () => void
+  injectError(error: string, options?: { commands?: string[], probability?: number }): () => void
+  simulateSlowCommand(command: string, durationMs: number): () => void
 
-  // Behavioral Modification
+  // Behavioral Modification (T03)
   setCacheMissRate(rate: number): void
   setMessageDropRate(rate: number): void
 }
