@@ -11,11 +11,14 @@ import {
   NIL_ARRAY,
   EMPTY_ARRAY,
   WRONGTYPE_ERR,
+  NOT_INTEGER_ERR,
   NOT_FLOAT_ERR,
   SYNTAX_ERR,
 } from '../types.ts';
 import { SkipList } from '../skip-list.ts';
-import { parseFloat64, formatFloat } from './incr.ts';
+import { parseFloat64, parseInteger, formatFloat } from './incr.ts';
+import { matchGlob } from '../glob-pattern.ts';
+import { partialShuffle } from '../utils.ts';
 import type { CommandSpec } from '../command-table.ts';
 
 function formatScore(n: number): string {
@@ -955,35 +958,23 @@ export function zrangestore(
   if (rangeArgs.some((a) => a.toUpperCase() === 'WITHSCORES')) {
     return SYNTAX_ERR;
   }
-  const rangeResult = zrange(db, rangeArgs, rng);
 
-  if (rangeResult.kind === 'error') return rangeResult;
-  if (rangeResult.kind !== 'array') return ZERO;
+  // Collect with scores in a single pass before any mutation (handles dst = src)
+  const rangeArgsWithScores = [...rangeArgs, 'WITHSCORES'];
+  const withScoresResult = zrange(db, rangeArgsWithScores, rng);
 
-  const elements = rangeResult.value as Reply[];
-  if (elements.length === 0) {
-    // Delete destination if it exists
+  if (withScoresResult.kind === 'error') return withScoresResult;
+  if (withScoresResult.kind !== 'array') return ZERO;
+
+  const items = withScoresResult.value as Reply[];
+  if (items.length === 0) {
     db.delete(dst);
     return ZERO;
   }
 
-  // Delete existing destination
+  // Now safe to delete and recreate destination
   db.delete(dst);
 
-  // Create new sorted set at destination
-  // We need to get scores from source, so re-collect with scores
-  const rangeArgsWithScores = [...rangeArgs];
-  // Check if WITHSCORES is already there
-  const hasWithScores = rangeArgs.some((a) => a.toUpperCase() === 'WITHSCORES');
-  if (!hasWithScores) {
-    // Insert WITHSCORES after min max (index 2) but before options
-    rangeArgsWithScores.push('WITHSCORES');
-  }
-
-  const withScoresResult = zrange(db, rangeArgsWithScores, rng);
-  if (withScoresResult.kind !== 'array') return ZERO;
-
-  const items = withScoresResult.value as Reply[];
   const zset: SortedSetData = {
     sl: new SkipList(rng),
     dict: new Map(),
@@ -1137,6 +1128,893 @@ export function zrevrank(db: Database, args: string[]): Reply {
     return arrayReply([integerReply(revRank), bulkReply(formatScore(score))]);
   }
   return integerReply(revRank);
+}
+
+// --- ZPOPMIN ---
+
+export function zpopmin(db: Database, args: string[]): Reply {
+  if (args.length > 2) return wrongArityError('zpopmin');
+
+  const key = args[0] as string;
+  const { zset, error } = getExistingZset(db, key);
+  if (error) return error;
+  if (!zset || zset.dict.size === 0) return EMPTY_ARRAY;
+
+  let count = 1;
+  if (args.length === 2) {
+    const parsed = parseInteger(args[1] as string);
+    if (parsed === null) return NOT_INTEGER_ERR;
+    count = Number(parsed);
+    if (count < 0) return NOT_INTEGER_ERR;
+  }
+
+  if (count === 0) return EMPTY_ARRAY;
+
+  const results: Reply[] = [];
+  const actual = Math.min(count, zset.dict.size);
+
+  for (let i = 0; i < actual; i++) {
+    const node = zset.sl.getElementByRank(1);
+    if (!node) break;
+    results.push(bulkReply(node.element));
+    results.push(bulkReply(formatScore(node.score)));
+    zset.sl.delete(node.score, node.element);
+    zset.dict.delete(node.element);
+  }
+
+  removeIfEmpty(db, key, zset);
+  return arrayReply(results);
+}
+
+// --- ZPOPMAX ---
+
+export function zpopmax(db: Database, args: string[]): Reply {
+  if (args.length > 2) return wrongArityError('zpopmax');
+
+  const key = args[0] as string;
+  const { zset, error } = getExistingZset(db, key);
+  if (error) return error;
+  if (!zset || zset.dict.size === 0) return EMPTY_ARRAY;
+
+  let count = 1;
+  if (args.length === 2) {
+    const parsed = parseInteger(args[1] as string);
+    if (parsed === null) return NOT_INTEGER_ERR;
+    count = Number(parsed);
+    if (count < 0) return NOT_INTEGER_ERR;
+  }
+
+  if (count === 0) return EMPTY_ARRAY;
+
+  const results: Reply[] = [];
+  const actual = Math.min(count, zset.dict.size);
+
+  for (let i = 0; i < actual; i++) {
+    const node = zset.sl.tail;
+    if (!node) break;
+    results.push(bulkReply(node.element));
+    results.push(bulkReply(formatScore(node.score)));
+    zset.sl.delete(node.score, node.element);
+    zset.dict.delete(node.element);
+  }
+
+  removeIfEmpty(db, key, zset);
+  return arrayReply(results);
+}
+
+// --- ZMPOP ---
+
+export function zmpop(db: Database, args: string[], _rng: () => number): Reply {
+  // ZMPOP numkeys key [key ...] MIN|MAX [COUNT count]
+  if (args.length < 2) return wrongArityError('zmpop');
+
+  const numkeysStr = args[0] as string;
+  const numkeysParsed = parseInteger(numkeysStr);
+  if (numkeysParsed === null) return NOT_INTEGER_ERR;
+  const numkeys = Number(numkeysParsed);
+
+  if (numkeys <= 0) {
+    return errorReply('ERR', 'numkeys should be greater than 0');
+  }
+
+  if (args.length < numkeys + 2) {
+    return SYNTAX_ERR;
+  }
+
+  const keys: string[] = [];
+  let i = 1;
+  for (let k = 0; k < numkeys; k++) {
+    keys.push(args[i] as string);
+    i++;
+  }
+
+  // Parse MIN|MAX
+  const direction = (args[i] as string).toUpperCase();
+  if (direction !== 'MIN' && direction !== 'MAX') {
+    return SYNTAX_ERR;
+  }
+  i++;
+
+  let count = 1;
+  if (i < args.length) {
+    const flag = (args[i] as string).toUpperCase();
+    if (flag !== 'COUNT') return SYNTAX_ERR;
+    i++;
+    if (i >= args.length) return SYNTAX_ERR;
+    const countParsed = parseInteger(args[i] as string);
+    if (countParsed === null) return NOT_INTEGER_ERR;
+    count = Number(countParsed);
+    if (count < 0) return NOT_INTEGER_ERR;
+    if (count === 0) {
+      return errorReply('ERR', 'count should be greater than 0');
+    }
+    i++;
+  }
+
+  if (i < args.length) return SYNTAX_ERR;
+
+  // Find first non-empty sorted set
+  for (const key of keys) {
+    const { zset, error } = getExistingZset(db, key);
+    if (error) return error;
+    if (!zset || zset.dict.size === 0) continue;
+
+    const actual = Math.min(count, zset.dict.size);
+    const elements: Reply[] = [];
+
+    for (let j = 0; j < actual; j++) {
+      const node =
+        direction === 'MIN' ? zset.sl.getElementByRank(1) : zset.sl.tail;
+      if (!node) break;
+      elements.push(
+        arrayReply([
+          bulkReply(node.element),
+          bulkReply(formatScore(node.score)),
+        ])
+      );
+      zset.sl.delete(node.score, node.element);
+      zset.dict.delete(node.element);
+    }
+
+    removeIfEmpty(db, key, zset);
+    return arrayReply([bulkReply(key), arrayReply(elements)]);
+  }
+
+  return NIL_ARRAY;
+}
+
+// --- ZRANDMEMBER ---
+
+export function zrandmember(
+  db: Database,
+  args: string[],
+  rng: () => number
+): Reply {
+  const key = args[0] as string;
+  const { zset, error } = getExistingZset(db, key);
+  if (error) return error;
+
+  // No count argument — single element or nil
+  if (args.length === 1) {
+    if (!zset || zset.dict.size === 0) return NIL;
+    const members = Array.from(zset.dict.keys());
+    const idx = Math.floor(rng() * members.length);
+    return bulkReply(members[idx] as string);
+  }
+
+  // Parse count
+  const countParsed = parseInteger(args[1] as string);
+  if (countParsed === null) return NOT_INTEGER_ERR;
+  const count = Number(countParsed);
+
+  let withScores = false;
+  if (args.length >= 3) {
+    if ((args[2] as string).toUpperCase() === 'WITHSCORES') {
+      withScores = true;
+    } else {
+      return SYNTAX_ERR;
+    }
+  }
+
+  if (args.length > 3) return SYNTAX_ERR;
+
+  if (!zset || zset.dict.size === 0) return EMPTY_ARRAY;
+  if (count === 0) return EMPTY_ARRAY;
+
+  const members = Array.from(zset.dict.keys());
+  const results: Reply[] = [];
+
+  if (count > 0) {
+    // Positive count: unique elements, at most set size
+    const actual = Math.min(count, members.length);
+    const shuffled = partialShuffle([...members], actual, rng);
+    for (let j = 0; j < actual; j++) {
+      const member = shuffled[j] as string;
+      results.push(bulkReply(member));
+      if (withScores) {
+        results.push(bulkReply(formatScore(zset.dict.get(member) as number)));
+      }
+    }
+  } else {
+    // Negative count: |count| elements, may repeat
+    const absCount = Math.abs(count);
+    for (let j = 0; j < absCount; j++) {
+      const idx = Math.floor(rng() * members.length);
+      const member = members[idx] as string;
+      results.push(bulkReply(member));
+      if (withScores) {
+        results.push(bulkReply(formatScore(zset.dict.get(member) as number)));
+      }
+    }
+  }
+
+  return arrayReply(results);
+}
+
+// --- Aggregate helpers for ZUNION/ZINTER/ZDIFF ---
+
+type AggregateFunc = 'SUM' | 'MIN' | 'MAX';
+
+function collectZsets(
+  db: Database,
+  keys: string[]
+): { zsets: (SortedSetData | null)[]; error: Reply | null } {
+  const zsets: (SortedSetData | null)[] = [];
+  for (const key of keys) {
+    const { zset, error } = getExistingZset(db, key);
+    if (error) return { zsets: [], error };
+    zsets.push(zset);
+  }
+  return { zsets, error: null };
+}
+
+function aggregateScore(a: number, b: number, func: AggregateFunc): number {
+  switch (func) {
+    case 'SUM':
+      return a + b;
+    case 'MIN':
+      return Math.min(a, b);
+    case 'MAX':
+      return Math.max(a, b);
+  }
+}
+
+function parseWeightsAndAggregate(
+  args: string[],
+  startIdx: number,
+  numkeys: number,
+  allowWithScores: boolean
+): {
+  weights: number[];
+  aggregate: AggregateFunc;
+  error: Reply | null;
+} {
+  const weights = new Array<number>(numkeys).fill(1);
+  let aggregate: AggregateFunc = 'SUM';
+  let i = startIdx;
+
+  while (i < args.length) {
+    const opt = (args[i] as string).toUpperCase();
+    if (opt === 'WEIGHTS') {
+      i++;
+      for (let k = 0; k < numkeys; k++) {
+        if (i >= args.length) {
+          return {
+            weights,
+            aggregate,
+            error: SYNTAX_ERR,
+          };
+        }
+        const parsed = parseFloat64(args[i] as string);
+        if (!parsed) {
+          return { weights, aggregate, error: NOT_FLOAT_ERR };
+        }
+        weights[k] = parsed.value;
+        i++;
+      }
+    } else if (opt === 'AGGREGATE') {
+      i++;
+      if (i >= args.length) {
+        return { weights, aggregate, error: SYNTAX_ERR };
+      }
+      const agg = (args[i] as string).toUpperCase();
+      if (agg !== 'SUM' && agg !== 'MIN' && agg !== 'MAX') {
+        return { weights, aggregate, error: SYNTAX_ERR };
+      }
+      aggregate = agg;
+      i++;
+    } else if (opt === 'WITHSCORES' && allowWithScores) {
+      // handled by caller, skip
+      i++;
+    } else {
+      return { weights, aggregate, error: SYNTAX_ERR };
+    }
+  }
+
+  return { weights, aggregate, error: null };
+}
+
+function computeZunion(
+  zsets: (SortedSetData | null)[],
+  weights: number[],
+  aggregate: AggregateFunc
+): Map<string, number> {
+  const result = new Map<string, number>();
+
+  for (let k = 0; k < zsets.length; k++) {
+    const zs = zsets[k];
+    if (!zs) continue;
+    const w = weights[k] as number;
+    for (const [member, score] of zs.dict) {
+      const weighted = score * w;
+      const existing = result.get(member);
+      if (existing !== undefined) {
+        result.set(member, aggregateScore(existing, weighted, aggregate));
+      } else {
+        result.set(member, weighted);
+      }
+    }
+  }
+
+  return result;
+}
+
+function computeZinter(
+  zsets: (SortedSetData | null)[],
+  weights: number[],
+  aggregate: AggregateFunc
+): Map<string, number> {
+  const result = new Map<string, number>();
+
+  // Find the smallest non-null set
+  let smallestIdx = -1;
+  let smallestSize = Infinity;
+  for (let k = 0; k < zsets.length; k++) {
+    const zs = zsets[k];
+    if (!zs) return result; // empty intersection
+    if (zs.dict.size < smallestSize) {
+      smallestSize = zs.dict.size;
+      smallestIdx = k;
+    }
+  }
+
+  if (smallestIdx < 0) return result;
+
+  const smallest = zsets[smallestIdx] as SortedSetData;
+  for (const [member, score] of smallest.dict) {
+    let combined = score * (weights[smallestIdx] as number);
+    let inAll = true;
+
+    for (let k = 0; k < zsets.length; k++) {
+      if (k === smallestIdx) continue;
+      const zs = zsets[k] as SortedSetData;
+      const otherScore = zs.dict.get(member);
+      if (otherScore === undefined) {
+        inAll = false;
+        break;
+      }
+      combined = aggregateScore(
+        combined,
+        otherScore * (weights[k] as number),
+        aggregate
+      );
+    }
+
+    if (inAll) {
+      result.set(member, combined);
+    }
+  }
+
+  return result;
+}
+
+function computeZdiff(zsets: (SortedSetData | null)[]): Map<string, number> {
+  const result = new Map<string, number>();
+
+  const first = zsets[0];
+  if (!first) return result;
+
+  for (const [member, score] of first.dict) {
+    let inOther = false;
+    for (let k = 1; k < zsets.length; k++) {
+      const zs = zsets[k];
+      if (zs && zs.dict.has(member)) {
+        inOther = true;
+        break;
+      }
+    }
+    if (!inOther) {
+      result.set(member, score);
+    }
+  }
+
+  return result;
+}
+
+function resultMapToSortedReply(
+  resultMap: Map<string, number>,
+  withScores: boolean
+): Reply {
+  if (resultMap.size === 0) return EMPTY_ARRAY;
+
+  // Sort by score, then by member lexicographically
+  const entries = Array.from(resultMap.entries());
+  entries.sort((a, b) => {
+    if (a[1] !== b[1]) return a[1] - b[1];
+    return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
+  });
+
+  const results: Reply[] = [];
+  for (const [member, score] of entries) {
+    results.push(bulkReply(member));
+    if (withScores) {
+      results.push(bulkReply(formatScore(score)));
+    }
+  }
+
+  return arrayReply(results);
+}
+
+// --- ZUNION ---
+
+export function zunion(
+  db: Database,
+  args: string[],
+  _rng: () => number
+): Reply {
+  // ZUNION numkeys key [key ...] [WEIGHTS weight ...] [AGGREGATE SUM|MIN|MAX] [WITHSCORES]
+  const numkeysParsed = parseInteger(args[0] as string);
+  if (numkeysParsed === null) return NOT_INTEGER_ERR;
+  const numkeys = Number(numkeysParsed);
+
+  if (numkeys <= 0) {
+    return errorReply(
+      'ERR',
+      "at least 1 input key is needed for 'zunion' command"
+    );
+  }
+
+  if (args.length < numkeys + 1) {
+    return SYNTAX_ERR;
+  }
+
+  const keys: string[] = [];
+  for (let k = 0; k < numkeys; k++) {
+    keys.push(args[k + 1] as string);
+  }
+
+  let withScores = false;
+  // Check for WITHSCORES before parsing weights/aggregate
+  for (let j = numkeys + 1; j < args.length; j++) {
+    if ((args[j] as string).toUpperCase() === 'WITHSCORES') {
+      withScores = true;
+    }
+  }
+
+  const {
+    weights,
+    aggregate,
+    error: parseErr,
+  } = parseWeightsAndAggregate(args, numkeys + 1, numkeys, true);
+  if (parseErr) return parseErr;
+
+  const { zsets, error } = collectZsets(db, keys);
+  if (error) return error;
+
+  const resultMap = computeZunion(zsets, weights, aggregate);
+  return resultMapToSortedReply(resultMap, withScores);
+}
+
+// --- ZINTER ---
+
+export function zinter(
+  db: Database,
+  args: string[],
+  _rng: () => number
+): Reply {
+  const numkeysParsed = parseInteger(args[0] as string);
+  if (numkeysParsed === null) return NOT_INTEGER_ERR;
+  const numkeys = Number(numkeysParsed);
+
+  if (numkeys <= 0) {
+    return errorReply(
+      'ERR',
+      "at least 1 input key is needed for 'zinter' command"
+    );
+  }
+
+  if (args.length < numkeys + 1) {
+    return SYNTAX_ERR;
+  }
+
+  const keys: string[] = [];
+  for (let k = 0; k < numkeys; k++) {
+    keys.push(args[k + 1] as string);
+  }
+
+  let withScores = false;
+  for (let j = numkeys + 1; j < args.length; j++) {
+    if ((args[j] as string).toUpperCase() === 'WITHSCORES') {
+      withScores = true;
+    }
+  }
+
+  const {
+    weights,
+    aggregate,
+    error: parseErr,
+  } = parseWeightsAndAggregate(args, numkeys + 1, numkeys, true);
+  if (parseErr) return parseErr;
+
+  const { zsets, error } = collectZsets(db, keys);
+  if (error) return error;
+
+  const resultMap = computeZinter(zsets, weights, aggregate);
+  return resultMapToSortedReply(resultMap, withScores);
+}
+
+// --- ZDIFF ---
+
+export function zdiff(db: Database, args: string[], _rng: () => number): Reply {
+  const numkeysParsed = parseInteger(args[0] as string);
+  if (numkeysParsed === null) return NOT_INTEGER_ERR;
+  const numkeys = Number(numkeysParsed);
+
+  if (numkeys <= 0) {
+    return errorReply(
+      'ERR',
+      "at least 1 input key is needed for 'zdiff' command"
+    );
+  }
+
+  if (args.length < numkeys + 1) {
+    return SYNTAX_ERR;
+  }
+
+  const keys: string[] = [];
+  for (let k = 0; k < numkeys; k++) {
+    keys.push(args[k + 1] as string);
+  }
+
+  let withScores = false;
+  for (let j = numkeys + 1; j < args.length; j++) {
+    if ((args[j] as string).toUpperCase() === 'WITHSCORES') {
+      withScores = true;
+    }
+  }
+
+  // ZDIFF doesn't support WEIGHTS or AGGREGATE, only WITHSCORES
+  let i = numkeys + 1;
+  while (i < args.length) {
+    const opt = (args[i] as string).toUpperCase();
+    if (opt === 'WITHSCORES') {
+      i++;
+    } else {
+      return SYNTAX_ERR;
+    }
+  }
+
+  const { zsets, error } = collectZsets(db, keys);
+  if (error) return error;
+
+  const resultMap = computeZdiff(zsets);
+  return resultMapToSortedReply(resultMap, withScores);
+}
+
+// --- Store helper for sorted set operations ---
+
+function storeZsetResult(
+  db: Database,
+  destination: string,
+  resultMap: Map<string, number>,
+  rng: () => number
+): Reply {
+  // Delete existing destination
+  db.delete(destination);
+
+  if (resultMap.size === 0) {
+    return ZERO;
+  }
+
+  const zset: SortedSetData = {
+    sl: new SkipList(rng),
+    dict: new Map(),
+  };
+
+  for (const [member, score] of resultMap) {
+    zset.sl.insert(score, member);
+    zset.dict.set(member, score);
+  }
+
+  db.set(destination, 'zset', 'skiplist', zset);
+  return integerReply(zset.dict.size);
+}
+
+// --- ZUNIONSTORE ---
+
+export function zunionstore(
+  db: Database,
+  args: string[],
+  rng: () => number
+): Reply {
+  // ZUNIONSTORE destination numkeys key [key ...] [WEIGHTS ...] [AGGREGATE ...]
+  const destination = args[0] as string;
+  const numkeysParsed = parseInteger(args[1] as string);
+  if (numkeysParsed === null) return NOT_INTEGER_ERR;
+  const numkeys = Number(numkeysParsed);
+
+  if (numkeys <= 0) {
+    return errorReply(
+      'ERR',
+      "at least 1 input key is needed for 'zunionstore' command"
+    );
+  }
+
+  if (args.length < numkeys + 2) {
+    return SYNTAX_ERR;
+  }
+
+  const keys: string[] = [];
+  for (let k = 0; k < numkeys; k++) {
+    keys.push(args[k + 2] as string);
+  }
+
+  const {
+    weights,
+    aggregate,
+    error: parseErr,
+  } = parseWeightsAndAggregate(args, numkeys + 2, numkeys, false);
+  if (parseErr) return parseErr;
+
+  // Read all source sets before mutation (destination may be a source)
+  const { zsets, error } = collectZsets(db, keys);
+  if (error) return error;
+
+  const resultMap = computeZunion(zsets, weights, aggregate);
+  return storeZsetResult(db, destination, resultMap, rng);
+}
+
+// --- ZINTERSTORE ---
+
+export function zinterstore(
+  db: Database,
+  args: string[],
+  rng: () => number
+): Reply {
+  const destination = args[0] as string;
+  const numkeysParsed = parseInteger(args[1] as string);
+  if (numkeysParsed === null) return NOT_INTEGER_ERR;
+  const numkeys = Number(numkeysParsed);
+
+  if (numkeys <= 0) {
+    return errorReply(
+      'ERR',
+      "at least 1 input key is needed for 'zinterstore' command"
+    );
+  }
+
+  if (args.length < numkeys + 2) {
+    return SYNTAX_ERR;
+  }
+
+  const keys: string[] = [];
+  for (let k = 0; k < numkeys; k++) {
+    keys.push(args[k + 2] as string);
+  }
+
+  const {
+    weights,
+    aggregate,
+    error: parseErr,
+  } = parseWeightsAndAggregate(args, numkeys + 2, numkeys, false);
+  if (parseErr) return parseErr;
+
+  const { zsets, error } = collectZsets(db, keys);
+  if (error) return error;
+
+  const resultMap = computeZinter(zsets, weights, aggregate);
+  return storeZsetResult(db, destination, resultMap, rng);
+}
+
+// --- ZDIFFSTORE ---
+
+export function zdiffstore(
+  db: Database,
+  args: string[],
+  rng: () => number
+): Reply {
+  const destination = args[0] as string;
+  const numkeysParsed = parseInteger(args[1] as string);
+  if (numkeysParsed === null) return NOT_INTEGER_ERR;
+  const numkeys = Number(numkeysParsed);
+
+  if (numkeys <= 0) {
+    return errorReply(
+      'ERR',
+      "at least 1 input key is needed for 'zdiffstore' command"
+    );
+  }
+
+  if (args.length < numkeys + 2) {
+    return SYNTAX_ERR;
+  }
+
+  const keys: string[] = [];
+  for (let k = 0; k < numkeys; k++) {
+    keys.push(args[k + 2] as string);
+  }
+
+  // ZDIFFSTORE doesn't support WEIGHTS or AGGREGATE
+  if (args.length > numkeys + 2) {
+    return SYNTAX_ERR;
+  }
+
+  const { zsets, error } = collectZsets(db, keys);
+  if (error) return error;
+
+  const resultMap = computeZdiff(zsets);
+  return storeZsetResult(db, destination, resultMap, rng);
+}
+
+// --- ZINTERCARD ---
+
+export function zintercard(db: Database, args: string[]): Reply {
+  // ZINTERCARD numkeys key [key ...] [LIMIT limit]
+  const numkeysParsed = parseInteger(args[0] as string);
+  if (numkeysParsed === null) return NOT_INTEGER_ERR;
+  const numkeys = Number(numkeysParsed);
+
+  if (numkeys <= 0) {
+    return errorReply('ERR', 'numkeys should be greater than 0');
+  }
+
+  const remaining = args.length - 1;
+  if (numkeys > remaining) {
+    return errorReply(
+      'ERR',
+      "Number of keys can't be greater than number of args"
+    );
+  }
+
+  const keys: string[] = [];
+  let i = 1;
+  for (let k = 0; k < numkeys; k++) {
+    keys.push(args[i] as string);
+    i++;
+  }
+
+  let limit = 0;
+  if (i < args.length) {
+    const flag = (args[i] as string).toUpperCase();
+    if (flag !== 'LIMIT') return SYNTAX_ERR;
+    i++;
+    if (i >= args.length) return SYNTAX_ERR;
+    const limitParsed = parseInteger(args[i] as string);
+    if (limitParsed === null) return NOT_INTEGER_ERR;
+    limit = Number(limitParsed);
+    if (limit < 0) {
+      return errorReply('ERR', "LIMIT can't be negative");
+    }
+    i++;
+  }
+
+  if (i < args.length) return SYNTAX_ERR;
+
+  // Collect zsets
+  const zsets: (SortedSetData | null)[] = [];
+  for (const key of keys) {
+    const { zset, error } = getExistingZset(db, key);
+    if (error) return error;
+    zsets.push(zset);
+  }
+
+  // If any key doesn't exist, intersection is empty
+  for (const zs of zsets) {
+    if (!zs) return ZERO;
+  }
+
+  const nonNull = zsets as SortedSetData[];
+
+  // Find smallest
+  let smallestIdx = 0;
+  for (let k = 1; k < nonNull.length; k++) {
+    if (
+      (nonNull[k] as SortedSetData).dict.size <
+      (nonNull[smallestIdx] as SortedSetData).dict.size
+    ) {
+      smallestIdx = k;
+    }
+  }
+
+  const smallest = nonNull[smallestIdx] as SortedSetData;
+  let count = 0;
+
+  for (const [member] of smallest.dict) {
+    let inAll = true;
+    for (let k = 0; k < nonNull.length; k++) {
+      if (k === smallestIdx) continue;
+      if (!(nonNull[k] as SortedSetData).dict.has(member)) {
+        inAll = false;
+        break;
+      }
+    }
+    if (inAll) {
+      count++;
+      if (limit > 0 && count >= limit) break;
+    }
+  }
+
+  return integerReply(count);
+}
+
+// --- ZSCAN ---
+
+export function zscan(db: Database, args: string[]): Reply {
+  const key = args[0] as string;
+  const cursorStr = args[1] as string;
+
+  const cursor = parseInt(cursorStr, 10);
+  if (isNaN(cursor) || cursor < 0) {
+    return errorReply('ERR', 'invalid cursor');
+  }
+
+  // Check key type before parsing options
+  const entry = db.get(key);
+  if (entry && entry.type !== 'zset') return WRONGTYPE_ERR;
+
+  let matchPattern: string | null = null;
+  let count = 10;
+
+  let i = 2;
+  while (i < args.length) {
+    const flag = (args[i] as string).toUpperCase();
+    if (flag === 'MATCH') {
+      i++;
+      matchPattern = (args[i] as string) ?? '*';
+    } else if (flag === 'COUNT') {
+      i++;
+      count = parseInt((args[i] as string) ?? '10', 10);
+      if (isNaN(count)) {
+        return NOT_INTEGER_ERR;
+      }
+      if (count < 1) {
+        return SYNTAX_ERR;
+      }
+    } else {
+      return SYNTAX_ERR;
+    }
+    i++;
+  }
+
+  if (!entry) {
+    return arrayReply([bulkReply('0'), EMPTY_ARRAY]);
+  }
+
+  const zset = entry.value as SortedSetData;
+  const allMembers = Array.from(zset.dict.keys());
+
+  if (allMembers.length === 0) {
+    return arrayReply([bulkReply('0'), EMPTY_ARRAY]);
+  }
+
+  const results: Reply[] = [];
+  let position = cursor;
+  let scanned = 0;
+
+  while (position < allMembers.length && scanned < count) {
+    const member = allMembers[position] as string;
+    position++;
+    scanned++;
+
+    if (matchPattern && !matchGlob(matchPattern, member)) continue;
+
+    results.push(bulkReply(member));
+    results.push(bulkReply(formatScore(zset.dict.get(member) as number)));
+  }
+
+  const nextCursor = position >= allMembers.length ? 0 : position;
+
+  return arrayReply([bulkReply(String(nextCursor)), arrayReply(results)]);
 }
 
 export const specs: CommandSpec[] = [
@@ -1299,5 +2177,125 @@ export const specs: CommandSpec[] = [
     lastKey: 2,
     keyStep: 1,
     categories: ['@write', '@sortedset'],
+  },
+  {
+    name: 'zpopmin',
+    handler: (ctx, args) => zpopmin(ctx.db, args),
+    arity: -2,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@sortedset', '@fast'],
+  },
+  {
+    name: 'zpopmax',
+    handler: (ctx, args) => zpopmax(ctx.db, args),
+    arity: -2,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@sortedset', '@fast'],
+  },
+  {
+    name: 'zmpop',
+    handler: (ctx, args) => zmpop(ctx.db, args, ctx.engine.rng),
+    arity: -4,
+    flags: ['write', 'fast'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@write', '@sortedset', '@fast'],
+  },
+  {
+    name: 'zrandmember',
+    handler: (ctx, args) => zrandmember(ctx.db, args, ctx.engine.rng),
+    arity: -2,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@sortedset'],
+  },
+  {
+    name: 'zunion',
+    handler: (ctx, args) => zunion(ctx.db, args, ctx.engine.rng),
+    arity: -3,
+    flags: ['readonly'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@read', '@sortedset'],
+  },
+  {
+    name: 'zinter',
+    handler: (ctx, args) => zinter(ctx.db, args, ctx.engine.rng),
+    arity: -3,
+    flags: ['readonly'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@read', '@sortedset'],
+  },
+  {
+    name: 'zdiff',
+    handler: (ctx, args) => zdiff(ctx.db, args, ctx.engine.rng),
+    arity: -3,
+    flags: ['readonly'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@read', '@sortedset'],
+  },
+  {
+    name: 'zunionstore',
+    handler: (ctx, args) => zunionstore(ctx.db, args, ctx.engine.rng),
+    arity: -4,
+    flags: ['write', 'denyoom'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@sortedset'],
+  },
+  {
+    name: 'zinterstore',
+    handler: (ctx, args) => zinterstore(ctx.db, args, ctx.engine.rng),
+    arity: -4,
+    flags: ['write', 'denyoom'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@sortedset'],
+  },
+  {
+    name: 'zdiffstore',
+    handler: (ctx, args) => zdiffstore(ctx.db, args, ctx.engine.rng),
+    arity: -4,
+    flags: ['write', 'denyoom'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@sortedset'],
+  },
+  {
+    name: 'zintercard',
+    handler: (ctx, args) => zintercard(ctx.db, args),
+    arity: -3,
+    flags: ['readonly'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@read', '@sortedset'],
+  },
+  {
+    name: 'zscan',
+    handler: (ctx, args) => zscan(ctx.db, args),
+    arity: -3,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@sortedset'],
   },
 ];
