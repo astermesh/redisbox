@@ -594,4 +594,190 @@ describe('PubSubManager', () => {
       expect(mgr.numPat()).toBe(2);
     });
   });
+
+  // --- Shard channel subscriptions ---
+
+  describe('ssubscribe', () => {
+    it('subscribes a client to a shard channel', () => {
+      const mgr = new PubSubManager();
+      const added = mgr.ssubscribe(1, 'news');
+      expect(added).toBe(true);
+      expect(mgr.shardChannelCount(1)).toBe(1);
+    });
+
+    it('returns false for duplicate shard subscription', () => {
+      const mgr = new PubSubManager();
+      mgr.ssubscribe(1, 'news');
+      expect(mgr.ssubscribe(1, 'news')).toBe(false);
+      expect(mgr.shardChannelCount(1)).toBe(1);
+    });
+
+    it('tracks shard channels separately from regular channels', () => {
+      const mgr = new PubSubManager();
+      mgr.subscribe(1, 'ch1');
+      mgr.ssubscribe(1, 'ch1');
+      expect(mgr.channelCount(1)).toBe(1);
+      expect(mgr.shardChannelCount(1)).toBe(1);
+      expect(mgr.subscriptionCount(1)).toBe(2);
+    });
+  });
+
+  describe('sunsubscribe', () => {
+    it('unsubscribes a client from a shard channel', () => {
+      const mgr = new PubSubManager();
+      mgr.ssubscribe(1, 'news');
+      expect(mgr.sunsubscribe(1, 'news')).toBe(true);
+      expect(mgr.shardChannelCount(1)).toBe(0);
+    });
+
+    it('returns false when not subscribed', () => {
+      const mgr = new PubSubManager();
+      expect(mgr.sunsubscribe(1, 'news')).toBe(false);
+    });
+
+    it('does not affect regular channel subscriptions', () => {
+      const mgr = new PubSubManager();
+      mgr.subscribe(1, 'news');
+      mgr.ssubscribe(1, 'news');
+      mgr.sunsubscribe(1, 'news');
+      expect(mgr.channelCount(1)).toBe(1);
+      expect(mgr.shardChannelCount(1)).toBe(0);
+    });
+  });
+
+  describe('sunsubscribeAll', () => {
+    it('unsubscribes from all shard channels', () => {
+      const mgr = new PubSubManager();
+      mgr.ssubscribe(1, 'ch1');
+      mgr.ssubscribe(1, 'ch2');
+      const removed = mgr.sunsubscribeAll(1);
+      expect(removed).toHaveLength(2);
+      expect(mgr.shardChannelCount(1)).toBe(0);
+    });
+
+    it('does not affect regular channels', () => {
+      const mgr = new PubSubManager();
+      mgr.subscribe(1, 'regular');
+      mgr.ssubscribe(1, 'shard');
+      mgr.sunsubscribeAll(1);
+      expect(mgr.channelCount(1)).toBe(1);
+    });
+
+    it('returns empty array when no shard subscriptions', () => {
+      const mgr = new PubSubManager();
+      expect(mgr.sunsubscribeAll(1)).toHaveLength(0);
+    });
+  });
+
+  describe('shardPublish', () => {
+    it('delivers smessage to shard subscribers', () => {
+      const mgr = new PubSubManager();
+      const sent: { clientId: number; reply: Reply }[] = [];
+      mgr.setSender((clientId, reply) => sent.push({ clientId, reply }));
+
+      mgr.ssubscribe(1, 'news');
+      const count = mgr.shardPublish('news', 'hello');
+      expect(count).toBe(1);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]?.reply).toEqual({
+        kind: 'array',
+        value: [
+          { kind: 'bulk', value: 'smessage' },
+          { kind: 'bulk', value: 'news' },
+          { kind: 'bulk', value: 'hello' },
+        ],
+      });
+    });
+
+    it('does not deliver to regular subscribers', () => {
+      const mgr = new PubSubManager();
+      const sent: { clientId: number; reply: Reply }[] = [];
+      mgr.setSender((clientId, reply) => sent.push({ clientId, reply }));
+
+      mgr.subscribe(1, 'news');
+      expect(mgr.shardPublish('news', 'hello')).toBe(0);
+      expect(sent).toHaveLength(0);
+    });
+
+    it('does not deliver to pattern subscribers', () => {
+      const mgr = new PubSubManager();
+      const sent: { clientId: number; reply: Reply }[] = [];
+      mgr.setSender((clientId, reply) => sent.push({ clientId, reply }));
+
+      mgr.psubscribe(1, 'new*');
+      expect(mgr.shardPublish('news', 'hello')).toBe(0);
+      expect(sent).toHaveLength(0);
+    });
+  });
+
+  describe('activeShardChannels', () => {
+    it('returns empty when no shard subscriptions', () => {
+      const mgr = new PubSubManager();
+      expect(mgr.activeShardChannels()).toEqual([]);
+    });
+
+    it('returns only shard channels', () => {
+      const mgr = new PubSubManager();
+      mgr.subscribe(1, 'regular');
+      mgr.ssubscribe(1, 'shard1');
+      mgr.ssubscribe(1, 'shard2');
+      const channels = mgr.activeShardChannels();
+      expect(channels.sort()).toEqual(['shard1', 'shard2']);
+    });
+
+    it('filters by glob pattern', () => {
+      const mgr = new PubSubManager();
+      mgr.ssubscribe(1, 'news.uk');
+      mgr.ssubscribe(1, 'sports.uk');
+      expect(mgr.activeShardChannels('news.*')).toEqual(['news.uk']);
+    });
+  });
+
+  describe('shardNumSub', () => {
+    it('returns counts for shard channels only', () => {
+      const mgr = new PubSubManager();
+      mgr.subscribe(1, 'news');
+      mgr.ssubscribe(2, 'news');
+      expect(mgr.shardNumSub(['news'])).toEqual([['news', 1]]);
+      expect(mgr.numSub(['news'])).toEqual([['news', 1]]);
+    });
+  });
+
+  describe('removeClient with shard channels', () => {
+    it('removes shard channel subscriptions too', () => {
+      const mgr = new PubSubManager();
+      mgr.subscribe(1, 'ch1');
+      mgr.psubscribe(1, 'p1');
+      mgr.ssubscribe(1, 'sch1');
+
+      mgr.removeClient(1);
+
+      expect(mgr.channelCount(1)).toBe(0);
+      expect(mgr.patternCount(1)).toBe(0);
+      expect(mgr.shardChannelCount(1)).toBe(0);
+      expect(mgr.subscriptionCount(1)).toBe(0);
+    });
+
+    it('prevents shard message delivery after removal', () => {
+      const mgr = new PubSubManager();
+      const sent: { clientId: number; reply: Reply }[] = [];
+      mgr.setSender((clientId, reply) => sent.push({ clientId, reply }));
+
+      mgr.ssubscribe(1, 'news');
+      mgr.removeClient(1);
+
+      expect(mgr.shardPublish('news', 'hello')).toBe(0);
+      expect(sent).toHaveLength(0);
+    });
+  });
+
+  describe('subscriptionCount includes shard channels', () => {
+    it('returns combined count of channels, patterns, and shard channels', () => {
+      const mgr = new PubSubManager();
+      mgr.subscribe(1, 'ch1');
+      mgr.psubscribe(1, 'p1');
+      mgr.ssubscribe(1, 'sch1');
+      expect(mgr.subscriptionCount(1)).toBe(3);
+    });
+  });
 });

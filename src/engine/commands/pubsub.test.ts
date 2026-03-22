@@ -925,7 +925,7 @@ describe('PUBSUB command dispatcher', () => {
 
   it('dispatches SHARDCHANNELS subcommand', () => {
     const { ctx } = createCtx();
-    cmd.subscribe(ctx, ['news']);
+    cmd.ssubscribe(ctx, ['news']);
     const reply = cmd.pubsubCommand(ctx, ['SHARDCHANNELS']);
     expect(reply.kind).toBe('array');
     if (reply.kind === 'array') {
@@ -935,7 +935,7 @@ describe('PUBSUB command dispatcher', () => {
 
   it('dispatches SHARDNUMSUB subcommand', () => {
     const { ctx } = createCtx();
-    cmd.subscribe(ctx, ['news']);
+    cmd.ssubscribe(ctx, ['news']);
     const reply = cmd.pubsubCommand(ctx, ['SHARDNUMSUB', 'news']);
     expect(reply.kind).toBe('array');
     if (reply.kind === 'array') {
@@ -1016,16 +1016,35 @@ describe('SSUBSCRIBE', () => {
     expect(client.flagSubscribed).toBe(true);
   });
 
-  it('shares subscription state with regular subscribe', () => {
+  it('tracks shard channels separately from regular channels', () => {
     const { ctx, pubsub, client } = createCtx();
     cmd.subscribe(ctx, ['ch1']);
     cmd.ssubscribe(ctx, ['ch2']);
-    expect(pubsub.channelCount(client.id)).toBe(2);
+    expect(pubsub.channelCount(client.id)).toBe(1);
+    expect(pubsub.shardChannelCount(client.id)).toBe(1);
+    expect(pubsub.subscriptionCount(client.id)).toBe(2);
+  });
+
+  it('count includes regular channel and pattern subscriptions', () => {
+    const { ctx } = createCtx();
+    cmd.subscribe(ctx, ['ch1']);
+    cmd.psubscribe(ctx, ['p1']);
+    const reply = cmd.ssubscribe(ctx, ['sch1']);
+    const replies = multiReplies(reply);
+    // 1 channel + 1 pattern + 1 shard channel = 3
+    expect(replies[0]).toEqual({
+      kind: 'array',
+      value: [
+        { kind: 'bulk', value: 'ssubscribe' },
+        { kind: 'bulk', value: 'sch1' },
+        { kind: 'integer', value: 3 },
+      ],
+    });
   });
 });
 
 describe('SUNSUBSCRIBE', () => {
-  it('unsubscribes from a single channel with sunsubscribe reply type', () => {
+  it('unsubscribes from a single shard channel with sunsubscribe reply type', () => {
     const { ctx } = createCtx();
     cmd.ssubscribe(ctx, ['news']);
     const reply = cmd.sunsubscribe(ctx, ['news']);
@@ -1041,7 +1060,7 @@ describe('SUNSUBSCRIBE', () => {
     });
   });
 
-  it('unsubscribes from all channels when no args', () => {
+  it('unsubscribes from all shard channels when no args', () => {
     const { ctx, client } = createCtx();
     cmd.ssubscribe(ctx, ['ch1', 'ch2']);
     const reply = cmd.sunsubscribe(ctx, []);
@@ -1050,7 +1069,18 @@ describe('SUNSUBSCRIBE', () => {
     expect(client.flagSubscribed).toBe(false);
   });
 
-  it('sends null channel reply when no subscriptions and no args', () => {
+  it('does not affect regular channel subscriptions', () => {
+    const { ctx, client, pubsub } = createCtx();
+    cmd.subscribe(ctx, ['regular']);
+    cmd.ssubscribe(ctx, ['shard']);
+    cmd.sunsubscribe(ctx, []);
+    // Regular channel subscription should remain
+    expect(pubsub.channelCount(client.id)).toBe(1);
+    expect(pubsub.shardChannelCount(client.id)).toBe(0);
+    expect(client.flagSubscribed).toBe(true);
+  });
+
+  it('sends null channel reply when no shard subscriptions and no args', () => {
     const { ctx } = createCtx();
     const reply = cmd.sunsubscribe(ctx, []);
     const replies = multiReplies(reply);
@@ -1071,6 +1101,23 @@ describe('SUNSUBSCRIBE', () => {
     cmd.sunsubscribe(ctx, ['news']);
     expect(client.flagSubscribed).toBe(false);
   });
+
+  it('remaining count includes regular subscriptions', () => {
+    const { ctx } = createCtx();
+    cmd.subscribe(ctx, ['ch1']);
+    cmd.ssubscribe(ctx, ['sch1']);
+    const reply = cmd.sunsubscribe(ctx, ['sch1']);
+    const replies = multiReplies(reply);
+    // 1 regular channel remains
+    expect(replies[0]).toEqual({
+      kind: 'array',
+      value: [
+        { kind: 'bulk', value: 'sunsubscribe' },
+        { kind: 'bulk', value: 'sch1' },
+        { kind: 'integer', value: 1 },
+      ],
+    });
+  });
 });
 
 describe('SPUBLISH', () => {
@@ -1080,15 +1127,106 @@ describe('SPUBLISH', () => {
     expect(reply).toEqual({ kind: 'integer', value: 0 });
   });
 
-  it('delivers message to subscribers (same as PUBLISH)', () => {
+  it('delivers smessage to shard channel subscribers', () => {
+    const { createClient, sent } = createMultiClientCtx();
+    const { ctx: ctx1 } = createClient(1);
+    const { ctx: publisherCtx } = createClient(2);
+
+    cmd.ssubscribe(ctx1, ['news']);
+    const reply = cmd.spublish(publisherCtx, ['news', 'hello']);
+    expect(reply).toEqual({ kind: 'integer', value: 1 });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.reply).toEqual({
+      kind: 'array',
+      value: [
+        { kind: 'bulk', value: 'smessage' },
+        { kind: 'bulk', value: 'news' },
+        { kind: 'bulk', value: 'hello' },
+      ],
+    });
+  });
+
+  it('does not deliver to regular SUBSCRIBE subscribers', () => {
     const { createClient, sent } = createMultiClientCtx();
     const { ctx: ctx1 } = createClient(1);
     const { ctx: publisherCtx } = createClient(2);
 
     cmd.subscribe(ctx1, ['news']);
     const reply = cmd.spublish(publisherCtx, ['news', 'hello']);
-    expect(reply).toEqual({ kind: 'integer', value: 1 });
-    expect(sent).toHaveLength(1);
+    expect(reply).toEqual({ kind: 'integer', value: 0 });
+    expect(sent).toHaveLength(0);
+  });
+
+  it('does not deliver to pattern subscribers', () => {
+    const { createClient, sent } = createMultiClientCtx();
+    const { ctx: ctx1 } = createClient(1);
+    const { ctx: publisherCtx } = createClient(2);
+
+    cmd.psubscribe(ctx1, ['new*']);
+    const reply = cmd.spublish(publisherCtx, ['news', 'hello']);
+    expect(reply).toEqual({ kind: 'integer', value: 0 });
+    expect(sent).toHaveLength(0);
+  });
+});
+
+describe('PUBSUB SHARDCHANNELS', () => {
+  it('returns empty when no shard subscriptions', () => {
+    const { ctx } = createCtx();
+    const reply = cmd.pubsubShardchannels(ctx, []);
+    expect(reply).toEqual({ kind: 'array', value: [] });
+  });
+
+  it('returns only shard channels, not regular channels', () => {
+    const { ctx } = createCtx();
+    cmd.subscribe(ctx, ['regular']);
+    cmd.ssubscribe(ctx, ['shard1', 'shard2']);
+    const reply = cmd.pubsubShardchannels(ctx, []);
+    expect(reply.kind).toBe('array');
+    if (reply.kind === 'array') {
+      const names = reply.value.map((r) =>
+        r.kind === 'bulk' ? r.value : null
+      );
+      expect(names).toEqual(['shard1', 'shard2']);
+    }
+  });
+
+  it('filters by glob pattern', () => {
+    const { ctx } = createCtx();
+    cmd.ssubscribe(ctx, ['news.uk', 'news.us', 'sports.uk']);
+    const reply = cmd.pubsubShardchannels(ctx, ['news.*']);
+    if (reply.kind === 'array') {
+      const names = reply.value.map((r) =>
+        r.kind === 'bulk' ? r.value : null
+      );
+      expect(names).toEqual(['news.uk', 'news.us']);
+    }
+  });
+});
+
+describe('PUBSUB SHARDNUMSUB', () => {
+  it('returns empty array when no channels given', () => {
+    const { ctx } = createCtx();
+    const reply = cmd.pubsubShardnumsub(ctx, []);
+    expect(reply).toEqual({ kind: 'array', value: [] });
+  });
+
+  it('returns subscriber counts for shard channels only', () => {
+    const { createClient } = createMultiClientCtx();
+    const { ctx: ctx1 } = createClient(1);
+    const { ctx: ctx2 } = createClient(2);
+
+    cmd.subscribe(ctx1, ['news']); // regular subscribe
+    cmd.ssubscribe(ctx2, ['news']); // shard subscribe
+
+    const reply = cmd.pubsubShardnumsub(ctx1, ['news']);
+    // Only shard subscriber (ctx2)
+    expect(reply).toEqual({
+      kind: 'array',
+      value: [
+        { kind: 'bulk', value: 'news' },
+        { kind: 'integer', value: 1 },
+      ],
+    });
   });
 });
 

@@ -300,6 +300,31 @@ export function pubsubNumsub(ctx: CommandContext, args: string[]): Reply {
   return arrayReply(result);
 }
 
+export function pubsubShardchannels(
+  ctx: CommandContext,
+  args: string[]
+): Reply {
+  const pubsub = ctx.pubsub;
+  if (!pubsub) return EMPTY_ARRAY;
+  const pattern = args[0];
+  const channels = pubsub.activeShardChannels(pattern);
+  channels.sort();
+  return arrayReply(channels.map((ch) => bulkReply(ch)));
+}
+
+export function pubsubShardnumsub(ctx: CommandContext, args: string[]): Reply {
+  const pubsub = ctx.pubsub;
+  if (!pubsub) return EMPTY_ARRAY;
+  if (args.length === 0) return EMPTY_ARRAY;
+  const pairs = pubsub.shardNumSub(args);
+  const result: Reply[] = [];
+  for (const [ch, count] of pairs) {
+    result.push(bulkReply(ch));
+    result.push(integerReply(count));
+  }
+  return arrayReply(result);
+}
+
 export function pubsubNumpat(ctx: CommandContext): Reply {
   const pubsub = ctx.pubsub;
   if (!pubsub) return ZERO;
@@ -338,11 +363,9 @@ export function pubsubCommand(ctx: CommandContext, args: string[]): Reply {
       if (subArgs.length > 1) {
         return wrongArityError('pubsub|shardchannels');
       }
-      // In non-cluster mode, sharded channels = regular channels
-      return pubsubChannels(ctx, subArgs);
+      return pubsubShardchannels(ctx, subArgs);
     case 'SHARDNUMSUB':
-      // In non-cluster mode, sharded numsub = regular numsub
-      return pubsubNumsub(ctx, subArgs);
+      return pubsubShardnumsub(ctx, subArgs);
     case 'HELP':
       return pubsubHelp();
     default:
@@ -355,8 +378,9 @@ export function pubsubCommand(ctx: CommandContext, args: string[]): Reply {
 /**
  * SSUBSCRIBE channel [channel ...]
  *
- * In non-cluster mode, behaves identically to SUBSCRIBE but uses
- * 'ssubscribe' in the reply type.
+ * Subscribes the client to the specified shard channels.
+ * Shard channels are tracked separately from regular channels.
+ * Reply type is 'ssubscribe'.
  */
 export function ssubscribe(ctx: CommandContext, args: string[]): Reply {
   const pubsub = ctx.pubsub;
@@ -369,7 +393,7 @@ export function ssubscribe(ctx: CommandContext, args: string[]): Reply {
   const replies: Reply[] = [];
 
   for (const channel of args) {
-    pubsub.subscribe(client.id, channel);
+    pubsub.ssubscribe(client.id, channel);
     client.flagSubscribed = true;
 
     const count = pubsub.subscriptionCount(client.id);
@@ -388,8 +412,8 @@ export function ssubscribe(ctx: CommandContext, args: string[]): Reply {
 /**
  * SUNSUBSCRIBE [channel ...]
  *
- * In non-cluster mode, behaves identically to UNSUBSCRIBE but uses
- * 'sunsubscribe' in the reply type.
+ * Unsubscribes the client from shard channels only (not regular channels).
+ * Reply type is 'sunsubscribe'.
  */
 export function sunsubscribe(ctx: CommandContext, args: string[]): Reply {
   const pubsub = ctx.pubsub;
@@ -401,9 +425,9 @@ export function sunsubscribe(ctx: CommandContext, args: string[]): Reply {
     ]);
   }
 
-  // SUNSUBSCRIBE without arguments: unsubscribe from all channels
+  // SUNSUBSCRIBE without arguments: unsubscribe from all shard channels
   if (args.length === 0) {
-    const channels = pubsub.unsubscribeAll(client.id);
+    const channels = pubsub.sunsubscribeAll(client.id);
 
     if (channels.length === 0) {
       const remaining = pubsub.subscriptionCount(client.id);
@@ -417,10 +441,14 @@ export function sunsubscribe(ctx: CommandContext, args: string[]): Reply {
       ]);
     }
 
-    const patternCount = pubsub.patternCount(client.id);
     const replies: Reply[] = [];
     for (let i = 0; i < channels.length; i++) {
-      const remaining = channels.length - 1 - i + patternCount;
+      // Calculate remaining: rest of shard channels to unsub + regular channels + patterns
+      const shardRemaining = channels.length - 1 - i;
+      const remaining =
+        shardRemaining +
+        pubsub.channelCount(client.id) +
+        pubsub.patternCount(client.id);
       const ch = channels[i] ?? '';
       replies.push(
         arrayReply([
@@ -435,11 +463,11 @@ export function sunsubscribe(ctx: CommandContext, args: string[]): Reply {
     return multiReply(replies);
   }
 
-  // SUNSUBSCRIBE with specific channels
+  // SUNSUBSCRIBE with specific shard channels
   const replies: Reply[] = [];
 
   for (const channel of args) {
-    pubsub.unsubscribe(client.id, channel);
+    pubsub.sunsubscribe(client.id, channel);
     const remaining = pubsub.subscriptionCount(client.id);
     replies.push(
       arrayReply([
@@ -457,10 +485,20 @@ export function sunsubscribe(ctx: CommandContext, args: string[]): Reply {
 /**
  * SPUBLISH channel message
  *
- * In non-cluster mode, behaves identically to PUBLISH.
+ * Publishes a message to a shard channel. Only delivers to shard channel
+ * subscribers (via SSUBSCRIBE). Does not deliver to pattern subscribers.
+ * Message type is 'smessage'.
  */
 export function spublish(ctx: CommandContext, args: string[]): Reply {
-  return publish(ctx, args);
+  const pubsub = ctx.pubsub;
+  if (!pubsub) {
+    return ZERO;
+  }
+
+  const channel = args[0] ?? '';
+  const message = args[1] ?? '';
+  const count = pubsub.shardPublish(channel, message);
+  return integerReply(count);
 }
 
 export const specs: CommandSpec[] = [
@@ -556,7 +594,7 @@ export const specs: CommandSpec[] = [
       },
       {
         name: 'shardchannels',
-        handler: (ctx, args) => pubsubChannels(ctx, args),
+        handler: (ctx, args) => pubsubShardchannels(ctx, args),
         arity: -2,
         flags: ['pubsub', 'loading', 'stale'],
         firstKey: 0,
@@ -566,7 +604,7 @@ export const specs: CommandSpec[] = [
       },
       {
         name: 'shardnumsub',
-        handler: (ctx, args) => pubsubNumsub(ctx, args),
+        handler: (ctx, args) => pubsubShardnumsub(ctx, args),
         arity: -2,
         flags: ['pubsub', 'loading', 'stale'],
         firstKey: 0,
