@@ -13,7 +13,8 @@ function createCtx(clockMs = 1_700_000_000_000): CommandContext {
 
 describe('BGSAVE', () => {
   it('returns "Background saving started"', () => {
-    const reply = persistence.bgsave([]);
+    const ctx = createCtx();
+    const reply = persistence.bgsave(ctx, []);
     expect(reply).toEqual({
       kind: 'status',
       value: 'Background saving started',
@@ -21,7 +22,8 @@ describe('BGSAVE', () => {
   });
 
   it('returns "Background saving scheduled" with SCHEDULE option', () => {
-    const reply = persistence.bgsave(['SCHEDULE']);
+    const ctx = createCtx();
+    const reply = persistence.bgsave(ctx, ['SCHEDULE']);
     expect(reply).toEqual({
       kind: 'status',
       value: 'Background saving scheduled',
@@ -29,7 +31,8 @@ describe('BGSAVE', () => {
   });
 
   it('returns "Background saving scheduled" with schedule lowercase', () => {
-    const reply = persistence.bgsave(['schedule']);
+    const ctx = createCtx();
+    const reply = persistence.bgsave(ctx, ['schedule']);
     expect(reply).toEqual({
       kind: 'status',
       value: 'Background saving scheduled',
@@ -37,7 +40,8 @@ describe('BGSAVE', () => {
   });
 
   it('returns syntax error for unknown subcommand', () => {
-    const reply = persistence.bgsave(['INVALID']);
+    const ctx = createCtx();
+    const reply = persistence.bgsave(ctx, ['INVALID']);
     expect(reply).toEqual({
       kind: 'error',
       prefix: 'ERR',
@@ -48,7 +52,8 @@ describe('BGSAVE', () => {
 
 describe('BGREWRITEAOF', () => {
   it('returns "Background append only file rewriting started"', () => {
-    const reply = persistence.bgrewriteaof();
+    const ctx = createCtx();
+    const reply = persistence.bgrewriteaof(ctx);
     expect(reply).toEqual({
       kind: 'status',
       value: 'Background append only file rewriting started',
@@ -58,7 +63,8 @@ describe('BGREWRITEAOF', () => {
 
 describe('SAVE', () => {
   it('returns OK', () => {
-    const reply = persistence.save();
+    const ctx = createCtx();
+    const reply = persistence.save(ctx);
     expect(reply).toEqual({ kind: 'status', value: 'OK' });
   });
 });

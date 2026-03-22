@@ -4,22 +4,26 @@ import { statusReply, integerReply, errorReply, OK } from '../types.ts';
 
 // --- Command implementations ---
 
-export function bgsave(args: string[]): Reply {
+export function bgsave(ctx: CommandContext, args: string[]): Reply {
   if (args.length > 0) {
     const sub = (args[0] ?? '').toUpperCase();
     if (sub !== 'SCHEDULE') {
       return errorReply('ERR', 'syntax error');
     }
+    ctx.engine.obi.persist('bgsave');
     return statusReply('Background saving scheduled');
   }
+  ctx.engine.obi.persist('bgsave');
   return statusReply('Background saving started');
 }
 
-export function bgrewriteaof(): Reply {
+export function bgrewriteaof(ctx: CommandContext): Reply {
+  ctx.engine.obi.persist('bgrewriteaof');
   return statusReply('Background append only file rewriting started');
 }
 
-export function save(): Reply {
+export function save(ctx: CommandContext): Reply {
+  ctx.engine.obi.persist('save');
   return OK;
 }
 
@@ -69,7 +73,7 @@ export function shutdown(args: string[]): Reply {
 export const specs: CommandSpec[] = [
   {
     name: 'bgsave',
-    handler: (_ctx, args) => bgsave(args),
+    handler: (ctx, args) => bgsave(ctx, args),
     arity: -1,
     flags: ['admin', 'noscript'],
     firstKey: 0,
@@ -79,7 +83,7 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'bgrewriteaof',
-    handler: () => bgrewriteaof(),
+    handler: (ctx) => bgrewriteaof(ctx),
     arity: 1,
     flags: ['admin', 'noscript'],
     firstKey: 0,
@@ -89,7 +93,7 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'save',
-    handler: () => save(),
+    handler: (ctx) => save(ctx),
     arity: 1,
     flags: ['admin', 'noscript', 'loading', 'stale'],
     firstKey: 0,

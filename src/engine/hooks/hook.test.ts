@@ -252,6 +252,18 @@ describe('SyncHook', () => {
       expect(hook.execute(() => 42)).toBe(42);
     });
 
+    it('reports size of registered handlers', () => {
+      const hook = new SyncHook<number>();
+      expect(hook.size).toBe(0);
+      const fn: SyncHookFn<number> = (next) => next();
+      hook.tap(fn);
+      expect(hook.size).toBe(1);
+      hook.tap((next) => next());
+      expect(hook.size).toBe(2);
+      hook.untap(fn);
+      expect(hook.size).toBe(1);
+    });
+
     it('calls hooks in registration order', () => {
       const hook = new SyncHook<string>();
       const order: number[] = [];
