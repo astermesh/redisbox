@@ -163,7 +163,7 @@ function degToRad(deg: number): number {
 
 /**
  * Calculate distance between two points using the Haversine formula.
- * Returns distance in meters.
+ * Matches Redis geohashGetDistance exactly: 2R·asin(√a).
  */
 function haversineDistance(
   lon1: number,
@@ -171,16 +171,23 @@ function haversineDistance(
   lon2: number,
   lat2: number
 ): number {
-  const dLat = degToRad(lat2 - lat1);
-  const dLon = degToRad(lon2 - lon1);
-  const rLat1 = degToRad(lat1);
-  const rLat2 = degToRad(lat2);
+  const lon1r = degToRad(lon1);
+  const lon2r = degToRad(lon2);
+  const v = Math.sin((lon2r - lon1r) / 2);
 
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(rLat1) * Math.cos(rLat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return EARTH_RADIUS_M * c;
+  // Redis optimization: if longitude difference is zero, only compute lat distance
+  if (v === 0.0) {
+    const lat1r = degToRad(lat1);
+    const lat2r = degToRad(lat2);
+    const u = Math.sin((lat2r - lat1r) / 2);
+    return 2.0 * EARTH_RADIUS_M * Math.asin(Math.abs(u));
+  }
+
+  const lat1r = degToRad(lat1);
+  const lat2r = degToRad(lat2);
+  const u = Math.sin((lat2r - lat1r) / 2);
+  const a = u * u + Math.cos(lat1r) * Math.cos(lat2r) * v * v;
+  return 2.0 * EARTH_RADIUS_M * Math.asin(Math.sqrt(a));
 }
 
 // --- Unit parsing ---
@@ -336,7 +343,7 @@ function geoSearch(
     | { type: 'radius'; radiusM: number }
     | { type: 'box'; widthM: number; heightM: number },
   unitFactor: number,
-  asc: boolean,
+  sort: 'asc' | 'desc' | 'none',
   count: number,
   any: boolean
 ): GeoResult[] {
@@ -392,10 +399,12 @@ function geoSearch(
     node = node.lvl(0).forward;
   }
 
-  // Sort by distance
-  if (asc) {
+  // Sort by distance (Redis: SORT_NONE when no ASC/DESC specified,
+  // but COUNT without ANY forces ASC)
+  const effectiveSort = sort === 'none' && count > 0 && !any ? 'asc' : sort;
+  if (effectiveSort === 'asc') {
     results.sort((a, b) => a.dist - b.dist || a.member.localeCompare(b.member));
-  } else {
+  } else if (effectiveSort === 'desc') {
     results.sort((a, b) => b.dist - a.dist || a.member.localeCompare(b.member));
   }
 
@@ -638,7 +647,7 @@ interface GeoSearchParams {
     | { type: 'radius'; radiusM: number }
     | { type: 'box'; widthM: number; heightM: number };
   unitFactor: number;
-  asc: boolean;
+  sort: 'asc' | 'desc' | 'none';
   count: number;
   any: boolean;
   withDist: boolean;
@@ -655,7 +664,7 @@ function parseGeoSearchArgs(
   let fromLat: number | null = null;
   let shape: GeoSearchParams['shape'] | null = null;
   let unitFactor = UNIT_M;
-  let asc = true;
+  let sort: 'asc' | 'desc' | 'none' = 'none';
   let count = -1;
   let any = false;
   let withDist = false;
@@ -699,20 +708,29 @@ function parseGeoSearchArgs(
       i++;
       if (i + 1 >= args.length) return errorReply('ERR', 'syntax error');
       const radiusP = parseFloat64(args[i] as string);
-      if (!radiusP || radiusP.value < 0)
+      if (!radiusP) return errorReply('ERR', 'need numeric radius');
+      if (radiusP.value < 0)
         return errorReply('ERR', 'radius cannot be negative');
       const unit = parseUnit(args[i + 1] as string);
       if (unit === null) return UNIT_ERR;
       shape = { type: 'radius', radiusM: radiusP.value * unit };
       unitFactor = unit;
       i += 2;
+    } else if (opt === 'ASC') {
+      sort = 'asc';
+      i++;
+    } else if (opt === 'DESC') {
+      sort = 'desc';
+      i++;
     } else if (opt === 'BYBOX') {
       i++;
       if (i + 2 >= args.length) return errorReply('ERR', 'syntax error');
       const widthP = parseFloat64(args[i] as string);
+      if (!widthP) return errorReply('ERR', 'need numeric width');
       const heightP = parseFloat64(args[i + 1] as string);
-      if (!widthP || !heightP)
-        return errorReply('ERR', 'value is not a valid float');
+      if (!heightP) return errorReply('ERR', 'need numeric height');
+      if (widthP.value < 0 || heightP.value < 0)
+        return errorReply('ERR', 'height or width cannot be negative');
       const unit = parseUnit(args[i + 2] as string);
       if (unit === null) return UNIT_ERR;
       shape = {
@@ -722,12 +740,6 @@ function parseGeoSearchArgs(
       };
       unitFactor = unit;
       i += 3;
-    } else if (opt === 'ASC') {
-      asc = true;
-      i++;
-    } else if (opt === 'DESC') {
-      asc = false;
-      i++;
     } else if (opt === 'COUNT') {
       i++;
       if (i >= args.length) return errorReply('ERR', 'syntax error');
@@ -762,13 +774,13 @@ function parseGeoSearchArgs(
   if (fromLon === null || fromLat === null) {
     return errorReply(
       'ERR',
-      'exactly one of FROMMEMBER or FROMLONLAT can be provided for GEOSEARCH'
+      'exactly one of FROMMEMBER or FROMLONLAT can be specified for GEOSEARCH'
     );
   }
   if (!shape) {
     return errorReply(
       'ERR',
-      'exactly one of BYRADIUS and BYBOX can be provided for GEOSEARCH'
+      'exactly one of BYRADIUS and BYBOX can be specified for GEOSEARCH'
     );
   }
 
@@ -782,7 +794,7 @@ function parseGeoSearchArgs(
     fromLat,
     shape,
     unitFactor,
-    asc,
+    sort,
     count,
     any,
     withDist,
@@ -814,7 +826,7 @@ export function geosearch(db: Database, args: string[]): Reply {
     params.fromLat,
     params.shape,
     params.unitFactor,
-    params.asc,
+    params.sort,
     params.count,
     params.any
   );
@@ -873,7 +885,7 @@ export function geosearchstore(
     params.fromLat,
     params.shape,
     params.unitFactor,
-    params.asc,
+    params.sort,
     params.count,
     params.any
   );
@@ -925,7 +937,8 @@ export function georadius(
   if (coordErr) return coordErr;
 
   const radiusP = parseFloat64(args[3] as string);
-  if (!radiusP) return errorReply('ERR', 'value is not a valid float');
+  if (!radiusP) return errorReply('ERR', 'need numeric radius');
+  if (radiusP.value < 0) return errorReply('ERR', 'radius cannot be negative');
 
   const unitFactor = parseUnit(args[4] as string);
   if (unitFactor === null) return UNIT_ERR;
@@ -936,7 +949,7 @@ export function georadius(
   let withDist = false;
   let withHash = false;
   let withCoord = false;
-  let asc = true;
+  let sort: 'asc' | 'desc' | 'none' = 'none';
   let count = -1;
   let any = false;
   let storeKey: string | null = null;
@@ -955,10 +968,10 @@ export function georadius(
       withHash = true;
       i++;
     } else if (opt === 'ASC') {
-      asc = true;
+      sort = 'asc';
       i++;
     } else if (opt === 'DESC') {
-      asc = false;
+      sort = 'desc';
       i++;
     } else if (opt === 'COUNT') {
       i++;
@@ -1009,7 +1022,7 @@ export function georadius(
     centerLat,
     { type: 'radius', radiusM },
     unitFactor,
-    asc,
+    sort,
     count,
     any
   );

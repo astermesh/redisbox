@@ -1,5 +1,7 @@
 # T01: Geohash Encoding and Core Commands
 
+**Status:** done
+
 Implement geohash encoding/decoding and basic geo commands that build on the sorted set engine.
 
 ## Details
