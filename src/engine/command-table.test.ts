@@ -438,6 +438,10 @@ describe('createCommandTable (registry)', () => {
       'save',
       'lastsave',
       'shutdown',
+      'eval',
+      'evalsha',
+      'eval_ro',
+      'evalsha_ro',
     ];
 
     for (const name of expectedCommands) {
