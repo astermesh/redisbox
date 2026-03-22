@@ -1,5 +1,7 @@
 # S25: RedisSim API
 
+**Status:** done
+
 Implement the RedisSim class — the Sim-side API for controlling RedisBox behavior. RedisSim uses hooks to inject latency, errors, eviction, and modify time/randomness.
 
 ## Tasks
