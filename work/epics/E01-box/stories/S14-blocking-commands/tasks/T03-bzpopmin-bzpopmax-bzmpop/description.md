@@ -1,5 +1,7 @@
 # T03: BZPOPMIN, BZPOPMAX, BZMPOP
 
+**Status:** done
+
 Blocking sorted set commands. Block until sorted set has data or timeout. BZPOPMIN/BZPOPMAX: return [key, element, score]. BZMPOP (Redis 7.0+): pop MIN|MAX from first non-empty set.
 
 ## Acceptance Criteria

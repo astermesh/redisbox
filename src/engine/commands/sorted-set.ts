@@ -21,7 +21,7 @@ import { matchGlob } from '../glob-pattern.ts';
 import { partialShuffle } from '../utils.ts';
 import type { CommandSpec } from '../command-table.ts';
 
-function formatScore(n: number): string {
+export function formatScore(n: number): string {
   if (n === Infinity) return 'inf';
   if (n === -Infinity) return '-inf';
   return formatFloat(n);
@@ -2202,11 +2202,11 @@ export const specs: CommandSpec[] = [
     name: 'zmpop',
     handler: (ctx, args) => zmpop(ctx.db, args, ctx.engine.rng),
     arity: -4,
-    flags: ['write', 'fast'],
+    flags: ['write', 'movablekeys'],
     firstKey: 0,
     lastKey: 0,
     keyStep: 0,
-    categories: ['@write', '@sortedset', '@fast'],
+    categories: ['@write', '@sortedset', '@slow'],
   },
   {
     name: 'zrandmember',
