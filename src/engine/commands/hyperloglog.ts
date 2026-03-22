@@ -140,7 +140,8 @@ function murmurHash64A(data: Uint8Array): bigint {
 
 /** Hash an element and return [registerIndex, runLength]. */
 function hllPatLen(element: string): [number, number] {
-  const data = new TextEncoder().encode(element);
+  // Use Latin-1 raw bytes to match Redis, which hashes raw SDS bytes
+  const data = stringToBytes(element);
   const hash = murmurHash64A(data);
 
   const index = Number(hash & BigInt(HLL_P_MASK));
@@ -212,21 +213,25 @@ function isCacheValid(bytes: Uint8Array): boolean {
 
 function getCachedCardinality(bytes: Uint8Array): number {
   // Read 8 bytes little-endian int64 from offset 8
+  // Use multiplication instead of bitwise shifts to avoid 32-bit truncation
   let val = 0;
   for (let i = 0; i < 7; i++) {
-    val |= b(bytes, 8 + i) << (i * 8);
+    val += b(bytes, 8 + i) * 2 ** (i * 8);
   }
   // Byte 15 has MSB as validity flag, so only use low 7 bits
-  val |= (b(bytes, 15) & 0x7f) << 56;
+  val += (b(bytes, 15) & 0x7f) * 2 ** 56;
   return val;
 }
 
 function setCachedCardinality(bytes: Uint8Array, card: number): void {
+  // Use division instead of bitwise shifts to avoid 32-bit truncation
+  let remaining = card;
   for (let i = 0; i < 7; i++) {
-    bytes[8 + i] = (card >> (i * 8)) & 0xff;
+    bytes[8 + i] = remaining & 0xff;
+    remaining = Math.floor(remaining / 256);
   }
   // Byte 15: low 7 bits of the top byte, MSB = 0 (valid)
-  bytes[15] = (card >> 56) & 0x7f;
+  bytes[15] = remaining & 0x7f;
 }
 
 // --- Dense register operations ---
@@ -841,11 +846,21 @@ export function pfselftest(ctx: CommandContext): Reply {
     }
   }
 
-  // Verify MurmurHash produces consistent results
-  const h1 = murmurHash64A(new TextEncoder().encode('test'));
-  const h2 = murmurHash64A(new TextEncoder().encode('test'));
-  if (h1 !== h2) {
-    return errorReply('ERR', 'PFSELFTEST failed: hash inconsistency');
+  // Verify MurmurHash against known test vectors (seed 0xadc83b19)
+  const hashVectors: [string, bigint][] = [
+    ['', 0xd8dfea6585bc9732n],
+    ['test', 0xff211d0b0982e4e6n],
+    ['hello', 0x0f656f01eecfe400n],
+    ['Redis', 0x9b40c0c5a9e89bf0n],
+  ];
+  for (const [input, expected] of hashVectors) {
+    const actual = murmurHash64A(stringToBytes(input));
+    if (actual !== expected) {
+      return errorReply(
+        'ERR',
+        `PFSELFTEST failed: hash mismatch for '${input}'`
+      );
+    }
   }
 
   return OK;

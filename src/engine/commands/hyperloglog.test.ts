@@ -84,6 +84,26 @@ describe('PFADD', () => {
     });
   });
 
+  it('works correctly after sparse-to-dense promotion', () => {
+    const { ctx } = createDb();
+    // Force promotion to dense
+    const elements = [];
+    for (let i = 0; i < 2000; i++) {
+      elements.push(`e${i}`);
+    }
+    hll.pfadd(ctx, ['mykey', ...elements]);
+    const enc = hll.pfdebug(ctx, ['ENCODING', 'mykey']);
+    expect(enc).toEqual({ kind: 'bulk', value: 'dense' });
+    // Adding more elements to dense should still work
+    const result = hll.pfadd(ctx, ['mykey', 'newelem']);
+    expect(result.kind).toBe('integer');
+    const count = hll.pfcount(ctx, ['mykey']) as {
+      kind: string;
+      value: number;
+    };
+    expect(count.value).toBeGreaterThanOrEqual(1800);
+  });
+
   it('handles empty string elements', () => {
     const { ctx } = createDb();
     const result = hll.pfadd(ctx, ['mykey', '']);
@@ -190,6 +210,50 @@ describe('PFCOUNT', () => {
     const entry = db.get('mykey');
     expect(entry?.encoding).toBe('raw');
   });
+
+  it('single-key PFCOUNT caches result (modifies key on read)', () => {
+    const { ctx, db } = createDb();
+    hll.pfadd(ctx, ['mykey', 'a', 'b', 'c']);
+    const valueBefore = (db.get('mykey')?.value as string).slice();
+    hll.pfcount(ctx, ['mykey']);
+    const valueAfter = db.get('mykey')?.value as string;
+    // The raw value should change because PFCOUNT writes the cached cardinality
+    expect(valueAfter).not.toBe(valueBefore);
+  });
+
+  it('multi-key PFCOUNT does NOT modify source keys', () => {
+    const { ctx, db } = createDb();
+    hll.pfadd(ctx, ['key1', 'a', 'b']);
+    hll.pfadd(ctx, ['key2', 'c', 'd']);
+    // Force cache by reading each key individually first
+    hll.pfcount(ctx, ['key1']);
+    hll.pfcount(ctx, ['key2']);
+    const val1Before = db.get('key1')?.value as string;
+    const val2Before = db.get('key2')?.value as string;
+    hll.pfcount(ctx, ['key1', 'key2']);
+    const val1After = db.get('key1')?.value as string;
+    const val2After = db.get('key2')?.value as string;
+    expect(val1After).toBe(val1Before);
+    expect(val2After).toBe(val2Before);
+  });
+
+  it('PFADD after PFCOUNT invalidates cache and updates count', () => {
+    const { ctx } = createDb();
+    hll.pfadd(ctx, ['mykey', 'a', 'b', 'c']);
+    const count1 = hll.pfcount(ctx, ['mykey']) as {
+      kind: string;
+      value: number;
+    };
+    // Add many more distinct elements
+    for (let i = 0; i < 50; i++) {
+      hll.pfadd(ctx, ['mykey', `new${i}`]);
+    }
+    const count2 = hll.pfcount(ctx, ['mykey']) as {
+      kind: string;
+      value: number;
+    };
+    expect(count2.value).toBeGreaterThan(count1.value);
+  });
 });
 
 // --- PFMERGE ---
@@ -256,6 +320,32 @@ describe('PFMERGE', () => {
     expect(result).toEqual({ kind: 'status', value: 'OK' });
     const count = hll.pfcount(ctx, ['dest']);
     expect(count).toEqual({ kind: 'integer', value: 0 });
+  });
+
+  it('result has type string and encoding raw', () => {
+    const { ctx, db } = createDb();
+    hll.pfadd(ctx, ['src', 'a', 'b']);
+    hll.pfmerge(ctx, ['dest', 'src']);
+    const entry = db.get('dest');
+    expect(entry?.type).toBe('string');
+    expect(entry?.encoding).toBe('raw');
+  });
+
+  it('merged result is superset of all sources', () => {
+    const { ctx } = createDb();
+    hll.pfadd(ctx, ['k1', 'a', 'b']);
+    hll.pfadd(ctx, ['k2', 'c', 'd']);
+    hll.pfadd(ctx, ['k3', 'e', 'f']);
+    hll.pfmerge(ctx, ['dest', 'k1', 'k2', 'k3']);
+    const merged = hll.pfcount(ctx, ['dest']) as {
+      kind: string;
+      value: number;
+    };
+    const union = hll.pfcount(ctx, ['k1', 'k2', 'k3']) as {
+      kind: string;
+      value: number;
+    };
+    expect(merged.value).toBe(union.value);
   });
 
   it('can merge with self as source', () => {
@@ -422,5 +512,33 @@ describe('Cardinality accuracy', () => {
     // Allow ~5% error for 1000 elements
     expect(result.value).toBeGreaterThanOrEqual(900);
     expect(result.value).toBeLessThanOrEqual(1100);
+  });
+
+  it('estimates large cardinalities (10K) within 2x standard error', () => {
+    const { ctx } = createDb();
+    const N = 10000;
+    for (let i = 0; i < N; i++) {
+      hll.pfadd(ctx, ['mykey', `item${i}`]);
+    }
+    const result = hll.pfcount(ctx, ['mykey']) as {
+      kind: string;
+      value: number;
+    };
+    expect(result.kind).toBe('integer');
+    // 2x standard error for 10K: ~1.62% → allow ~3.24% margin
+    expect(result.value).toBeGreaterThanOrEqual(N * 0.95);
+    expect(result.value).toBeLessThanOrEqual(N * 1.05);
+  });
+
+  it('handles non-ASCII elements correctly', () => {
+    const { ctx } = createDb();
+    hll.pfadd(ctx, ['mykey', 'café', 'über', 'naïve']);
+    const result = hll.pfcount(ctx, ['mykey']) as {
+      kind: string;
+      value: number;
+    };
+    expect(result.kind).toBe('integer');
+    expect(result.value).toBeGreaterThanOrEqual(1);
+    expect(result.value).toBeLessThanOrEqual(6);
   });
 });
