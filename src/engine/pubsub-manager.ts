@@ -27,6 +27,12 @@ export class PubSubManager {
   /** client ID → set of subscribed patterns */
   private readonly clientPatterns = new Map<number, Set<string>>();
 
+  /** shard channel name → set of subscribed client IDs */
+  private readonly shardChannelSubscribers = new Map<string, Set<number>>();
+
+  /** client ID → set of subscribed shard channel names */
+  private readonly clientShardChannels = new Map<number, Set<string>>();
+
   /** callback to deliver push messages to clients */
   private sender: MessageSender | null = null;
 
@@ -231,21 +237,113 @@ export class PubSubManager {
     return this.patternSubs.get(pattern) ?? new Set();
   }
 
+  // --- Shard channel subscriptions ---
+
   /**
-   * Get the total number of subscriptions (channels + patterns) for a client.
-   * This is the count returned in SUBSCRIBE/UNSUBSCRIBE/PSUBSCRIBE/PUNSUBSCRIBE replies.
+   * Subscribe a client to a shard channel.
+   * @returns true if the client was newly subscribed, false if already subscribed
    */
-  subscriptionCount(clientId: number): number {
-    return this.channelCount(clientId) + this.patternCount(clientId);
+  ssubscribe(clientId: number, channel: string): boolean {
+    let channels = this.clientShardChannels.get(clientId);
+    if (!channels) {
+      channels = new Set();
+      this.clientShardChannels.set(clientId, channels);
+    }
+
+    if (channels.has(channel)) {
+      return false;
+    }
+
+    channels.add(channel);
+
+    let subscribers = this.shardChannelSubscribers.get(channel);
+    if (!subscribers) {
+      subscribers = new Set();
+      this.shardChannelSubscribers.set(channel, subscribers);
+    }
+    subscribers.add(clientId);
+
+    return true;
   }
 
   /**
-   * Remove a client completely — unsubscribe from all channels and patterns.
+   * Unsubscribe a client from a shard channel.
+   * @returns true if the client was subscribed (and is now removed), false if not subscribed
+   */
+  sunsubscribe(clientId: number, channel: string): boolean {
+    const channels = this.clientShardChannels.get(clientId);
+    if (!channels || !channels.has(channel)) {
+      return false;
+    }
+
+    channels.delete(channel);
+    if (channels.size === 0) {
+      this.clientShardChannels.delete(clientId);
+    }
+
+    const subscribers = this.shardChannelSubscribers.get(channel);
+    if (subscribers) {
+      subscribers.delete(clientId);
+      if (subscribers.size === 0) {
+        this.shardChannelSubscribers.delete(channel);
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Unsubscribe a client from all shard channels.
+   * @returns the list of shard channels the client was subscribed to
+   */
+  sunsubscribeAll(clientId: number): string[] {
+    const channels = this.clientShardChannels.get(clientId);
+    if (!channels || channels.size === 0) {
+      return [];
+    }
+
+    const removed = [...channels];
+    for (const channel of removed) {
+      const subscribers = this.shardChannelSubscribers.get(channel);
+      if (subscribers) {
+        subscribers.delete(clientId);
+        if (subscribers.size === 0) {
+          this.shardChannelSubscribers.delete(channel);
+        }
+      }
+    }
+
+    this.clientShardChannels.delete(clientId);
+    return removed;
+  }
+
+  /**
+   * Get the total number of shard channel subscriptions for a client.
+   */
+  shardChannelCount(clientId: number): number {
+    return this.clientShardChannels.get(clientId)?.size ?? 0;
+  }
+
+  /**
+   * Get the total number of subscriptions (channels + patterns + shard channels) for a client.
+   * This is the count returned in SUBSCRIBE/UNSUBSCRIBE/PSUBSCRIBE/PUNSUBSCRIBE replies.
+   */
+  subscriptionCount(clientId: number): number {
+    return (
+      this.channelCount(clientId) +
+      this.patternCount(clientId) +
+      this.shardChannelCount(clientId)
+    );
+  }
+
+  /**
+   * Remove a client completely — unsubscribe from all channels, patterns, and shard channels.
    * Should be called when a client disconnects.
    */
   removeClient(clientId: number): void {
     this.unsubscribeAll(clientId);
     this.punsubscribeAll(clientId);
+    this.sunsubscribeAll(clientId);
   }
 
   /**
@@ -299,6 +397,32 @@ export class PubSubManager {
   }
 
   /**
+   * Publish a message to a shard channel.
+   * Delivers only to shard channel subscribers (no pattern matching).
+   * Message type is 'smessage'.
+   * @returns the number of clients that received the message
+   */
+  shardPublish(channel: string, message: string): number {
+    let count = 0;
+
+    const subs = this.shardChannelSubscribers.get(channel);
+    if (subs && subs.size > 0) {
+      const reply = arrayReply([
+        bulkReply('smessage'),
+        bulkReply(channel),
+        bulkReply(message),
+      ]);
+
+      for (const clientId of subs) {
+        this.sender?.(clientId, reply);
+        count++;
+      }
+    }
+
+    return count;
+  }
+
+  /**
    * Total number of active channels (channels with at least one subscriber).
    */
   get totalChannels(): number {
@@ -309,6 +433,56 @@ export class PubSubManager {
    * Total number of active patterns (patterns with at least one subscriber).
    */
   get totalPatterns(): number {
+    return this.patternSubs.size;
+  }
+
+  /**
+   * Get all active channel names (channels with at least one subscriber).
+   * If a pattern is provided, only channels matching the glob pattern are returned.
+   */
+  activeChannels(pattern?: string): string[] {
+    const channels = [...this.channelSubscribers.keys()];
+    if (!pattern) return channels;
+    return channels.filter((ch) => matchGlob(pattern, ch));
+  }
+
+  /**
+   * Get all active shard channel names (shard channels with at least one subscriber).
+   * If a pattern is provided, only channels matching the glob pattern are returned.
+   */
+  activeShardChannels(pattern?: string): string[] {
+    const channels = [...this.shardChannelSubscribers.keys()];
+    if (!pattern) return channels;
+    return channels.filter((ch) => matchGlob(pattern, ch));
+  }
+
+  /**
+   * Get subscriber count for specific channels.
+   * Returns an array of [channel, count] pairs.
+   */
+  numSub(channels: string[]): [string, number][] {
+    return channels.map((ch) => [
+      ch,
+      this.channelSubscribers.get(ch)?.size ?? 0,
+    ]);
+  }
+
+  /**
+   * Get subscriber count for specific shard channels.
+   * Returns an array of [channel, count] pairs.
+   */
+  shardNumSub(channels: string[]): [string, number][] {
+    return channels.map((ch) => [
+      ch,
+      this.shardChannelSubscribers.get(ch)?.size ?? 0,
+    ]);
+  }
+
+  /**
+   * Get total number of unique pattern subscriptions across all clients.
+   * Note: this counts unique patterns, not total client-pattern pairs.
+   */
+  numPat(): number {
     return this.patternSubs.size;
   }
 }
