@@ -8,11 +8,9 @@ export function bgsave(args: string[]): Reply {
   if (args.length > 0) {
     const sub = (args[0] ?? '').toUpperCase();
     if (sub !== 'SCHEDULE') {
-      return errorReply(
-        'ERR',
-        "Unknown option or wrong number of arguments for 'bgsave' command"
-      );
+      return errorReply('ERR', 'syntax error');
     }
+    return statusReply('Background saving scheduled');
   }
   return statusReply('Background saving started');
 }
@@ -29,11 +27,12 @@ export function lastsave(ctx: CommandContext): Reply {
   return integerReply(Math.floor(ctx.engine.clock() / 1000));
 }
 
-const SHUTDOWN_OPTIONS = new Set(['NOSAVE', 'SAVE', 'NOW', 'FORCE']);
+const SHUTDOWN_OPTIONS = new Set(['NOSAVE', 'SAVE', 'NOW', 'FORCE', 'ABORT']);
 
 export function shutdown(args: string[]): Reply {
   let hasNosave = false;
   let hasSave = false;
+  let hasAbort = false;
 
   for (const arg of args) {
     const upper = arg.toUpperCase();
@@ -45,16 +44,23 @@ export function shutdown(args: string[]): Reply {
     }
     if (upper === 'NOSAVE') hasNosave = true;
     if (upper === 'SAVE') hasSave = true;
+    if (upper === 'ABORT') hasAbort = true;
   }
 
   if (hasNosave && hasSave) {
-    return errorReply(
-      'ERR',
-      `Unrecognized option or bad number of args for SHUTDOWN: 'SAVE'`
-    );
+    return errorReply('ERR', 'syntax error');
+  }
+
+  if (hasAbort && (hasNosave || hasSave || args.length > 1)) {
+    return errorReply('ERR', 'syntax error');
+  }
+
+  if (hasAbort) {
+    return errorReply('ERR', 'No shutdown in progress.');
   }
 
   // Stub: acknowledge without actual shutdown
+  // Real Redis closes the connection, but as a stub we return OK
   return OK;
 }
 

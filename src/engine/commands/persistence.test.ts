@@ -20,25 +20,29 @@ describe('BGSAVE', () => {
     });
   });
 
-  it('returns "Background saving started" with SCHEDULE option', () => {
+  it('returns "Background saving scheduled" with SCHEDULE option', () => {
     const reply = persistence.bgsave(['SCHEDULE']);
     expect(reply).toEqual({
       kind: 'status',
-      value: 'Background saving started',
+      value: 'Background saving scheduled',
     });
   });
 
-  it('returns "Background saving started" with schedule lowercase', () => {
+  it('returns "Background saving scheduled" with schedule lowercase', () => {
     const reply = persistence.bgsave(['schedule']);
     expect(reply).toEqual({
       kind: 'status',
-      value: 'Background saving started',
+      value: 'Background saving scheduled',
     });
   });
 
-  it('returns error for unknown subcommand', () => {
+  it('returns syntax error for unknown subcommand', () => {
     const reply = persistence.bgsave(['INVALID']);
-    expect(reply.kind).toBe('error');
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
   });
 });
 
@@ -114,9 +118,31 @@ describe('SHUTDOWN', () => {
     expect(reply.kind).toBe('error');
   });
 
-  it('rejects NOSAVE and SAVE together', () => {
+  it('rejects NOSAVE and SAVE together with syntax error', () => {
     const reply = persistence.shutdown(['NOSAVE', 'SAVE']);
-    expect(reply.kind).toBe('error');
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
+  });
+
+  it('ABORT returns error when no shutdown in progress', () => {
+    const reply = persistence.shutdown(['ABORT']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'No shutdown in progress.',
+    });
+  });
+
+  it('rejects ABORT combined with other options', () => {
+    const reply = persistence.shutdown(['ABORT', 'NOSAVE']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'syntax error',
+    });
   });
 });
 
