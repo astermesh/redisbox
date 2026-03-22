@@ -1,5 +1,7 @@
 # T02: Geo Search and Radius Queries
 
+**Status:** done
+
 Implement GEOSEARCH (unified, Redis 6.2+) and legacy GEORADIUS/GEORADIUSBYMEMBER commands.
 
 ## Details
