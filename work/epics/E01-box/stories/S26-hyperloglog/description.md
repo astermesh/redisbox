@@ -1,5 +1,7 @@
 # S26: HyperLogLog Commands
 
+**Status:** done
+
 Implement HyperLogLog probabilistic cardinality estimation. HyperLogLog is stored as a special string encoding — the TYPE command returns "string" for HLL keys. Requires implementing the Redis-specific HLL algorithm with sparse and dense representations.
 
 ## Commands

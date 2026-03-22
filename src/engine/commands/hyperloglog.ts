@@ -822,6 +822,8 @@ export function pfdebug(ctx: CommandContext, args: string[]): Reply {
 
 export function pfselftest(ctx: CommandContext): Reply {
   void ctx;
+
+  // Test 1: Validate HLL headers
   const sparse = createSparseHll();
   if (!isValidHll(sparse)) {
     return errorReply('ERR', 'PFSELFTEST failed: invalid sparse HLL header');
@@ -832,7 +834,7 @@ export function pfselftest(ctx: CommandContext): Reply {
     return errorReply('ERR', 'PFSELFTEST failed: invalid dense HLL header');
   }
 
-  // Verify sparse-to-dense conversion preserves registers
+  // Test 2: Verify sparse-to-dense conversion preserves registers
   let testHll = createSparseHll();
   const testResult = sparseSet(testHll, 0, 5, 3000);
   if (testResult && testResult.changed) {
@@ -846,7 +848,7 @@ export function pfselftest(ctx: CommandContext): Reply {
     }
   }
 
-  // Verify MurmurHash against known test vectors (seed 0xadc83b19)
+  // Test 3: Verify MurmurHash against known test vectors (seed 0xadc83b19)
   const hashVectors: [string, bigint][] = [
     ['', 0xd8dfea6585bc9732n],
     ['test', 0xff211d0b0982e4e6n],
@@ -859,6 +861,50 @@ export function pfselftest(ctx: CommandContext): Reply {
       return errorReply(
         'ERR',
         `PFSELFTEST failed: hash mismatch for '${input}'`
+      );
+    }
+  }
+
+  // Test 4: Verify hash-to-register assignment consistency
+  // Ensure hllPatLen returns valid register indices and run lengths
+  const patTestInputs = ['a', 'b', 'c', '0', 'test', 'Redis', 'hello'];
+  for (const input of patTestInputs) {
+    const [index, runLen] = hllPatLen(input);
+    if (index < 0 || index >= HLL_REGISTERS) {
+      return errorReply(
+        'ERR',
+        `PFSELFTEST failed: register index ${index} out of range for '${input}'`
+      );
+    }
+    if (runLen < 1 || runLen > HLL_Q + 1) {
+      return errorReply(
+        'ERR',
+        `PFSELFTEST failed: run length ${runLen} out of range for '${input}'`
+      );
+    }
+  }
+
+  // Test 5: Verify cardinality estimation accuracy across ranges
+  // Standard error of HLL is 1.04 / sqrt(m) ≈ 0.81% for m=16384
+  const stdError = 1.04 / Math.sqrt(HLL_REGISTERS);
+  const testRanges = [10, 100, 1000, 10000, 100000];
+
+  for (const n of testRanges) {
+    let hllBytes = createSparseHll();
+
+    for (let j = 0; j < n; j++) {
+      const elem = `selftest:${j}`;
+      const result = hllAdd(hllBytes, elem, 3000);
+      hllBytes = result.bytes;
+    }
+
+    const estimated = hllCount(hllBytes);
+    // Allow 2x standard error, with a minimum of 5 for very small cardinalities
+    const maxError = Math.max(n * 2 * stdError, 5);
+    if (Math.abs(estimated - n) > maxError) {
+      return errorReply(
+        'ERR',
+        `PFSELFTEST failed: cardinality ${n} estimated as ${estimated} (error ${Math.abs(estimated - n)}, max allowed ${Math.round(maxError)})`
       );
     }
   }
