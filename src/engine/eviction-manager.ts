@@ -67,6 +67,9 @@ export class EvictionManager {
   constructor(engine: RedisEngine, config: ConfigStore) {
     this.engine = engine;
     this.config = config;
+    for (const db of engine.databases) {
+      db.setConfig(config);
+    }
   }
 
   /**

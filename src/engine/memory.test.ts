@@ -13,7 +13,7 @@ function entry(
   encoding: RedisEntry['encoding'],
   value: unknown
 ): RedisEntry {
-  return { type, encoding, value, lruClock: 0, lruFreq: 0 };
+  return { type, encoding, value, lruClock: 0, lruFreq: 0, lfuLastDecrTime: 0 };
 }
 
 describe('jemallocSize', () => {
