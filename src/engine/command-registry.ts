@@ -28,6 +28,7 @@ import { specs as hyperloglogSpecs } from './commands/hyperloglog.ts';
 import { specs as geoSpecs } from './commands/geo.ts';
 import { specs as replicationSpecs } from './commands/replication.ts';
 import { specs as slowlogSpecs } from './commands/slowlog.ts';
+import { specs as persistenceSpecs } from './commands/persistence.ts';
 
 const allSpecs: CommandSpec[] = [
   ...connectionSpecs,
@@ -58,6 +59,7 @@ const allSpecs: CommandSpec[] = [
   ...geoSpecs,
   ...replicationSpecs,
   ...slowlogSpecs,
+  ...persistenceSpecs,
 ];
 
 export function createCommandTable(): CommandTable {
