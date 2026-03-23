@@ -23,6 +23,7 @@ import { notify, EVENT_FLAGS } from '../../pubsub/notify.ts';
 import { matchGlob } from '../../glob-pattern.ts';
 import { partialShuffle, INT64_MAX, INT64_MIN } from '../../utils.ts';
 import { parseScanCursor, parseScanOptions } from '../scan-utils.ts';
+import type { ConfigStore } from '../../../config-store.ts';
 import {
   getOrCreateHash,
   getExistingHash,
@@ -33,7 +34,11 @@ import {
 
 // --- HSET ---
 
-export function hset(db: Database, args: string[]): Reply {
+export function hset(
+  db: Database,
+  args: string[],
+  config?: ConfigStore
+): Reply {
   if (args.length < 3 || (args.length - 1) % 2 !== 0) {
     return wrongArityError('hset');
   }
@@ -52,7 +57,7 @@ export function hset(db: Database, args: string[]): Reply {
     db.removeFieldExpiry(key, field);
   }
 
-  updateEncoding(db, key);
+  updateEncoding(db, key, config);
   return integerReply(added);
 }
 
@@ -75,7 +80,11 @@ export function hget(db: Database, args: string[]): Reply {
 
 // --- HMSET ---
 
-export function hmset(db: Database, args: string[]): Reply {
+export function hmset(
+  db: Database,
+  args: string[],
+  config?: ConfigStore
+): Reply {
   if (args.length < 3 || (args.length - 1) % 2 !== 0) {
     return wrongArityError('hmset');
   }
@@ -91,7 +100,7 @@ export function hmset(db: Database, args: string[]): Reply {
     db.removeFieldExpiry(key, field);
   }
 
-  updateEncoding(db, key);
+  updateEncoding(db, key, config);
   return OK;
 }
 
@@ -235,7 +244,11 @@ export function hvals(db: Database, args: string[]): Reply {
 
 // --- HSETNX ---
 
-export function hsetnx(db: Database, args: string[]): Reply {
+export function hsetnx(
+  db: Database,
+  args: string[],
+  config?: ConfigStore
+): Reply {
   const key = args[0] ?? '';
   const field = args[1] ?? '';
   const value = args[2] ?? '';
@@ -247,13 +260,17 @@ export function hsetnx(db: Database, args: string[]): Reply {
   if (hash.has(field)) return ZERO;
 
   hash.set(field, value);
-  updateEncoding(db, key);
+  updateEncoding(db, key, config);
   return ONE;
 }
 
 // --- HINCRBY ---
 
-export function hincrby(db: Database, args: string[]): Reply {
+export function hincrby(
+  db: Database,
+  args: string[],
+  config?: ConfigStore
+): Reply {
   const key = args[0] ?? '';
   const field = args[1] ?? '';
   const incrStr = args[2] ?? '';
@@ -274,7 +291,7 @@ export function hincrby(db: Database, args: string[]): Reply {
 
   hash.set(field, result.toString());
   db.removeFieldExpiry(key, field);
-  updateEncoding(db, key);
+  updateEncoding(db, key, config);
 
   const replyValue =
     result >= -9007199254740991n && result <= 9007199254740991n
@@ -285,7 +302,11 @@ export function hincrby(db: Database, args: string[]): Reply {
 
 // --- HINCRBYFLOAT ---
 
-export function hincrbyfloat(db: Database, args: string[]): Reply {
+export function hincrbyfloat(
+  db: Database,
+  args: string[],
+  config?: ConfigStore
+): Reply {
   const key = args[0] ?? '';
   const field = args[1] ?? '';
   const incrStr = args[2] ?? '';
@@ -309,7 +330,7 @@ export function hincrbyfloat(db: Database, args: string[]): Reply {
   const strResult = formatFloat(result);
   hash.set(field, strResult);
   db.removeFieldExpiry(key, field);
-  updateEncoding(db, key);
+  updateEncoding(db, key, config);
 
   return bulkReply(strResult);
 }
@@ -454,7 +475,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'hset',
     handler: (ctx, args) => {
-      const reply = hset(ctx.db, args);
+      const reply = hset(ctx.db, args, ctx.config);
       if (reply.kind === 'integer') {
         notify(ctx, EVENT_FLAGS.HASH, 'hset', args[0] ?? '');
       }
@@ -480,7 +501,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'hmset',
     handler: (ctx, args) => {
-      const reply = hmset(ctx.db, args);
+      const reply = hmset(ctx.db, args, ctx.config);
       if (reply === OK) {
         notify(ctx, EVENT_FLAGS.HASH, 'hset', args[0] ?? '');
       }
@@ -572,7 +593,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'hsetnx',
     handler: (ctx, args) => {
-      const reply = hsetnx(ctx.db, args);
+      const reply = hsetnx(ctx.db, args, ctx.config);
       if (reply === ONE) {
         notify(ctx, EVENT_FLAGS.HASH, 'hset', args[0] ?? '');
       }
@@ -588,7 +609,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'hincrby',
     handler: (ctx, args) => {
-      const reply = hincrby(ctx.db, args);
+      const reply = hincrby(ctx.db, args, ctx.config);
       if (reply.kind === 'integer') {
         notify(ctx, EVENT_FLAGS.HASH, 'hincrby', args[0] ?? '');
       }
@@ -604,7 +625,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'hincrbyfloat',
     handler: (ctx, args) => {
-      const reply = hincrbyfloat(ctx.db, args);
+      const reply = hincrbyfloat(ctx.db, args, ctx.config);
       if (reply.kind === 'bulk' && reply.value !== null) {
         notify(ctx, EVENT_FLAGS.HASH, 'hincrbyfloat', args[0] ?? '');
       }

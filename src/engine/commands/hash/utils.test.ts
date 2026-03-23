@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { RedisEngine } from '../../engine.ts';
 import type { Database } from '../../database.ts';
 import type { Reply } from '../../types.ts';
+import { ConfigStore } from '../../../config-store.ts';
 import {
   fitsListpack,
   getOrCreateHash,
@@ -10,6 +11,7 @@ import {
   HASH_NOT_INTEGER_ERR,
   HASH_NOT_FLOAT_ERR,
 } from './utils.ts';
+import { hset } from './hash.ts';
 
 function createDb(): Database {
   const engine = new RedisEngine({ clock: () => 1000, rng: () => 0.5 });
@@ -188,5 +190,80 @@ describe('updateEncoding', () => {
     db.set('k', 'hash', 'hashtable', hash);
     updateEncoding(db, 'k');
     expect(db.get('k')?.encoding).toBe('hashtable');
+  });
+
+  it('uses config hash-max-listpack-entries when provided', () => {
+    const db = createDb();
+    const config = new ConfigStore();
+    config.set('hash-max-listpack-entries', '2');
+
+    const hash = new Map([
+      ['f1', 'v1'],
+      ['f2', 'v2'],
+      ['f3', 'v3'],
+    ]);
+    db.set('k', 'hash', 'listpack', hash);
+
+    updateEncoding(db, 'k', config);
+    expect(db.get('k')?.encoding).toBe('hashtable');
+  });
+
+  it('uses defaults when config absent', () => {
+    const db = createDb();
+    const hash = new Map([
+      ['f1', 'v1'],
+      ['f2', 'v2'],
+      ['f3', 'v3'],
+    ]);
+    db.set('k', 'hash', 'listpack', hash);
+
+    updateEncoding(db, 'k');
+    expect(db.get('k')?.encoding).toBe('listpack');
+  });
+});
+
+// --- config integration ---
+
+describe('hash config thresholds', () => {
+  it('CONFIG SET hash-max-listpack-entries lowers threshold', () => {
+    const db = createDb();
+    const config = new ConfigStore();
+    config.set('hash-max-listpack-entries', '2');
+
+    hset(db, ['myhash', 'f1', 'v1', 'f2', 'v2', 'f3', 'v3'], config);
+
+    expect(db.get('myhash')?.encoding).toBe('hashtable');
+  });
+
+  it('CONFIG SET hash-max-listpack-entries raises threshold', () => {
+    const db = createDb();
+    const config = new ConfigStore();
+    config.set('hash-max-listpack-entries', '256');
+
+    const args = ['myhash'];
+    for (let i = 0; i < 200; i++) args.push(`f${i}`, `v${i}`);
+    hset(db, args, config);
+
+    expect(db.get('myhash')?.encoding).toBe('listpack');
+  });
+
+  it('CONFIG SET hash-max-listpack-value lowers threshold', () => {
+    const db = createDb();
+    const config = new ConfigStore();
+    config.set('hash-max-listpack-value', '5');
+
+    hset(db, ['myhash', 'f1', 'longval'], config);
+
+    expect(db.get('myhash')?.encoding).toBe('hashtable');
+  });
+
+  it('CONFIG SET hash-max-listpack-value raises threshold', () => {
+    const db = createDb();
+    const config = new ConfigStore();
+    config.set('hash-max-listpack-value', '200');
+
+    hset(db, ['myhash', 'f1', 'x'.repeat(100)], config);
+
+    expect(db.get('myhash')?.encoding).toBe('listpack');
   });
 });

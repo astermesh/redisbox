@@ -19,6 +19,7 @@ import { parseFloat64, parseInteger } from '../incr.ts';
 import { matchGlob } from '../../glob-pattern.ts';
 import { partialShuffle } from '../../utils.ts';
 import type { CommandSpec } from '../../command-table.ts';
+import type { ConfigStore } from '../../../config-store.ts';
 import { notify, EVENT_FLAGS } from '../../pubsub/notify.ts';
 import { parseScanCursor, parseScanOptions } from '../scan-utils.ts';
 import type { SortedSetData } from './types.ts';
@@ -39,7 +40,12 @@ function removeIfEmpty(db: Database, key: string, zset: SortedSetData): void {
 
 // --- ZADD ---
 
-export function zadd(db: Database, args: string[], rng: () => number): Reply {
+export function zadd(
+  db: Database,
+  args: string[],
+  rng: () => number,
+  config?: ConfigStore
+): Reply {
   if (args.length < 3) {
     return wrongArityError('zadd');
   }
@@ -197,7 +203,7 @@ export function zadd(db: Database, args: string[], rng: () => number): Reply {
   }
 
   removeIfEmpty(db, key, zset);
-  updateEncoding(db, key);
+  updateEncoding(db, key, config);
 
   if (incr) {
     return incrResult !== null ? bulkReply(formatScore(incrResult)) : NIL;
@@ -239,7 +245,8 @@ export function zrem(db: Database, args: string[]): Reply {
 export function zincrby(
   db: Database,
   args: string[],
-  rng: () => number
+  rng: () => number,
+  config?: ConfigStore
 ): Reply {
   if (args.length !== 3) {
     return wrongArityError('zincrby');
@@ -281,7 +288,7 @@ export function zincrby(
     zset.dict.set(member, newScore);
   }
 
-  updateEncoding(db, key);
+  updateEncoding(db, key, config);
   return bulkReply(formatScore(newScore));
 }
 
@@ -698,7 +705,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'zadd',
     handler: (ctx, args) => {
-      const reply = zadd(ctx.db, args, ctx.engine.rng);
+      const reply = zadd(ctx.db, args, ctx.engine.rng, ctx.config);
       if (
         reply.kind === 'integer' ||
         (reply.kind === 'bulk' && reply.value !== null)
@@ -733,7 +740,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'zincrby',
     handler: (ctx, args) => {
-      const reply = zincrby(ctx.db, args, ctx.engine.rng);
+      const reply = zincrby(ctx.db, args, ctx.engine.rng, ctx.config);
       if (reply.kind === 'bulk' && reply.value !== null) {
         notify(ctx, EVENT_FLAGS.SORTEDSET, 'zincrby', args[0] ?? '');
       }

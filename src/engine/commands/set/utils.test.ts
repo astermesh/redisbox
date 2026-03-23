@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { RedisEngine } from '../../engine.ts';
 import type { Database } from '../../database.ts';
 import type { Reply } from '../../types.ts';
+import { ConfigStore } from '../../../config-store.ts';
 import {
   DEFAULT_MAX_INTSET_ENTRIES,
   isIntegerString,
@@ -17,6 +18,7 @@ import {
   computeDifference,
   storeSetResult,
 } from './utils.ts';
+import { sadd } from './set.ts';
 
 function createDb(): { db: Database; engine: RedisEngine } {
   const engine = new RedisEngine({ clock: () => 1000, rng: () => 0.5 });
@@ -612,5 +614,84 @@ describe('storeSetResult', () => {
 describe('DEFAULT_MAX_INTSET_ENTRIES', () => {
   it('equals 512', () => {
     expect(DEFAULT_MAX_INTSET_ENTRIES).toBe(512);
+  });
+});
+
+// --- set config thresholds ---
+
+describe('set config thresholds', () => {
+  it('CONFIG SET set-max-listpack-entries lowers threshold', () => {
+    const { db } = createDb();
+    const config = new ConfigStore();
+    config.set('set-max-listpack-entries', '2');
+
+    sadd(db, ['myset', 'a', 'b', 'c'], config);
+
+    expect(db.get('myset')?.encoding).toBe('hashtable');
+  });
+
+  it('CONFIG SET set-max-listpack-entries raises threshold', () => {
+    const { db } = createDb();
+    const config = new ConfigStore();
+    config.set('set-max-listpack-entries', '256');
+
+    const args = ['myset'];
+    for (let i = 0; i < 200; i++) args.push(`m${i}`);
+    sadd(db, args, config);
+
+    expect(db.get('myset')?.encoding).toBe('listpack');
+  });
+
+  it('CONFIG SET set-max-listpack-value lowers threshold', () => {
+    const { db } = createDb();
+    const config = new ConfigStore();
+    config.set('set-max-listpack-value', '3');
+
+    sadd(db, ['myset', 'longmember'], config);
+
+    expect(db.get('myset')?.encoding).toBe('hashtable');
+  });
+
+  it('CONFIG SET set-max-intset-entries lowers threshold', () => {
+    const { db } = createDb();
+    const config = new ConfigStore();
+    config.set('set-max-intset-entries', '3');
+
+    sadd(db, ['myset', '1', '2', '3', '4'], config);
+
+    expect(db.get('myset')?.encoding).toBe('listpack');
+  });
+
+  it('CONFIG SET set-max-intset-entries raises threshold', () => {
+    const { db } = createDb();
+    const config = new ConfigStore();
+    config.set('set-max-intset-entries', '1000');
+
+    const args = ['myset'];
+    for (let i = 0; i < 600; i++) args.push(String(i));
+    sadd(db, args, config);
+
+    expect(db.get('myset')?.encoding).toBe('intset');
+  });
+
+  it('chooseInitialEncoding respects config thresholds', () => {
+    const config = new ConfigStore();
+    config.set('set-max-intset-entries', '2');
+    config.set('set-max-listpack-entries', '5');
+
+    const s = new Set(['1', '2', '3']);
+    expect(chooseInitialEncoding(s, config)).toBe('listpack');
+  });
+
+  it('updateEncoding promotes intset with config', () => {
+    const { db } = createDb();
+    const config = new ConfigStore();
+    config.set('set-max-intset-entries', '2');
+
+    const s = new Set(['1', '2', '3']);
+    db.set('k', 'set', 'intset', s);
+
+    updateEncoding(db, 'k', config);
+    expect(db.get('k')?.encoding).toBe('listpack');
   });
 });

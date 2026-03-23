@@ -1,5 +1,7 @@
 # D01: Listpack config thresholds accepted but ignored
 
+**Status:** done
+
 ## Problem
 
 ConfigStore defines and accepts all listpack-related config keys with correct Redis 7.2 defaults:

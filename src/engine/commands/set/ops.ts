@@ -11,6 +11,7 @@ import {
   NOT_INTEGER_ERR,
 } from '../../types.ts';
 import type { CommandSpec } from '../../command-table.ts';
+import type { ConfigStore } from '../../../config-store.ts';
 import { notify, EVENT_FLAGS } from '../../pubsub/notify.ts';
 import { parseInteger } from '../incr.ts';
 import {
@@ -78,7 +79,11 @@ export function sdiff(db: Database, args: string[]): Reply {
 
 // --- SUNIONSTORE ---
 
-export function sunionstore(db: Database, args: string[]): Reply {
+export function sunionstore(
+  db: Database,
+  args: string[],
+  config?: ConfigStore
+): Reply {
   const destination = args[0] ?? '';
   const keys = args.slice(1);
 
@@ -95,12 +100,16 @@ export function sunionstore(db: Database, args: string[]): Reply {
     }
   }
 
-  return storeSetResult(db, destination, result);
+  return storeSetResult(db, destination, result, config);
 }
 
 // --- SINTERSTORE ---
 
-export function sinterstore(db: Database, args: string[]): Reply {
+export function sinterstore(
+  db: Database,
+  args: string[],
+  config?: ConfigStore
+): Reply {
   const destination = args[0] ?? '';
   const keys = args.slice(1);
 
@@ -108,12 +117,16 @@ export function sinterstore(db: Database, args: string[]): Reply {
   if (error) return error;
 
   const result = computeIntersection(sets) ?? new Set<string>();
-  return storeSetResult(db, destination, result);
+  return storeSetResult(db, destination, result, config);
 }
 
 // --- SDIFFSTORE ---
 
-export function sdiffstore(db: Database, args: string[]): Reply {
+export function sdiffstore(
+  db: Database,
+  args: string[],
+  config?: ConfigStore
+): Reply {
   const destination = args[0] ?? '';
   const keys = args.slice(1);
 
@@ -121,7 +134,7 @@ export function sdiffstore(db: Database, args: string[]): Reply {
   if (error) return error;
 
   const result = computeDifference(sets);
-  return storeSetResult(db, destination, result);
+  return storeSetResult(db, destination, result, config);
 }
 
 // --- SINTERCARD ---
@@ -240,7 +253,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'sunionstore',
     handler: (ctx, args) => {
-      const reply = sunionstore(ctx.db, args);
+      const reply = sunionstore(ctx.db, args, ctx.config);
       if (reply.kind === 'integer') {
         notify(ctx, EVENT_FLAGS.SET, 'sunionstore', args[0] ?? '');
       }
@@ -256,7 +269,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'sinterstore',
     handler: (ctx, args) => {
-      const reply = sinterstore(ctx.db, args);
+      const reply = sinterstore(ctx.db, args, ctx.config);
       if (reply.kind === 'integer') {
         notify(ctx, EVENT_FLAGS.SET, 'sinterstore', args[0] ?? '');
       }
@@ -272,7 +285,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'sdiffstore',
     handler: (ctx, args) => {
-      const reply = sdiffstore(ctx.db, args);
+      const reply = sdiffstore(ctx.db, args, ctx.config);
       if (reply.kind === 'integer') {
         notify(ctx, EVENT_FLAGS.SET, 'sdiffstore', args[0] ?? '');
       }

@@ -14,6 +14,7 @@ import {
 import { SkipList } from '../../skip-list.ts';
 import { parseFloat64, parseInteger } from '../incr.ts';
 import type { CommandSpec } from '../../command-table.ts';
+import type { ConfigStore } from '../../../config-store.ts';
 import { notify, EVENT_FLAGS } from '../../pubsub/notify.ts';
 import type { SortedSetData } from './types.ts';
 import { formatScore, getExistingZset, chooseEncoding } from './types.ts';
@@ -222,7 +223,8 @@ function storeZsetResult(
   db: Database,
   destination: string,
   resultMap: Map<string, number>,
-  rng: () => number
+  rng: () => number,
+  config?: ConfigStore
 ): Reply {
   db.delete(destination);
 
@@ -240,7 +242,7 @@ function storeZsetResult(
     zset.dict.set(member, score);
   }
 
-  db.set(destination, 'zset', chooseEncoding(zset.dict), zset);
+  db.set(destination, 'zset', chooseEncoding(zset.dict, config), zset);
   return integerReply(zset.dict.size);
 }
 
@@ -393,7 +395,8 @@ export function zdiff(db: Database, args: string[], _rng: () => number): Reply {
 export function zunionstore(
   db: Database,
   args: string[],
-  rng: () => number
+  rng: () => number,
+  config?: ConfigStore
 ): Reply {
   const destination = args[0] as string;
   const numkeysParsed = parseInteger(args[1] as string);
@@ -428,7 +431,7 @@ export function zunionstore(
   if (error) return error;
 
   const resultMap = computeZunion(zsets, weights, aggregate);
-  return storeZsetResult(db, destination, resultMap, rng);
+  return storeZsetResult(db, destination, resultMap, rng, config);
 }
 
 // --- ZINTERSTORE ---
@@ -436,7 +439,8 @@ export function zunionstore(
 export function zinterstore(
   db: Database,
   args: string[],
-  rng: () => number
+  rng: () => number,
+  config?: ConfigStore
 ): Reply {
   const destination = args[0] as string;
   const numkeysParsed = parseInteger(args[1] as string);
@@ -470,7 +474,7 @@ export function zinterstore(
   if (error) return error;
 
   const resultMap = computeZinter(zsets, weights, aggregate);
-  return storeZsetResult(db, destination, resultMap, rng);
+  return storeZsetResult(db, destination, resultMap, rng, config);
 }
 
 // --- ZDIFFSTORE ---
@@ -478,7 +482,8 @@ export function zinterstore(
 export function zdiffstore(
   db: Database,
   args: string[],
-  rng: () => number
+  rng: () => number,
+  config?: ConfigStore
 ): Reply {
   const destination = args[0] as string;
   const numkeysParsed = parseInteger(args[1] as string);
@@ -510,7 +515,7 @@ export function zdiffstore(
   if (error) return error;
 
   const resultMap = computeZdiff(zsets);
-  return storeZsetResult(db, destination, resultMap, rng);
+  return storeZsetResult(db, destination, resultMap, rng, config);
 }
 
 // --- ZINTERCARD ---
@@ -634,7 +639,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'zunionstore',
     handler: (ctx, args) => {
-      const reply = zunionstore(ctx.db, args, ctx.engine.rng);
+      const reply = zunionstore(ctx.db, args, ctx.engine.rng, ctx.config);
       if (reply.kind === 'integer') {
         notify(ctx, EVENT_FLAGS.SORTEDSET, 'zunionstore', args[0] ?? '');
       }
@@ -650,7 +655,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'zinterstore',
     handler: (ctx, args) => {
-      const reply = zinterstore(ctx.db, args, ctx.engine.rng);
+      const reply = zinterstore(ctx.db, args, ctx.engine.rng, ctx.config);
       if (reply.kind === 'integer') {
         notify(ctx, EVENT_FLAGS.SORTEDSET, 'zinterstore', args[0] ?? '');
       }
@@ -666,7 +671,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'zdiffstore',
     handler: (ctx, args) => {
-      const reply = zdiffstore(ctx.db, args, ctx.engine.rng);
+      const reply = zdiffstore(ctx.db, args, ctx.engine.rng, ctx.config);
       if (reply.kind === 'integer') {
         notify(ctx, EVENT_FLAGS.SORTEDSET, 'zdiffstore', args[0] ?? '');
       }

@@ -1,13 +1,28 @@
+import type { ConfigStore } from '../config-store.ts';
+
 const textEncoder = new TextEncoder();
 
 export function strByteLength(s: string): number {
   return textEncoder.encode(s).length;
 }
 
-// Default thresholds — match Redis defaults.
-// TODO: read from ConfigStore when config is wired into CommandContext.
+// Default thresholds — match Redis 7.2 defaults.
 export const DEFAULT_MAX_LISTPACK_ENTRIES = 128;
 export const DEFAULT_MAX_LISTPACK_VALUE = 64;
+
+/**
+ * Read an integer config value from ConfigStore with a fallback default.
+ * ConfigStore.get() returns [key, value] for exact matches.
+ */
+export function configInt(
+  config: ConfigStore | undefined,
+  key: string,
+  fallback: number
+): number {
+  if (!config) return fallback;
+  const result = config.get(key);
+  return result.length >= 2 ? Number(result[1]) : fallback;
+}
 
 export const INT64_MAX = BigInt('9223372036854775807');
 export const INT64_MIN = BigInt('-9223372036854775808');

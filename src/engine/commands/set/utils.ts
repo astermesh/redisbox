@@ -1,8 +1,10 @@
 import type { Database } from '../../database.ts';
 import type { Reply } from '../../types.ts';
 import { integerReply, ZERO, WRONGTYPE_ERR } from '../../types.ts';
+import type { ConfigStore } from '../../../config-store.ts';
 import {
   strByteLength,
+  configInt,
   INT64_MIN,
   INT64_MAX,
   DEFAULT_MAX_LISTPACK_ENTRIES,
@@ -43,27 +45,64 @@ export function fitsListpack(
 }
 
 export function chooseInitialEncoding(
-  s: Set<string>
+  s: Set<string>,
+  config?: ConfigStore
 ): 'intset' | 'listpack' | 'hashtable' {
-  if (s.size <= DEFAULT_MAX_INTSET_ENTRIES && allIntegers(s)) return 'intset';
-  if (fitsListpack(s)) return 'listpack';
+  const maxIntset = configInt(
+    config,
+    'set-max-intset-entries',
+    DEFAULT_MAX_INTSET_ENTRIES
+  );
+  const maxEntries = configInt(
+    config,
+    'set-max-listpack-entries',
+    DEFAULT_MAX_LISTPACK_ENTRIES
+  );
+  const maxValue = configInt(
+    config,
+    'set-max-listpack-value',
+    DEFAULT_MAX_LISTPACK_VALUE
+  );
+  if (s.size <= maxIntset && allIntegers(s)) return 'intset';
+  if (fitsListpack(s, maxEntries, maxValue)) return 'listpack';
   return 'hashtable';
 }
 
-export function updateEncoding(db: Database, key: string): void {
+export function updateEncoding(
+  db: Database,
+  key: string,
+  config?: ConfigStore
+): void {
   const entry = db.get(key);
   if (!entry || entry.type !== 'set') return;
 
   const s = entry.value as Set<string>;
+  const maxIntset = configInt(
+    config,
+    'set-max-intset-entries',
+    DEFAULT_MAX_INTSET_ENTRIES
+  );
+  const maxEntries = configInt(
+    config,
+    'set-max-listpack-entries',
+    DEFAULT_MAX_LISTPACK_ENTRIES
+  );
+  const maxValue = configInt(
+    config,
+    'set-max-listpack-value',
+    DEFAULT_MAX_LISTPACK_VALUE
+  );
 
   if (entry.encoding === 'intset') {
-    if (s.size <= DEFAULT_MAX_INTSET_ENTRIES && allIntegers(s)) return;
-    entry.encoding = fitsListpack(s) ? 'listpack' : 'hashtable';
+    if (s.size <= maxIntset && allIntegers(s)) return;
+    entry.encoding = fitsListpack(s, maxEntries, maxValue)
+      ? 'listpack'
+      : 'hashtable';
     return;
   }
 
   if (entry.encoding === 'listpack') {
-    if (!fitsListpack(s)) {
+    if (!fitsListpack(s, maxEntries, maxValue)) {
       entry.encoding = 'hashtable';
     }
     return;
@@ -161,13 +200,14 @@ export function computeDifference(sets: (Set<string> | null)[]): Set<string> {
 export function storeSetResult(
   db: Database,
   destination: string,
-  members: Set<string>
+  members: Set<string>,
+  config?: ConfigStore
 ): Reply {
   if (members.size === 0) {
     db.delete(destination);
     return ZERO;
   }
-  const encoding = chooseInitialEncoding(members);
+  const encoding = chooseInitialEncoding(members, config);
   db.set(destination, 'set', encoding, members);
   db.removeExpiry(destination);
   return integerReply(members.size);

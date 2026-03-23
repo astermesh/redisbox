@@ -12,6 +12,7 @@ import {
   SYNTAX_ERR,
 } from '../../types.ts';
 import type { CommandSpec } from '../../command-table.ts';
+import type { ConfigStore } from '../../../config-store.ts';
 import { notify, EVENT_FLAGS } from '../../pubsub/notify.ts';
 
 import {
@@ -28,7 +29,11 @@ import { specs as operationSpecs } from './operations.ts';
 
 // --- LPUSH ---
 
-export function lpush(db: Database, args: string[]): Reply {
+export function lpush(
+  db: Database,
+  args: string[],
+  config?: ConfigStore
+): Reply {
   const key = args[0] ?? '';
   const { list, error } = getOrCreateList(db, key);
   if (error) return error;
@@ -37,13 +42,17 @@ export function lpush(db: Database, args: string[]): Reply {
     list.unshift(args[i] ?? '');
   }
 
-  updateEncoding(db, key);
+  updateEncoding(db, key, config);
   return integerReply(list.length);
 }
 
 // --- RPUSH ---
 
-export function rpush(db: Database, args: string[]): Reply {
+export function rpush(
+  db: Database,
+  args: string[],
+  config?: ConfigStore
+): Reply {
   const key = args[0] ?? '';
   const { list, error } = getOrCreateList(db, key);
   if (error) return error;
@@ -52,13 +61,17 @@ export function rpush(db: Database, args: string[]): Reply {
     list.push(args[i] ?? '');
   }
 
-  updateEncoding(db, key);
+  updateEncoding(db, key, config);
   return integerReply(list.length);
 }
 
 // --- LPUSHX ---
 
-export function lpushx(db: Database, args: string[]): Reply {
+export function lpushx(
+  db: Database,
+  args: string[],
+  config?: ConfigStore
+): Reply {
   const key = args[0] ?? '';
   const { list, error } = getExistingList(db, key);
   if (error) return error;
@@ -68,13 +81,17 @@ export function lpushx(db: Database, args: string[]): Reply {
     list.unshift(args[i] ?? '');
   }
 
-  updateEncoding(db, key);
+  updateEncoding(db, key, config);
   return integerReply(list.length);
 }
 
 // --- RPUSHX ---
 
-export function rpushx(db: Database, args: string[]): Reply {
+export function rpushx(
+  db: Database,
+  args: string[],
+  config?: ConfigStore
+): Reply {
   const key = args[0] ?? '';
   const { list, error } = getExistingList(db, key);
   if (error) return error;
@@ -84,7 +101,7 @@ export function rpushx(db: Database, args: string[]): Reply {
     list.push(args[i] ?? '');
   }
 
-  updateEncoding(db, key);
+  updateEncoding(db, key, config);
   return integerReply(list.length);
 }
 
@@ -203,7 +220,11 @@ export function lindex(db: Database, args: string[]): Reply {
 
 // --- LSET ---
 
-export function lset(db: Database, args: string[]): Reply {
+export function lset(
+  db: Database,
+  args: string[],
+  config?: ConfigStore
+): Reply {
   const key = args[0] ?? '';
   const indexParsed = parseInteger(args[1] ?? '');
   if (indexParsed.error) return indexParsed.error;
@@ -219,13 +240,17 @@ export function lset(db: Database, args: string[]): Reply {
   }
 
   list[idx] = value;
-  updateEncoding(db, key);
+  updateEncoding(db, key, config);
   return OK;
 }
 
 // --- LINSERT ---
 
-export function linsert(db: Database, args: string[]): Reply {
+export function linsert(
+  db: Database,
+  args: string[],
+  config?: ConfigStore
+): Reply {
   const key = args[0] ?? '';
   const direction = (args[1] ?? '').toUpperCase();
   const pivot = args[2] ?? '';
@@ -244,7 +269,7 @@ export function linsert(db: Database, args: string[]): Reply {
 
   const insertIndex = direction === 'BEFORE' ? pivotIndex : pivotIndex + 1;
   list.splice(insertIndex, 0, value);
-  updateEncoding(db, key);
+  updateEncoding(db, key, config);
   return integerReply(list.length);
 }
 
@@ -335,7 +360,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'lpush',
     handler: (ctx, args) => {
-      const reply = lpush(ctx.db, args);
+      const reply = lpush(ctx.db, args, ctx.config);
       if (reply.kind === 'integer') {
         notify(ctx, EVENT_FLAGS.LIST, 'lpush', args[0] ?? '');
       }
@@ -351,7 +376,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'rpush',
     handler: (ctx, args) => {
-      const reply = rpush(ctx.db, args);
+      const reply = rpush(ctx.db, args, ctx.config);
       if (reply.kind === 'integer') {
         notify(ctx, EVENT_FLAGS.LIST, 'rpush', args[0] ?? '');
       }
@@ -367,7 +392,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'lpushx',
     handler: (ctx, args) => {
-      const reply = lpushx(ctx.db, args);
+      const reply = lpushx(ctx.db, args, ctx.config);
       if (reply.kind === 'integer' && reply !== ZERO) {
         notify(ctx, EVENT_FLAGS.LIST, 'lpush', args[0] ?? '');
       }
@@ -383,7 +408,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'rpushx',
     handler: (ctx, args) => {
-      const reply = rpushx(ctx.db, args);
+      const reply = rpushx(ctx.db, args, ctx.config);
       if (reply.kind === 'integer' && reply !== ZERO) {
         notify(ctx, EVENT_FLAGS.LIST, 'rpush', args[0] ?? '');
       }
@@ -461,7 +486,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'lset',
     handler: (ctx, args) => {
-      const reply = lset(ctx.db, args);
+      const reply = lset(ctx.db, args, ctx.config);
       if (reply === OK) {
         notify(ctx, EVENT_FLAGS.LIST, 'lset', args[0] ?? '');
       }
@@ -477,7 +502,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'linsert',
     handler: (ctx, args) => {
-      const reply = linsert(ctx.db, args);
+      const reply = linsert(ctx.db, args, ctx.config);
       if (reply.kind === 'integer' && (reply.value as number) > 0) {
         notify(ctx, EVENT_FLAGS.LIST, 'linsert', args[0] ?? '');
       }

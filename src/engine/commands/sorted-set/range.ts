@@ -13,6 +13,7 @@ import {
 import { SkipList } from '../../skip-list.ts';
 import { parseFloat64 } from '../incr.ts';
 import type { CommandSpec } from '../../command-table.ts';
+import type { ConfigStore } from '../../../config-store.ts';
 import { notify, EVENT_FLAGS } from '../../pubsub/notify.ts';
 import type { SortedSetData } from './types.ts';
 import { formatScore, getExistingZset, chooseEncoding } from './types.ts';
@@ -601,7 +602,8 @@ export function zrange(
 export function zrangestore(
   db: Database,
   args: string[],
-  rng: () => number
+  rng: () => number,
+  config?: ConfigStore
 ): Reply {
   if (args.length < 4) {
     return wrongArityError('zrangestore');
@@ -645,7 +647,7 @@ export function zrangestore(
   }
 
   if (zset.dict.size > 0) {
-    db.set(dst, 'zset', chooseEncoding(zset.dict), zset);
+    db.set(dst, 'zset', chooseEncoding(zset.dict, config), zset);
   }
 
   return integerReply(zset.dict.size);
@@ -725,7 +727,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'zrangestore',
     handler: (ctx, args) => {
-      const reply = zrangestore(ctx.db, args, ctx.engine.rng);
+      const reply = zrangestore(ctx.db, args, ctx.engine.rng, ctx.config);
       if (reply.kind === 'integer') {
         notify(ctx, EVENT_FLAGS.SORTEDSET, 'zrangestore', args[0] ?? '');
       }

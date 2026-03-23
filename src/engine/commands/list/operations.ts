@@ -11,6 +11,7 @@ import {
   SYNTAX_ERR,
 } from '../../types.ts';
 import type { CommandSpec } from '../../command-table.ts';
+import type { ConfigStore } from '../../../config-store.ts';
 import { notify, EVENT_FLAGS } from '../../pubsub/notify.ts';
 
 import {
@@ -113,7 +114,11 @@ export function lpos(db: Database, args: string[]): Reply {
 
 // --- LMOVE ---
 
-export function lmove(db: Database, args: string[]): Reply {
+export function lmove(
+  db: Database,
+  args: string[],
+  config?: ConfigStore
+): Reply {
   const source = args[0] ?? '';
   const destination = args[1] ?? '';
   const wherefrom = (args[2] ?? '').toUpperCase();
@@ -158,18 +163,18 @@ export function lmove(db: Database, args: string[]): Reply {
   if (source === destination && srcList.length > 0) {
     // Same key, list still exists — push directly
     pushTo(srcList);
-    updateEncoding(db, source);
+    updateEncoding(db, source, config);
   } else if (source === destination && srcList.length === 0) {
     // Same key, was deleted — recreate
     const { list: newList } = getOrCreateList(db, destination);
     if (newList) pushTo(newList);
-    updateEncoding(db, destination);
+    updateEncoding(db, destination, config);
   } else {
     // Different keys
     const dstResult = getOrCreateList(db, destination);
     if (dstResult.error) return dstResult.error;
     if (dstResult.list) pushTo(dstResult.list);
-    updateEncoding(db, destination);
+    updateEncoding(db, destination, config);
   }
 
   return bulkReply(element);
@@ -246,10 +251,14 @@ export function lmpop(db: Database, args: string[]): Reply {
 
 // --- RPOPLPUSH (deprecated since 6.2, replaced by LMOVE RIGHT LEFT) ---
 
-export function rpoplpush(db: Database, args: string[]): Reply {
+export function rpoplpush(
+  db: Database,
+  args: string[],
+  config?: ConfigStore
+): Reply {
   const source = args[0] ?? '';
   const destination = args[1] ?? '';
-  return lmove(db, [source, destination, 'RIGHT', 'LEFT']);
+  return lmove(db, [source, destination, 'RIGHT', 'LEFT'], config);
 }
 
 export const specs: CommandSpec[] = [
@@ -266,7 +275,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'lmove',
     handler: (ctx, args) => {
-      const reply = lmove(ctx.db, args);
+      const reply = lmove(ctx.db, args, ctx.config);
       if (reply.kind === 'bulk' && reply.value !== null) {
         const source = args[0] ?? '';
         const destination = args[1] ?? '';
@@ -325,7 +334,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'rpoplpush',
     handler: (ctx, args) => {
-      const reply = rpoplpush(ctx.db, args);
+      const reply = rpoplpush(ctx.db, args, ctx.config);
       if (reply.kind === 'bulk' && reply.value !== null) {
         notify(ctx, EVENT_FLAGS.LIST, 'rpop', args[0] ?? '');
         notify(ctx, EVENT_FLAGS.LIST, 'lpush', args[1] ?? '');

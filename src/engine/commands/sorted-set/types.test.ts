@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { RedisEngine } from '../../engine.ts';
 import type { Database } from '../../database.ts';
 import type { Reply } from '../../types.ts';
+import { ConfigStore } from '../../../config-store.ts';
 import {
   chooseEncoding,
   updateEncoding,
@@ -10,6 +11,7 @@ import {
   getExistingZset,
 } from './types.ts';
 import { set } from '../string/index.ts';
+import { zadd } from './sorted-set.ts';
 
 let rngValue = 0.5;
 function createDb(): { db: Database; engine: RedisEngine; rng: () => number } {
@@ -288,5 +290,78 @@ describe('getExistingZset', () => {
     const { db } = createDb();
     getExistingZset(db, 'ghost');
     expect(db.get('ghost')).toBeNull();
+  });
+});
+
+// --- zset config thresholds ---
+
+describe('zset config thresholds', () => {
+  it('CONFIG SET zset-max-listpack-entries lowers threshold', () => {
+    const { db, rng } = createDb();
+    const config = new ConfigStore();
+    config.set('zset-max-listpack-entries', '2');
+
+    zadd(db, ['myzset', '1', 'a', '2', 'b', '3', 'c'], rng, config);
+
+    expect(db.get('myzset')?.encoding).toBe('skiplist');
+  });
+
+  it('CONFIG SET zset-max-listpack-entries raises threshold', () => {
+    const { db, rng } = createDb();
+    const config = new ConfigStore();
+    config.set('zset-max-listpack-entries', '256');
+
+    const args = ['myzset'];
+    for (let i = 0; i < 200; i++) args.push(String(i), `m${i}`);
+    zadd(db, args, rng, config);
+
+    expect(db.get('myzset')?.encoding).toBe('listpack');
+  });
+
+  it('CONFIG SET zset-max-listpack-value lowers threshold', () => {
+    const { db, rng } = createDb();
+    const config = new ConfigStore();
+    config.set('zset-max-listpack-value', '5');
+
+    zadd(db, ['myzset', '1', 'longmember'], rng, config);
+
+    expect(db.get('myzset')?.encoding).toBe('skiplist');
+  });
+
+  it('CONFIG SET zset-max-listpack-value raises threshold', () => {
+    const { db, rng } = createDb();
+    const config = new ConfigStore();
+    config.set('zset-max-listpack-value', '200');
+
+    zadd(db, ['myzset', '1', 'x'.repeat(100)], rng, config);
+
+    expect(db.get('myzset')?.encoding).toBe('listpack');
+  });
+
+  it('chooseEncoding respects config thresholds', () => {
+    const config = new ConfigStore();
+    config.set('zset-max-listpack-entries', '2');
+
+    const dict = new Map<string, number>([
+      ['a', 1],
+      ['b', 2],
+      ['c', 3],
+    ]);
+    expect(chooseEncoding(dict, config)).toBe('skiplist');
+    expect(chooseEncoding(dict)).toBe('listpack');
+  });
+
+  it('updateEncoding uses config when provided', () => {
+    const { db, rng } = createDb();
+    const config = new ConfigStore();
+    config.set('zset-max-listpack-entries', '1');
+
+    const result = getOrCreateZset(db, 'zk', rng);
+    if (result.error || !result.zset) throw new Error('unexpected error');
+    result.zset.dict.set('a', 1);
+    result.zset.dict.set('b', 2);
+
+    updateEncoding(db, 'zk', config);
+    expect(db.get('zk')?.encoding).toBe('skiplist');
   });
 });

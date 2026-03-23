@@ -17,6 +17,7 @@ import { parseInteger } from '../incr.ts';
 import { matchGlob } from '../../glob-pattern.ts';
 import { partialShuffle } from '../../utils.ts';
 import type { CommandSpec } from '../../command-table.ts';
+import type { ConfigStore } from '../../../config-store.ts';
 import { notify, EVENT_FLAGS } from '../../pubsub/notify.ts';
 import { parseScanCursor, parseScanOptions } from '../scan-utils.ts';
 import {
@@ -29,7 +30,11 @@ import { specs as opsSpecs } from './ops.ts';
 
 // --- SADD ---
 
-export function sadd(db: Database, args: string[]): Reply {
+export function sadd(
+  db: Database,
+  args: string[],
+  config?: ConfigStore
+): Reply {
   if (args.length < 2) {
     return wrongArityError('sadd');
   }
@@ -48,7 +53,7 @@ export function sadd(db: Database, args: string[]): Reply {
   }
 
   if (added > 0) {
-    updateEncoding(db, key);
+    updateEncoding(db, key, config);
   }
 
   return integerReply(added);
@@ -145,7 +150,11 @@ export function scard(db: Database, args: string[]): Reply {
 
 // --- SMOVE ---
 
-export function smove(db: Database, args: string[]): Reply {
+export function smove(
+  db: Database,
+  args: string[],
+  config?: ConfigStore
+): Reply {
   const source = args[0] ?? '';
   const destination = args[1] ?? '';
   const member = args[2] ?? '';
@@ -175,11 +184,11 @@ export function smove(db: Database, args: string[]): Reply {
   // Add to destination
   if (dstEntry) {
     (dstEntry.value as Set<string>).add(member);
-    updateEncoding(db, destination);
+    updateEncoding(db, destination, config);
   } else {
     const dstSet = new Set<string>();
     dstSet.add(member);
-    db.set(destination, 'set', chooseInitialEncoding(dstSet), dstSet);
+    db.set(destination, 'set', chooseInitialEncoding(dstSet, config), dstSet);
   }
 
   return ONE;
@@ -335,7 +344,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'sadd',
     handler: (ctx, args) => {
-      const reply = sadd(ctx.db, args);
+      const reply = sadd(ctx.db, args, ctx.config);
       if (reply.kind === 'integer' && (reply.value as number) > 0) {
         notify(ctx, EVENT_FLAGS.SET, 'sadd', args[0] ?? '');
       }
@@ -407,7 +416,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'smove',
     handler: (ctx, args) => {
-      const reply = smove(ctx.db, args);
+      const reply = smove(ctx.db, args, ctx.config);
       if (reply === ONE) {
         notify(ctx, EVENT_FLAGS.SET, 'srem', args[0] ?? '');
         notify(ctx, EVENT_FLAGS.SET, 'sadd', args[1] ?? '');

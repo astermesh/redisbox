@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { RedisEngine } from '../../engine.ts';
 import type { Database } from '../../database.ts';
 import type { Reply } from '../../types.ts';
+import { ConfigStore } from '../../../config-store.ts';
 import {
   fitsListpack,
+  fitsListpackBySize,
   getOrCreateList,
   getExistingList,
   updateEncoding,
@@ -12,6 +14,7 @@ import {
   parseInteger,
   resolveIndex,
 } from './utils.ts';
+import { lpush } from './list.ts';
 
 function createDb(): { db: Database; engine: RedisEngine } {
   const engine = new RedisEngine({ clock: () => 1000, rng: () => 0.5 });
@@ -383,5 +386,96 @@ describe('resolveIndex', () => {
 
   it('returns index beyond length unchanged', () => {
     expect(resolveIndex(10, 5)).toBe(10);
+  });
+});
+
+// --- fitsListpackBySize ---
+
+describe('fitsListpackBySize', () => {
+  it('handles positive size', () => {
+    expect(fitsListpackBySize(['a', 'b', 'c'], 3)).toBe(true);
+    expect(fitsListpackBySize(['a', 'b', 'c', 'd'], 3)).toBe(false);
+  });
+
+  it('handles negative fill factors', () => {
+    expect(fitsListpackBySize(['x'.repeat(4096)], -1)).toBe(true);
+    expect(fitsListpackBySize(['x'.repeat(4097)], -1)).toBe(false);
+    expect(fitsListpackBySize(['x'.repeat(65536)], -5)).toBe(true);
+    expect(fitsListpackBySize(['x'.repeat(65537)], -5)).toBe(false);
+  });
+
+  it('rejects items for invalid negative values', () => {
+    expect(fitsListpackBySize(['a'], -6)).toBe(false);
+    expect(fitsListpackBySize(['a'], -10)).toBe(false);
+  });
+
+  it('size 0 means zero entries allowed', () => {
+    expect(fitsListpackBySize(['a'], 0)).toBe(false);
+    expect(fitsListpackBySize([], 0)).toBe(true);
+  });
+});
+
+// --- list config thresholds ---
+
+describe('list config thresholds', () => {
+  it('CONFIG SET list-max-listpack-size positive value limits entry count', () => {
+    const { db } = createDb();
+    const config = new ConfigStore();
+    config.set('list-max-listpack-size', '3');
+
+    lpush(db, ['mylist', 'a', 'b', 'c', 'd'], config);
+
+    expect(db.get('mylist')?.encoding).toBe('quicklist');
+  });
+
+  it('CONFIG SET list-max-listpack-size positive value allows within limit', () => {
+    const { db } = createDb();
+    const config = new ConfigStore();
+    config.set('list-max-listpack-size', '5');
+
+    lpush(db, ['mylist', 'a', 'b', 'c'], config);
+
+    expect(db.get('mylist')?.encoding).toBe('listpack');
+  });
+
+  it('CONFIG SET list-max-listpack-size negative value uses byte limit', () => {
+    const { db } = createDb();
+    const config = new ConfigStore();
+    config.set('list-max-listpack-size', '-1'); // 4096 bytes
+
+    const items = ['mylist'];
+    for (let i = 0; i < 5; i++) items.push('x'.repeat(1000));
+    lpush(db, items, config);
+
+    expect(db.get('mylist')?.encoding).toBe('quicklist');
+  });
+
+  it('CONFIG SET list-max-listpack-size -2 allows up to 8192 bytes', () => {
+    const { db } = createDb();
+    const config = new ConfigStore();
+    config.set('list-max-listpack-size', '-2'); // 8192 bytes
+
+    const items = ['mylist'];
+    for (let i = 0; i < 8; i++) items.push('x'.repeat(1000));
+    lpush(db, items, config);
+
+    expect(db.get('mylist')?.encoding).toBe('listpack');
+  });
+
+  it('updateEncoding with config uses list-max-listpack-size', () => {
+    const { db } = createDb();
+    const config = new ConfigStore();
+    config.set('list-max-listpack-size', '2');
+
+    db.set('k', 'list', 'listpack', ['a', 'b', 'c']);
+    updateEncoding(db, 'k', config);
+    expect(db.get('k')?.encoding).toBe('quicklist');
+  });
+
+  it('updateEncoding without config uses legacy defaults', () => {
+    const { db } = createDb();
+    db.set('k', 'list', 'listpack', ['a', 'b', 'c']);
+    updateEncoding(db, 'k');
+    expect(db.get('k')?.encoding).toBe('listpack');
   });
 });
