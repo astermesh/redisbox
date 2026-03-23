@@ -1,5 +1,7 @@
 # S27: Geo Commands
 
+**Status:** done
+
 Implement geospatial commands. Geo is built on top of sorted sets — members are stored with their 52-bit geohash as the score. This story requires a working sorted set engine (S10).
 
 ## Commands
