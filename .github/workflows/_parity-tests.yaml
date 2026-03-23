@@ -1,0 +1,63 @@
+name: Parity Tests
+
+on:
+  workflow_call:
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      redis:
+        image: redis:7.2
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run dual-backend parity tests
+        run: npm run test:node:integration
+        env:
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: 6379
+
+      - name: Install Tcl
+        run: sudo apt-get update && sudo apt-get install -y tcl
+
+      - name: Cache Redis test suite
+        id: cache-redis-tests
+        uses: actions/cache@v4
+        with:
+          path: .redis-tests
+          key: redis-tests-7.4.4
+
+      - name: Setup Redis test suite
+        if: steps.cache-redis-tests.outputs.cache-hit != 'true'
+        run: npm run tcl:setup
+
+      - name: Run TCL parity tests
+        run: npx tsx scripts/check-parity.ts
+
+      - name: Report parity rate
+        if: always()
+        run: |
+          echo "### Parity Tests Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "See the job log for detailed parity report." >> $GITHUB_STEP_SUMMARY

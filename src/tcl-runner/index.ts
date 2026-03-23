@@ -14,3 +14,5 @@ export {
 export type { TclRunnerOptions, TclRunResult } from './tcl-runner.ts';
 export { formatReport, categorizeFailure, passRate } from './report.ts';
 export type { FailureCategory, CategorizedFailure } from './report.ts';
+export { checkBaseline, formatBaselineResult } from './parity-baseline.ts';
+export type { ParityBaseline, BaselineResult } from './parity-baseline.ts';
