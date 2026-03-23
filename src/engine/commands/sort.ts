@@ -13,6 +13,7 @@ import {
   wrongArityError,
 } from '../types.ts';
 import type { CommandSpec } from '../command-table.ts';
+import { notify, EVENT_FLAGS } from '../notify.ts';
 
 interface SortOptions {
   by: string | null;
@@ -283,7 +284,20 @@ function storeResults(db: Database, destKey: string, items: Reply[]): Reply {
 export const specs: CommandSpec[] = [
   {
     name: 'sort',
-    handler: (ctx, args) => sort(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = sort(ctx.db, args);
+      // SORT with STORE returns integer (count) — emit sortstore
+      if (reply.kind === 'integer') {
+        // Find the STORE destination key
+        for (let i = 1; i < args.length; i++) {
+          if ((args[i] ?? '').toUpperCase() === 'STORE') {
+            notify(ctx, EVENT_FLAGS.GENERIC, 'sortstore', args[i + 1] ?? '');
+            break;
+          }
+        }
+      }
+      return reply;
+    },
     arity: -2,
     flags: ['write', 'denyoom', 'movablekeys'],
     firstKey: 1,

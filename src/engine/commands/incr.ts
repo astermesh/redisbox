@@ -12,6 +12,7 @@ import {
 import { determineStringEncoding } from './string.ts';
 import { INT64_MAX, INT64_MIN } from '../utils.ts';
 import type { CommandSpec } from '../command-table.ts';
+import { notify, EVENT_FLAGS } from '../notify.ts';
 
 /**
  * Parse a string as a 64-bit signed integer.
@@ -198,7 +199,13 @@ export function incrbyfloat(db: Database, args: string[]): Reply {
 export const specs: CommandSpec[] = [
   {
     name: 'incr',
-    handler: (ctx, args) => incr(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = incr(ctx.db, args);
+      if (reply.kind === 'integer') {
+        notify(ctx, EVENT_FLAGS.STRING, 'incrby', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: 2,
     flags: ['write', 'denyoom', 'fast'],
     firstKey: 1,
@@ -208,7 +215,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'decr',
-    handler: (ctx, args) => decr(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = decr(ctx.db, args);
+      if (reply.kind === 'integer') {
+        notify(ctx, EVENT_FLAGS.STRING, 'decrby', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: 2,
     flags: ['write', 'denyoom', 'fast'],
     firstKey: 1,
@@ -218,7 +231,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'incrby',
-    handler: (ctx, args) => incrby(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = incrby(ctx.db, args);
+      if (reply.kind === 'integer') {
+        notify(ctx, EVENT_FLAGS.STRING, 'incrby', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: 3,
     flags: ['write', 'denyoom', 'fast'],
     firstKey: 1,
@@ -228,7 +247,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'decrby',
-    handler: (ctx, args) => decrby(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = decrby(ctx.db, args);
+      if (reply.kind === 'integer') {
+        notify(ctx, EVENT_FLAGS.STRING, 'decrby', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: 3,
     flags: ['write', 'denyoom', 'fast'],
     firstKey: 1,
@@ -238,7 +263,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'incrbyfloat',
-    handler: (ctx, args) => incrbyfloat(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = incrbyfloat(ctx.db, args);
+      if (reply.kind === 'bulk' && reply.value !== null) {
+        notify(ctx, EVENT_FLAGS.STRING, 'incrbyfloat', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: 3,
     flags: ['write', 'denyoom', 'fast'],
     firstKey: 1,

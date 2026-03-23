@@ -1,4 +1,7 @@
 import type { Database } from './database.ts';
+import type { ConfigStore } from '../config-store.ts';
+import type { PubSubManager } from './pubsub-manager.ts';
+import { notifyKeyspaceEvent, EVENT_FLAGS } from './keyspace-events.ts';
 
 /**
  * Redis active expiration cycles (slow and fast variants).
@@ -33,6 +36,8 @@ export interface ActiveExpireCycleOpts {
   rng: () => number;
   hz: number;
   effort: number;
+  config?: ConfigStore;
+  pubsub?: PubSubManager;
 }
 
 export interface ActiveExpireCycleResult {
@@ -53,7 +58,9 @@ function expireCycleCore(
   rng: () => number,
   configKeysPerLoop: number,
   configCycleAcceptableStale: number,
-  timeLimitMs: number
+  timeLimitMs: number,
+  notifyConfig?: ConfigStore,
+  notifyPubsub?: PubSubManager
 ): ActiveExpireCycleResult {
   const startTime = clock();
 
@@ -62,7 +69,9 @@ function expireCycleCore(
   let timedOut = false;
   let iteration = 0;
 
-  for (const db of databases) {
+  for (let dbIdx = 0; dbIdx < databases.length; dbIdx++) {
+    const db = databases[dbIdx];
+    if (!db) continue;
     // --- Key-level expiration ---
     if (db.expirySize > 0) {
       for (;;) {
@@ -73,6 +82,16 @@ function expireCycleCore(
         for (const key of sampled) {
           if (db.tryExpire(key)) {
             expired++;
+            if (notifyConfig && notifyPubsub) {
+              notifyKeyspaceEvent(
+                notifyConfig,
+                notifyPubsub,
+                EVENT_FLAGS.EXPIRED,
+                'expired',
+                key,
+                dbIdx
+              );
+            }
           }
         }
         totalExpired += expired;
@@ -185,7 +204,9 @@ export function activeExpireCycle(
     rng,
     configKeysPerLoop,
     configCycleAcceptableStale,
-    timeLimitMs
+    timeLimitMs,
+    opts.config,
+    opts.pubsub
   );
 }
 
@@ -215,6 +236,8 @@ export interface FastActiveExpireCycleOpts {
   rng: () => number;
   effort: number;
   state: FastExpireCycleState;
+  config?: ConfigStore;
+  pubsub?: PubSubManager;
 }
 
 export interface FastActiveExpireCycleResult extends ActiveExpireCycleResult {
@@ -267,7 +290,9 @@ export function fastActiveExpireCycle(
     rng,
     configKeysPerLoop,
     configCycleAcceptableStale,
-    ACTIVE_EXPIRE_CYCLE_FAST_DURATION_MS
+    ACTIVE_EXPIRE_CYCLE_FAST_DURATION_MS,
+    opts.config,
+    opts.pubsub
   );
 
   return { ...result, skipped: false };

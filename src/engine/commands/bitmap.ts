@@ -11,6 +11,7 @@ import {
   NOT_INTEGER_ERR,
 } from '../types.ts';
 import type { CommandSpec } from '../command-table.ts';
+import { notify, EVENT_FLAGS } from '../notify.ts';
 
 // --- Error constants ---
 
@@ -698,7 +699,13 @@ function parseBigInt(s: string): bigint | null {
 export const specs: CommandSpec[] = [
   {
     name: 'setbit',
-    handler: (ctx, args) => setbit(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = setbit(ctx.db, args);
+      if (reply.kind === 'integer') {
+        notify(ctx, EVENT_FLAGS.STRING, 'setbit', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: 4,
     flags: ['write', 'denyoom'],
     firstKey: 1,
@@ -738,7 +745,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'bitop',
-    handler: (ctx, args) => bitop(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = bitop(ctx.db, args);
+      if (reply.kind === 'integer') {
+        notify(ctx, EVENT_FLAGS.STRING, 'set', args[1] ?? '');
+      }
+      return reply;
+    },
     arity: -4,
     flags: ['write', 'denyoom'],
     firstKey: 2,
@@ -748,7 +761,19 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'bitfield',
-    handler: (ctx, args) => bitfield(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = bitfield(ctx.db, args);
+      if (reply.kind === 'array') {
+        // Check if any SET or INCRBY operation was performed
+        const hasWrite = args.some(
+          (a) => a.toUpperCase() === 'SET' || a.toUpperCase() === 'INCRBY'
+        );
+        if (hasWrite) {
+          notify(ctx, EVENT_FLAGS.STRING, 'setbit', args[0] ?? '');
+        }
+      }
+      return reply;
+    },
     arity: -2,
     flags: ['write', 'denyoom'],
     firstKey: 1,
