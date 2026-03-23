@@ -1410,6 +1410,170 @@ describe('GEOSEARCHSTORE destination overwrite', () => {
   });
 });
 
+// --- GEOSEARCHSTORE rejects WITH* flags ---
+
+describe('GEOSEARCHSTORE rejects WITH* flags', () => {
+  it('rejects WITHCOORD', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    const result = geo.geosearchstore(
+      db,
+      [
+        'dst',
+        'k',
+        'FROMLONLAT',
+        '14.0',
+        '38.0',
+        'BYRADIUS',
+        '200',
+        'km',
+        'ASC',
+        'WITHCOORD',
+      ],
+      rng
+    );
+    expect(result).toEqual(err('ERR', 'syntax error'));
+  });
+
+  it('rejects WITHDIST', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    const result = geo.geosearchstore(
+      db,
+      [
+        'dst',
+        'k',
+        'FROMLONLAT',
+        '14.0',
+        '38.0',
+        'BYRADIUS',
+        '200',
+        'km',
+        'ASC',
+        'WITHDIST',
+      ],
+      rng
+    );
+    expect(result).toEqual(err('ERR', 'syntax error'));
+  });
+
+  it('rejects WITHHASH', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    const result = geo.geosearchstore(
+      db,
+      [
+        'dst',
+        'k',
+        'FROMLONLAT',
+        '14.0',
+        '38.0',
+        'BYRADIUS',
+        '200',
+        'km',
+        'ASC',
+        'WITHHASH',
+      ],
+      rng
+    );
+    expect(result).toEqual(err('ERR', 'syntax error'));
+  });
+});
+
+// --- Duplicate FROM/BY options ---
+
+describe('GEOSEARCH duplicate option validation', () => {
+  it('errors on duplicate FROMMEMBER', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    const result = geo.geosearch(db, [
+      'k',
+      'FROMMEMBER',
+      'Palermo',
+      'FROMMEMBER',
+      'Catania',
+      'BYRADIUS',
+      '200',
+      'km',
+    ]);
+    expect(result).toEqual(
+      err(
+        'ERR',
+        'exactly one of FROMMEMBER or FROMLONLAT can be specified for GEOSEARCH/GEOSEARCHSTORE'
+      )
+    );
+  });
+
+  it('errors on FROMMEMBER + FROMLONLAT', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    const result = geo.geosearch(db, [
+      'k',
+      'FROMMEMBER',
+      'Palermo',
+      'FROMLONLAT',
+      '14.0',
+      '38.0',
+      'BYRADIUS',
+      '200',
+      'km',
+    ]);
+    expect(result).toEqual(
+      err(
+        'ERR',
+        'exactly one of FROMMEMBER or FROMLONLAT can be specified for GEOSEARCH/GEOSEARCHSTORE'
+      )
+    );
+  });
+
+  it('errors on duplicate BYRADIUS', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    const result = geo.geosearch(db, [
+      'k',
+      'FROMLONLAT',
+      '14.0',
+      '38.0',
+      'BYRADIUS',
+      '200',
+      'km',
+      'BYRADIUS',
+      '100',
+      'km',
+    ]);
+    expect(result).toEqual(
+      err(
+        'ERR',
+        'exactly one of BYRADIUS and BYBOX can be specified for GEOSEARCH/GEOSEARCHSTORE'
+      )
+    );
+  });
+
+  it('errors on BYRADIUS + BYBOX', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    const result = geo.geosearch(db, [
+      'k',
+      'FROMLONLAT',
+      '14.0',
+      '38.0',
+      'BYRADIUS',
+      '200',
+      'km',
+      'BYBOX',
+      '400',
+      '200',
+      'km',
+    ]);
+    expect(result).toEqual(
+      err(
+        'ERR',
+        'exactly one of BYRADIUS and BYBOX can be specified for GEOSEARCH/GEOSEARCHSTORE'
+      )
+    );
+  });
+});
+
 // --- GEORADIUS / GEOSEARCH equivalence ---
 
 describe('GEORADIUS / GEOSEARCH equivalence', () => {
