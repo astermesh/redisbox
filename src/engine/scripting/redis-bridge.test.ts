@@ -483,6 +483,35 @@ describe('registerRedisBridge', () => {
     });
   });
 
+  // --- redis.sha1hex ---
+
+  describe('redis.sha1hex', () => {
+    it('returns SHA1 hex digest of a string', async () => {
+      const executor: CommandExecutor = () => statusReply('OK');
+      await registerRedisBridge(engine, executor);
+
+      const result = await engine.execute('return redis.sha1hex("hello")');
+      expect(result.values[0]).toBe('aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d');
+    });
+
+    it('returns SHA1 of empty string', async () => {
+      const executor: CommandExecutor = () => statusReply('OK');
+      await registerRedisBridge(engine, executor);
+
+      const result = await engine.execute('return redis.sha1hex("")');
+      expect(result.values[0]).toBe('da39a3ee5e6b4b0d3255bfef95601890afd80709');
+    });
+
+    it('handles numeric argument via tostring', async () => {
+      const executor: CommandExecutor = () => statusReply('OK');
+      await registerRedisBridge(engine, executor);
+
+      const result = await engine.execute('return redis.sha1hex(42)');
+      // tostring(42) = "42"
+      expect(result.values[0]).toHaveLength(40);
+    });
+  });
+
   // --- Round-trip type conversion ---
 
   describe('round-trip type conversion', () => {

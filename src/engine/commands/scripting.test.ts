@@ -219,6 +219,15 @@ describe('EVAL', () => {
     });
   });
 
+  describe('redis.sha1hex', () => {
+    it('computes SHA1 hex digest', () => {
+      const result = dispatch(['EVAL', 'return redis.sha1hex("")', '0']);
+      expect(result).toEqual(
+        bulkReply('da39a3ee5e6b4b0d3255bfef95601890afd80709')
+      );
+    });
+  });
+
   describe('script caching', () => {
     it('caches script after EVAL', () => {
       const script = 'return 42';
@@ -472,6 +481,11 @@ describe('SCRIPT LOAD', () => {
   it('rejects script with syntax errors', () => {
     const result = dispatch(['SCRIPT', 'LOAD', 'invalid lua !!!']);
     expect(result).toEqual(expect.objectContaining({ kind: 'error' }));
+    if (result.kind === 'error') {
+      expect(result.message).toMatch(
+        /Error compiling script \(new function\):/
+      );
+    }
   });
 
   it('does not cache script with syntax errors', () => {
@@ -579,7 +593,7 @@ describe('SCRIPT FLUSH', () => {
   it('rejects invalid option', () => {
     const result = dispatch(['SCRIPT', 'FLUSH', 'INVALID']);
     expect(result).toEqual(
-      errorReply('ERR', 'SCRIPT FLUSH only supports ASYNC|SYNC option')
+      errorReply('ERR', 'SCRIPT FLUSH only support SYNC|ASYNC option')
     );
   });
 
