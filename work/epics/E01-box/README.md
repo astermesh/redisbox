@@ -2,6 +2,7 @@
 
 - [Epic description](description.md)
 - [Stories](stories/README.md)
+- [Defects](defects/README.md)
 
 ---
 
