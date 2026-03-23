@@ -169,11 +169,12 @@ function estimateSetValue(entry: RedisEntry): number {
 }
 
 function estimateZSetValue(entry: RedisEntry): number {
-  const zset = entry.value as Map<string, number>;
+  const zsetData = entry.value as { dict: Map<string, number> };
+  const dict = zsetData.dict;
 
   if (entry.encoding === 'listpack' || entry.encoding === 'ziplist') {
     let dataSize = 11;
-    for (const [member, score] of zset) {
+    for (const [member, score] of dict) {
       dataSize += 1 + Buffer.byteLength(member, 'utf8');
       // Score stored as string in listpack
       dataSize += 1 + String(score).length;
@@ -183,13 +184,13 @@ function estimateZSetValue(entry: RedisEntry): number {
 
   // skiplist encoding: dict + skiplist + nodes
   let size = DICT_OVERHEAD;
-  const buckets = nextPowerOf2(Math.max(zset.size, 4));
+  const buckets = nextPowerOf2(Math.max(dict.size, 4));
   size += jemallocSize(buckets * 8);
 
   // Skiplist header
   size += 32; // zskiplist struct
 
-  for (const [member] of zset) {
+  for (const [member] of dict) {
     // dictEntry for the dict
     size += DICT_ENTRY_SIZE;
     // SDS for member (shared between dict and skiplist)

@@ -18,8 +18,51 @@ import {
 import { SkipList } from '../skip-list.ts';
 import { parseFloat64, parseInteger, formatFloat } from './incr.ts';
 import { matchGlob } from '../glob-pattern.ts';
-import { partialShuffle } from '../utils.ts';
+import { partialShuffle, strByteLength } from '../utils.ts';
 import type { CommandSpec } from '../command-table.ts';
+
+// Default thresholds — match Redis defaults.
+// TODO: read from ConfigStore when config is wired into CommandContext.
+const DEFAULT_MAX_LISTPACK_ENTRIES = 128;
+const DEFAULT_MAX_LISTPACK_VALUE = 64;
+
+/**
+ * Check if a sorted set should use listpack encoding based on current state.
+ * Returns true if the set is small enough for listpack.
+ */
+function fitsListpack(
+  dict: Map<string, number>,
+  maxEntries: number = DEFAULT_MAX_LISTPACK_ENTRIES,
+  maxValue: number = DEFAULT_MAX_LISTPACK_VALUE
+): boolean {
+  if (dict.size > maxEntries) return false;
+  for (const member of dict.keys()) {
+    if (strByteLength(member) > maxValue) return false;
+  }
+  return true;
+}
+
+/**
+ * Choose initial encoding for a new sorted set based on its contents.
+ */
+function chooseEncoding(dict: Map<string, number>): 'listpack' | 'skiplist' {
+  return fitsListpack(dict) ? 'listpack' : 'skiplist';
+}
+
+/**
+ * Promote encoding from listpack to skiplist if needed.
+ * Redis only transitions in one direction: listpack → skiplist.
+ * Once promoted, it never reverts back — even if the set shrinks.
+ */
+function updateEncoding(db: Database, key: string): void {
+  const entry = db.get(key);
+  if (!entry || entry.type !== 'zset') return;
+  if (entry.encoding === 'skiplist') return; // never demote
+  const zset = entry.value as SortedSetData;
+  if (!fitsListpack(zset.dict)) {
+    entry.encoding = 'skiplist';
+  }
+}
 
 export function formatScore(n: number): string {
   if (n === Infinity) return 'inf';
@@ -49,7 +92,7 @@ function getOrCreateZset(
     sl: new SkipList(rng),
     dict: new Map(),
   };
-  db.set(key, 'zset', 'skiplist', zset);
+  db.set(key, 'zset', 'listpack', zset);
   return { zset, error: null };
 }
 
@@ -246,6 +289,7 @@ export function zadd(db: Database, args: string[], rng: () => number): Reply {
 
   // Clean up if nothing was added to a newly created empty set
   removeIfEmpty(db, key, zset);
+  updateEncoding(db, key);
 
   if (incr) {
     return incrResult !== null ? bulkReply(formatScore(incrResult)) : NIL;
@@ -329,6 +373,7 @@ export function zincrby(
     zset.dict.set(member, newScore);
   }
 
+  updateEncoding(db, key);
   return bulkReply(formatScore(newScore));
 }
 
@@ -992,7 +1037,7 @@ export function zrangestore(
   }
 
   if (zset.dict.size > 0) {
-    db.set(dst, 'zset', 'skiplist', zset);
+    db.set(dst, 'zset', chooseEncoding(zset.dict), zset);
   }
 
   return integerReply(zset.dict.size);
@@ -1726,7 +1771,7 @@ function storeZsetResult(
     zset.dict.set(member, score);
   }
 
-  db.set(destination, 'zset', 'skiplist', zset);
+  db.set(destination, 'zset', chooseEncoding(zset.dict), zset);
   return integerReply(zset.dict.size);
 }
 

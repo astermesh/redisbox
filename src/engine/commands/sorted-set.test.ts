@@ -4,6 +4,7 @@ import type { Database } from '../database.ts';
 import type { Reply } from '../types.ts';
 import * as sortedSet from './sorted-set.ts';
 import * as string from './string.ts';
+import * as generic from './generic.ts';
 
 let rngValue = 0.5;
 function createDb(): { db: Database; engine: RedisEngine; rng: () => number } {
@@ -2401,5 +2402,158 @@ describe('ZSCAN', () => {
 
     // After scanning all 3 elements, cursor should be 0
     expect(cursor3).toBe('0');
+  });
+});
+
+// --- Encoding transitions ---
+
+describe('encoding transitions', () => {
+  it('uses listpack for small sorted sets', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['k', '1', 'a'], rng);
+    expect(db.get('k')?.encoding).toBe('listpack');
+    expect(generic.objectEncoding(db, ['k'])).toEqual(bulk('listpack'));
+  });
+
+  it('stays listpack at exact entry count threshold (128)', () => {
+    const { db, rng } = createDb();
+    const args: string[] = ['k'];
+    for (let i = 0; i < 128; i++) {
+      args.push(String(i), `m${i}`);
+    }
+    sortedSet.zadd(db, args, rng);
+    expect(db.get('k')?.encoding).toBe('listpack');
+  });
+
+  it('transitions to skiplist when exceeding entry count (129)', () => {
+    const { db, rng } = createDb();
+    const args: string[] = ['k'];
+    for (let i = 0; i <= 128; i++) {
+      args.push(String(i), `m${i}`);
+    }
+    sortedSet.zadd(db, args, rng);
+    expect(db.get('k')?.encoding).toBe('skiplist');
+    expect(generic.objectEncoding(db, ['k'])).toEqual(bulk('skiplist'));
+  });
+
+  it('stays listpack at exact member byte length threshold (64 bytes)', () => {
+    const { db, rng } = createDb();
+    const member = 'x'.repeat(64);
+    sortedSet.zadd(db, ['k', '1', member], rng);
+    expect(db.get('k')?.encoding).toBe('listpack');
+  });
+
+  it('transitions to skiplist when member exceeds byte length (65 bytes)', () => {
+    const { db, rng } = createDb();
+    const member = 'x'.repeat(65);
+    sortedSet.zadd(db, ['k', '1', member], rng);
+    expect(db.get('k')?.encoding).toBe('skiplist');
+  });
+
+  it('transitions to skiplist with multi-byte UTF-8 member exceeding 64 bytes', () => {
+    const { db, rng } = createDb();
+    // Each emoji is 4 bytes in UTF-8, so 17 emojis = 68 bytes > 64
+    const member = '\u{1F600}'.repeat(17);
+    sortedSet.zadd(db, ['k', '1', member], rng);
+    expect(db.get('k')?.encoding).toBe('skiplist');
+  });
+
+  it('never demotes from skiplist after ZREM reduces size', () => {
+    const { db, rng } = createDb();
+    const args: string[] = ['k'];
+    for (let i = 0; i <= 128; i++) {
+      args.push(String(i), `m${i}`);
+    }
+    sortedSet.zadd(db, args, rng);
+    expect(db.get('k')?.encoding).toBe('skiplist');
+
+    // Remove elements to go below threshold
+    sortedSet.zrem(db, ['k', 'm0', 'm1', 'm2']);
+    expect(db.get('k')?.encoding).toBe('skiplist');
+  });
+
+  it('never demotes from skiplist after ZPOPMIN reduces size', () => {
+    const { db, rng } = createDb();
+    const args: string[] = ['k'];
+    for (let i = 0; i <= 128; i++) {
+      args.push(String(i), `m${i}`);
+    }
+    sortedSet.zadd(db, args, rng);
+    expect(db.get('k')?.encoding).toBe('skiplist');
+
+    sortedSet.zpopmin(db, ['k', '10']);
+    expect(db.get('k')?.encoding).toBe('skiplist');
+  });
+
+  it('transitions via ZINCRBY creating a new member', () => {
+    const { db, rng } = createDb();
+    sortedSet.zincrby(db, ['k', '1', 'a'], rng);
+    expect(db.get('k')?.encoding).toBe('listpack');
+
+    // Add a long member via ZINCRBY
+    const longMember = 'y'.repeat(65);
+    sortedSet.zincrby(db, ['k', '1', longMember], rng);
+    expect(db.get('k')?.encoding).toBe('skiplist');
+  });
+
+  it('ZUNIONSTORE creates listpack for small result', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['src1', '1', 'a', '2', 'b'], rng);
+    sortedSet.zadd(db, ['src2', '3', 'c'], rng);
+    sortedSet.zunionstore(db, ['dst', '2', 'src1', 'src2'], rng);
+    expect(db.get('dst')?.encoding).toBe('listpack');
+  });
+
+  it('ZUNIONSTORE creates skiplist for large result', () => {
+    const { db, rng } = createDb();
+    const args: string[] = ['src'];
+    for (let i = 0; i <= 128; i++) {
+      args.push(String(i), `m${i}`);
+    }
+    sortedSet.zadd(db, args, rng);
+    sortedSet.zunionstore(db, ['dst', '1', 'src'], rng);
+    expect(db.get('dst')?.encoding).toBe('skiplist');
+  });
+
+  it('ZINTERSTORE creates listpack for small result', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['src1', '1', 'a', '2', 'b'], rng);
+    sortedSet.zadd(db, ['src2', '3', 'a'], rng);
+    sortedSet.zinterstore(db, ['dst', '2', 'src1', 'src2'], rng);
+    expect(db.get('dst')?.encoding).toBe('listpack');
+  });
+
+  it('ZDIFFSTORE creates listpack for small result', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['src1', '1', 'a', '2', 'b'], rng);
+    sortedSet.zadd(db, ['src2', '3', 'a'], rng);
+    sortedSet.zdiffstore(db, ['dst', '2', 'src1', 'src2'], rng);
+    expect(db.get('dst')?.encoding).toBe('listpack');
+  });
+
+  it('ZRANGESTORE creates listpack for small result', () => {
+    const { db, rng } = createDb();
+    sortedSet.zadd(db, ['src', '1', 'a', '2', 'b', '3', 'c'], rng);
+    sortedSet.zrangestore(db, ['dst', 'src', '0', '1'], rng);
+    expect(db.get('dst')?.encoding).toBe('listpack');
+  });
+
+  it('ZRANGESTORE creates skiplist for result with long member', () => {
+    const { db, rng } = createDb();
+    const longMember = 'z'.repeat(65);
+    sortedSet.zadd(db, ['src', '1', longMember], rng);
+    sortedSet.zrangestore(db, ['dst', 'src', '0', '-1'], rng);
+    expect(db.get('dst')?.encoding).toBe('skiplist');
+  });
+
+  it('stays skiplist after removing long member that caused promotion', () => {
+    const { db, rng } = createDb();
+    const longMember = 'x'.repeat(65);
+    sortedSet.zadd(db, ['k', '1', 'a', '2', longMember], rng);
+    expect(db.get('k')?.encoding).toBe('skiplist');
+
+    // Remove the long member — only short member remains, but encoding stays skiplist
+    sortedSet.zrem(db, ['k', longMember]);
+    expect(db.get('k')?.encoding).toBe('skiplist');
   });
 });
