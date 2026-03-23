@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { RedisEngine } from '../engine.ts';
-import type { Database } from '../database.ts';
-import type { Reply } from '../types.ts';
+import { RedisEngine } from '../../engine.ts';
+import type { Database } from '../../database.ts';
+import type { Reply } from '../../types.ts';
 import * as hash from './hash.ts';
 
 let rngValue = 0.5;

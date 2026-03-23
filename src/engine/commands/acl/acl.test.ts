@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { aclDispatch } from './acl.ts';
-import { RedisEngine } from '../engine.ts';
-import { createCommandTable } from '../command-registry.ts';
-import type { CommandContext } from '../types.ts';
-import { ClientState } from '../../server/client-state.ts';
+import { RedisEngine } from '../../engine.ts';
+import { createCommandTable } from '../../command-registry.ts';
+import type { CommandContext } from '../../types.ts';
+import { ClientState } from '../../../server/client-state.ts';
 
 function makeCtx(engine: RedisEngine, client?: ClientState): CommandContext {
   return {

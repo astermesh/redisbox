@@ -1,13 +1,13 @@
-import type { Database } from '../database.ts';
-import type { Reply } from '../types.ts';
+import type { Database } from '../../database.ts';
+import type { Reply } from '../../types.ts';
 import {
   integerReply,
   arrayReply,
   errorReply,
   NOT_INTEGER_ERR,
   WRONGTYPE_ERR,
-} from '../types.ts';
-import type { CommandSpec } from '../command-table.ts';
+} from '../../types.ts';
+import type { CommandSpec } from '../../command-table.ts';
 
 /**
  * Parse the FIELDS numfields field... portion of hash TTL commands.

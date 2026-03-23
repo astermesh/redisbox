@@ -1,10 +1,9 @@
-import type { Database } from '../database.ts';
-import type { Reply } from '../types.ts';
+import type { Database } from '../../database.ts';
+import type { Reply } from '../../types.ts';
 import {
   bulkReply,
   integerReply,
   arrayReply,
-  errorReply,
   wrongArityError,
   OK,
   NIL,
@@ -17,84 +16,20 @@ import {
   INF_NAN_ERR,
   OVERFLOW_ERR,
   SYNTAX_ERR,
-} from '../types.ts';
-import type { CommandSpec } from '../command-table.ts';
-import { parseInteger, parseFloat64, formatFloat } from './incr.ts';
-import { notify, EVENT_FLAGS } from '../notify.ts';
-import { matchGlob } from '../glob-pattern.ts';
+} from '../../types.ts';
+import type { CommandSpec } from '../../command-table.ts';
+import { parseInteger, parseFloat64, formatFloat } from '../incr.ts';
+import { notify, EVENT_FLAGS } from '../../notify.ts';
+import { matchGlob } from '../../glob-pattern.ts';
+import { partialShuffle, INT64_MAX, INT64_MIN } from '../../utils.ts';
+import { parseScanCursor, parseScanOptions } from '../scan-utils.ts';
 import {
-  strByteLength,
-  partialShuffle,
-  INT64_MAX,
-  INT64_MIN,
-  DEFAULT_MAX_LISTPACK_ENTRIES,
-  DEFAULT_MAX_LISTPACK_VALUE,
-} from '../utils.ts';
-import { parseScanCursor, parseScanOptions } from './scan-utils.ts';
-
-/**
- * Check if a hash should use listpack encoding based on current state.
- * Returns true if the hash is small enough for listpack.
- */
-function fitsListpack(
-  hash: Map<string, string>,
-  maxEntries: number = DEFAULT_MAX_LISTPACK_ENTRIES,
-  maxValue: number = DEFAULT_MAX_LISTPACK_VALUE
-): boolean {
-  if (hash.size > maxEntries) return false;
-  for (const [field, value] of hash) {
-    if (strByteLength(field) > maxValue || strByteLength(value) > maxValue) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
- * Get or create a hash entry. Returns the hash map and entry, or an error reply.
- * If the key doesn't exist, creates a new empty hash.
- */
-function getOrCreateHash(
-  db: Database,
-  key: string
-): { hash: Map<string, string>; error: null } | { hash: null; error: Reply } {
-  const entry = db.get(key);
-  if (entry) {
-    if (entry.type !== 'hash') return { hash: null, error: WRONGTYPE_ERR };
-    return { hash: entry.value as Map<string, string>, error: null };
-  }
-  const hash = new Map<string, string>();
-  db.set(key, 'hash', 'listpack', hash);
-  return { hash, error: null };
-}
-
-/**
- * Get an existing hash entry. Returns null if key doesn't exist.
- */
-function getExistingHash(
-  db: Database,
-  key: string
-): { hash: Map<string, string> | null; error: Reply | null } {
-  const entry = db.get(key);
-  if (!entry) return { hash: null, error: null };
-  if (entry.type !== 'hash') return { hash: null, error: WRONGTYPE_ERR };
-  return { hash: entry.value as Map<string, string>, error: null };
-}
-
-/**
- * Promote encoding from listpack to hashtable if needed.
- * Redis only transitions in one direction: listpack → hashtable.
- * Once promoted, it never reverts back — even if the hash shrinks.
- */
-function updateEncoding(db: Database, key: string): void {
-  const entry = db.get(key);
-  if (!entry || entry.type !== 'hash') return;
-  if (entry.encoding === 'hashtable') return; // never demote
-  const hash = entry.value as Map<string, string>;
-  if (!fitsListpack(hash)) {
-    entry.encoding = 'hashtable';
-  }
-}
+  getOrCreateHash,
+  getExistingHash,
+  updateEncoding,
+  HASH_NOT_INTEGER_ERR,
+  HASH_NOT_FLOAT_ERR,
+} from './utils.ts';
 
 // --- HSET ---
 
@@ -317,9 +252,6 @@ export function hsetnx(db: Database, args: string[]): Reply {
 }
 
 // --- HINCRBY ---
-
-const HASH_NOT_INTEGER_ERR = errorReply('ERR', 'hash value is not an integer');
-const HASH_NOT_FLOAT_ERR = errorReply('ERR', 'hash value is not a valid float');
 
 export function hincrby(db: Database, args: string[]): Reply {
   const key = args[0] ?? '';

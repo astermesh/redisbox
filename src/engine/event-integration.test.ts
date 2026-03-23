@@ -16,7 +16,7 @@ import type { CommandSpec } from './command-table.ts';
 import { specs as genericSpecs } from './commands/generic.ts';
 import { specs as stringSpecs } from './commands/string/index.ts';
 import { specs as incrSpecs } from './commands/incr.ts';
-import { specs as hashSpecs } from './commands/hash.ts';
+import { specs as hashSpecs } from './commands/hash/index.ts';
 import { specs as listSpecs } from './commands/list/index.ts';
 import { specs as setSpecs } from './commands/set/index.ts';
 import { specs as sortedSetSpecs } from './commands/sorted-set/index.ts';

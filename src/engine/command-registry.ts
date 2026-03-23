@@ -12,19 +12,18 @@ import { specs as sortSpecs } from './commands/sort.ts';
 import { specs as stringSpecs } from './commands/string/index.ts';
 import { specs as incrSpecs } from './commands/incr.ts';
 import { specs as bitmapSpecs } from './commands/bitmap/index.ts';
-import { specs as hashSpecs } from './commands/hash.ts';
-import { specs as hashTtlSpecs } from './commands/hash-ttl.ts';
+import { specs as hashSpecs } from './commands/hash/index.ts';
 import { specs as listSpecs } from './commands/list/index.ts';
 import { specs as blockingListSpecs } from './commands/list/blocking.ts';
 import { specs as blockingSortedSetSpecs } from './commands/sorted-set/blocking.ts';
 import { specs as setSpecs } from './commands/set/index.ts';
 import { specs as sortedSetSpecs } from './commands/sorted-set/index.ts';
-import { specs as pubsubSpecs } from './commands/pubsub.ts';
+import { specs as pubsubSpecs } from './commands/pubsub/index.ts';
 import { specs as infoSpecs } from './commands/info.ts';
 import { specs as clusterSpecs } from './commands/cluster.ts';
 import { specs as commandSpecs } from './commands/command.ts';
 import { specs as streamSpecs } from './commands/stream/index.ts';
-import { specs as aclSpecs } from './commands/acl.ts';
+import { specs as aclSpecs } from './commands/acl/index.ts';
 import { specs as hyperloglogSpecs } from './commands/hyperloglog/index.ts';
 import { specs as geoSpecs } from './commands/geo/index.ts';
 import { specs as replicationSpecs } from './commands/replication.ts';
@@ -48,7 +47,6 @@ const allSpecs: CommandSpec[] = [
   ...incrSpecs,
   ...bitmapSpecs,
   ...hashSpecs,
-  ...hashTtlSpecs,
   ...listSpecs,
   ...blockingListSpecs,
   ...blockingSortedSetSpecs,

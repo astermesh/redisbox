@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { RedisEngine } from '../engine.ts';
-import type { Database } from '../database.ts';
-import type { Reply } from '../types.ts';
-import * as hashTtl from './hash-ttl.ts';
+import { RedisEngine } from '../../engine.ts';
+import type { Database } from '../../database.ts';
+import type { Reply } from '../../types.ts';
+import * as hashTtl from './field-ttl.ts';
 import * as hash from './hash.ts';
 
 function createDb(time = 1000) {

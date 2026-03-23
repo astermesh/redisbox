@@ -1,4 +1,4 @@
-import type { Reply, CommandContext } from '../types.ts';
+import type { Reply, CommandContext } from '../../types.ts';
 import {
   statusReply,
   bulkReply,
@@ -8,249 +8,24 @@ import {
   unknownSubcommandError,
   OK,
   EMPTY_ARRAY,
-} from '../types.ts';
-import type { CommandSpec } from '../command-table.ts';
-import type { AclUser } from '../acl-store.ts';
-import { sha256 } from '../sha256.ts';
+} from '../../types.ts';
+import type { CommandSpec } from '../../command-table.ts';
+import {
+  ACL_CATEGORIES,
+  getAcl,
+  userFlags,
+  userPasswordHashes,
+  userCommandsString,
+  userKeysString,
+  userChannelsString,
+  formatUserForList,
+  makeSubSpec,
+} from './utils.ts';
+import { applyRule } from './rules.ts';
 
 // ---------------------------------------------------------------------------
-// Redis ACL categories — the full set returned by ACL CAT in Redis 7.x
+// ACL SETUSER
 // ---------------------------------------------------------------------------
-
-const ACL_CATEGORIES = [
-  'keyspace',
-  'read',
-  'write',
-  'set',
-  'sortedset',
-  'list',
-  'hash',
-  'string',
-  'bitmap',
-  'hyperloglog',
-  'geo',
-  'stream',
-  'pubsub',
-  'admin',
-  'fast',
-  'slow',
-  'blocking',
-  'dangerous',
-  'connection',
-  'transaction',
-  'scripting',
-  'generic',
-].sort();
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function getAcl(ctx: CommandContext) {
-  return ctx.acl;
-}
-
-/** Format a user's flags array for ACL GETUSER. */
-function userFlags(user: AclUser): Reply {
-  const flags: string[] = [];
-  flags.push(user.enabled ? 'on' : 'off');
-  if (user.allKeys) flags.push('allkeys');
-  if (user.allChannels) flags.push('allchannels');
-  if (user.allCommands) flags.push('allcommands');
-  if (user.nopass) flags.push('nopass');
-  return arrayReply(flags.map((f) => bulkReply(f)));
-}
-
-/** Format a user's password hashes for ACL GETUSER (each prefixed with #). */
-function userPasswordHashes(user: AclUser): Reply {
-  const passwords = user.getPasswords();
-  return arrayReply(passwords.map((p) => bulkReply(`#${sha256(p)}`)));
-}
-
-/** Format the commands string for ACL GETUSER / ACL LIST. */
-function userCommandsString(user: AclUser): string {
-  if (user.allCommands) return '+@all';
-  return '-@all';
-}
-
-/** Format keys pattern for ACL GETUSER / ACL LIST. */
-function userKeysString(user: AclUser): string {
-  if (user.allKeys) return '~*';
-  return '';
-}
-
-/** Format channels pattern for ACL GETUSER / ACL LIST. */
-function userChannelsString(user: AclUser): string {
-  if (user.allChannels) return '&*';
-  return '';
-}
-
-/** Format a user for ACL LIST output. */
-function formatUserForList(user: AclUser): string {
-  const parts: string[] = ['user', user.username];
-
-  parts.push(user.enabled ? 'on' : 'off');
-
-  // Passwords
-  const passwords = user.getPasswords();
-  if (user.nopass) {
-    parts.push('nopass');
-  } else if (passwords.length === 0) {
-    parts.push('resetpass');
-  } else {
-    for (const p of passwords) {
-      parts.push(`#${sha256(p)}`);
-    }
-  }
-
-  // Keys
-  if (user.allKeys) {
-    parts.push('~*');
-  } else {
-    parts.push('resetkeys');
-  }
-
-  // Channels
-  if (user.allChannels) {
-    parts.push('&*');
-  } else {
-    parts.push('resetchannels');
-  }
-
-  // Commands
-  parts.push(userCommandsString(user));
-
-  return parts.join(' ');
-}
-
-// ---------------------------------------------------------------------------
-// ACL SETUSER — apply rules to a user
-// ---------------------------------------------------------------------------
-
-function applyRule(user: AclUser, rule: string): string | null {
-  switch (rule) {
-    case 'on':
-      user.enabled = true;
-      return null;
-    case 'off':
-      user.enabled = false;
-      return null;
-    case 'nopass':
-      user.setNopass();
-      return null;
-    case 'resetpass':
-      user.clearPasswords();
-      user.nopass = false;
-      return null;
-    case 'reset':
-      user.resetToDefaults();
-      // reset in SETUSER context: off, no passwords, no perms
-      user.enabled = false;
-      user.nopass = false;
-      user.allCommands = false;
-      user.allKeys = false;
-      user.allChannels = false;
-      return null;
-    case 'allcommands':
-      user.allCommands = true;
-      return null;
-    case 'nocommands':
-      user.allCommands = false;
-      return null;
-    case 'allkeys':
-      user.allKeys = true;
-      return null;
-    case 'resetkeys':
-      user.allKeys = false;
-      return null;
-    case 'allchannels':
-      user.allChannels = true;
-      return null;
-    case 'resetchannels':
-      user.allChannels = false;
-      return null;
-    default:
-      break;
-  }
-
-  // >password — add password
-  if (rule.startsWith('>')) {
-    user.addPassword(rule.slice(1));
-    return null;
-  }
-
-  // <password — remove password
-  if (rule.startsWith('<')) {
-    const pw = rule.slice(1);
-    if (!user.removePassword(pw)) {
-      return `ERR Error in ACL SETUSER modifier '<...>': no such password`;
-    }
-    return null;
-  }
-
-  // #hash — add password by hash (we store hash as-is for display, but
-  // cannot match against AUTH plaintext). Accept for compatibility.
-  if (rule.startsWith('#')) {
-    // For emulator simplicity, accept but warn this won't work with AUTH
-    return null;
-  }
-
-  // !hash — remove password by hash
-  if (rule.startsWith('!')) {
-    return null;
-  }
-
-  // ~pattern — key pattern
-  if (rule.startsWith('~')) {
-    if (rule === '~*') {
-      user.allKeys = true;
-    }
-    return null;
-  }
-
-  // %R~, %W~, %RW~ — key pattern with read/write perms
-  if (rule.startsWith('%')) {
-    return null;
-  }
-
-  // &pattern — channel pattern
-  if (rule.startsWith('&')) {
-    if (rule === '&*') {
-      user.allChannels = true;
-    }
-    return null;
-  }
-
-  // +@category — allow category
-  if (rule.startsWith('+@')) {
-    const cat = rule.slice(2);
-    if (cat === 'all') {
-      user.allCommands = true;
-    }
-    return null;
-  }
-
-  // -@category — deny category
-  if (rule.startsWith('-@')) {
-    const cat = rule.slice(2);
-    if (cat === 'all') {
-      user.allCommands = false;
-    }
-    return null;
-  }
-
-  // +command — allow command
-  if (rule.startsWith('+')) {
-    return null;
-  }
-
-  // -command — deny command
-  if (rule.startsWith('-')) {
-    return null;
-  }
-
-  return `ERR Error in ACL SETUSER modifier '${rule}': Syntax error`;
-}
 
 function aclSetuser(ctx: CommandContext, args: string[]): Reply {
   const acl = getAcl(ctx);
@@ -441,7 +216,7 @@ function aclLog(ctx: CommandContext, args: string[]): Reply {
 }
 
 function formatLogEntries(
-  entries: import('../acl-store.ts').AclLogEntry[],
+  entries: import('../../acl-store.ts').AclLogEntry[],
   now: number
 ): Reply {
   const result: Reply[] = [];
@@ -672,23 +447,6 @@ export function aclDispatch(ctx: CommandContext, args: string[]): Reply {
 // ---------------------------------------------------------------------------
 // Command spec
 // ---------------------------------------------------------------------------
-
-function makeSubSpec(
-  name: string,
-  handler: CommandSpec['handler'],
-  arity: number
-): CommandSpec {
-  return {
-    name,
-    handler,
-    arity,
-    flags: ['admin', 'loading', 'stale'],
-    firstKey: 0,
-    lastKey: 0,
-    keyStep: 0,
-    categories: ['@admin', '@slow', '@dangerous'],
-  };
-}
 
 export const specs: CommandSpec[] = [
   {
