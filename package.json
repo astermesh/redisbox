@@ -40,7 +40,11 @@
     "test:browser": "vitest run --project 'browser:*'",
     "test:browser:unit": "vitest run --project browser:unit",
     "test:browser:integration": "vitest run --project browser:integration",
-    "test:browser:e2e": "vitest run --project browser:e2e"
+    "test:browser:e2e": "vitest run --project browser:e2e",
+    "tcl:setup": "bash scripts/setup-redis-tests.sh",
+    "tcl:test": "npx tsx scripts/run-tcl-tests.ts",
+    "tcl:test:verbose": "npx tsx scripts/run-tcl-tests.ts --verbose",
+    "tcl:list": "npx tsx scripts/run-tcl-tests.ts --list"
   },
   "engines": {
     "node": ">=18"
@@ -57,6 +61,7 @@
     "playwright": "^1.52.0",
     "prettier": "^3.8.1",
     "tsup": "^8.5.1",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.54.0",
     "vitest": "^4.0.18",
