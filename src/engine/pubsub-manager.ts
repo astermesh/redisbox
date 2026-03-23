@@ -435,6 +435,9 @@ export class PubSubManager {
       ]);
 
       for (const clientId of subs) {
+        if (this.messageFilter && !this.messageFilter(clientId, channel)) {
+          continue;
+        }
         this.sender?.(clientId, reply);
         count++;
       }

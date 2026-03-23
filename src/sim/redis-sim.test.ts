@@ -839,6 +839,21 @@ describe('RedisSim', () => {
         expect(received).toHaveLength(1);
       });
 
+      it('drops shard channel messages at configured rate', () => {
+        const sim = new RedisSim({ rng: () => 0.1 });
+
+        const received: Reply[] = [];
+        sim.engine.pubsub.setSender((_clientId, reply) => {
+          received.push(reply);
+        });
+
+        sim.engine.pubsub.ssubscribe(1, 'ch');
+        sim.setMessageDropRate(1);
+
+        sim.engine.pubsub.shardPublish('ch', 'msg');
+        expect(received).toHaveLength(0);
+      });
+
       it('publish count reflects actual deliveries', () => {
         let callCount = 0;
         const sim = new RedisSim({
@@ -916,6 +931,15 @@ describe('RedisSim', () => {
         expect(db.get('str')).toBeNull();
         expect(db.get('lst')).toBeNull();
         expect(db.get('hsh')).toBeNull();
+      });
+
+      it('returns 0 for empty keys array', () => {
+        const sim = new RedisSim();
+        sim.engine.db(0).set('k', 'string', 'raw', 'v');
+
+        const count = sim.injectEviction([]);
+        expect(count).toBe(0);
+        expect(sim.engine.db(0).get('k')).not.toBeNull();
       });
 
       it('returns count of evicted keys across all databases', () => {
