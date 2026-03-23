@@ -18,7 +18,13 @@ import {
   compareStreamIds,
   streamIdToString,
 } from '../stream.ts';
-import type { StreamEntry, StreamId, PendingEntry } from '../stream.ts';
+import type {
+  StreamEntry,
+  StreamId,
+  PendingEntry,
+  ConsumerGroup,
+  StreamConsumer,
+} from '../stream.ts';
 
 /**
  * Parse an entry ID that is known to be valid (was validated on insert).
@@ -780,13 +786,13 @@ function xgroup(ctx: CommandContext, args: string[]): Reply {
 }
 
 function ensureConsumer(
-  group: import('../stream.ts').ConsumerGroup,
+  group: ConsumerGroup,
   name: string,
   clockMs: number
-): import('../stream.ts').StreamConsumer {
+): StreamConsumer {
   let consumer = group.consumers.get(name);
   if (!consumer) {
-    consumer = { name, seenTime: clockMs, pending: new Map() };
+    consumer = { name, seenTime: clockMs, activeTime: 0, pending: new Map() };
     group.consumers.set(name, consumer);
   }
   consumer.seenTime = clockMs;
@@ -943,6 +949,9 @@ export function xreadgroup(
           consumer.pending.set(entry.id, pe);
         }
       }
+
+      // Entries were actually delivered — update activeTime
+      consumer.activeTime = clockMs;
 
       resultStreams.push(
         arrayReply([bulkReply(key), arrayReply(entries.map(entryToReply))])
@@ -1128,7 +1137,7 @@ export function xpending(db: Database, clockMs: number, args: string[]): Reply {
   );
 }
 
-function xpendingSummary(group: import('../stream.ts').ConsumerGroup): Reply {
+function xpendingSummary(group: ConsumerGroup): Reply {
   if (group.pel.size === 0) {
     return arrayReply([
       integerReply(0),
@@ -1166,7 +1175,7 @@ function xpendingSummary(group: import('../stream.ts').ConsumerGroup): Reply {
 }
 
 function xpendingDetail(
-  group: import('../stream.ts').ConsumerGroup,
+  group: ConsumerGroup,
   start: StreamId,
   end: StreamId,
   count: number,
@@ -1212,6 +1221,823 @@ function xpendingDetail(
   });
 
   return arrayReply(result);
+}
+
+// ─── XDEL ─────────────────────────────────────────────────────────────
+
+/**
+ * XDEL key id [id ...]
+ */
+export function xdel(db: Database, args: string[]): Reply {
+  if (args.length < 2) {
+    return errorReply('ERR', "wrong number of arguments for 'xdel' command");
+  }
+
+  const key = args[0] as string;
+  const lookup = getStream(db, key);
+  if (lookup.error) return lookup.error;
+  if (!lookup.stream) return ZERO;
+
+  const ids: StreamId[] = [];
+  for (let i = 1; i < args.length; i++) {
+    const parsed = parseStreamId(args[i] as string);
+    if (!parsed) return INVALID_STREAM_ID_ERR;
+    ids.push(parsed);
+  }
+
+  const deleted = lookup.stream.deleteEntries(ids);
+  return integerReply(deleted);
+}
+
+// ─── XTRIM ────────────────────────────────────────────────────────────
+
+/**
+ * XTRIM key MAXLEN|MINID [=|~] threshold [LIMIT count]
+ */
+export function xtrim(db: Database, args: string[]): Reply {
+  if (args.length < 3) {
+    return errorReply('ERR', "wrong number of arguments for 'xtrim' command");
+  }
+
+  const key = args[0] as string;
+  const lookup = getStream(db, key);
+  if (lookup.error) return lookup.error;
+  if (!lookup.stream) return ZERO;
+
+  const result = parseTrimOptions(args, 1);
+  if ('error' in result) return result.error;
+
+  // Ensure no extra args after trim options
+  if (result.nextIdx < args.length) {
+    return SYNTAX_ERR;
+  }
+
+  const stream = lookup.stream;
+  const lengthBefore = stream.length;
+  const trimErr = applyTrim(stream, result.options);
+  if (trimErr) return trimErr;
+  return integerReply(lengthBefore - stream.length);
+}
+
+// ─── XSETID ──────────────────────────────────────────────────────────
+
+/**
+ * XSETID key last-id [ENTRIESADDED entries-added] [MAXDELETEDID max-deleted-id]
+ */
+export function xsetid(db: Database, args: string[]): Reply {
+  if (args.length < 2) {
+    return errorReply('ERR', "wrong number of arguments for 'xsetid' command");
+  }
+
+  const key = args[0] as string;
+  const idArg = args[1] as string;
+
+  const newId = parseStreamId(idArg);
+  if (!newId) return INVALID_STREAM_ID_ERR;
+
+  let entriesAdded = -1;
+  let maxDeletedId: StreamId | null = null;
+
+  let i = 2;
+  while (i < args.length) {
+    const upper = (args[i] as string).toUpperCase();
+    if (upper === 'ENTRIESADDED') {
+      i++;
+      const val = args[i];
+      if (val === undefined) return SYNTAX_ERR;
+      const n = Number(val);
+      if (!Number.isInteger(n) || n < 0) {
+        return errorReply('ERR', 'value is not an integer or out of range');
+      }
+      entriesAdded = n;
+      i++;
+    } else if (upper === 'MAXDELETEDID') {
+      i++;
+      const val = args[i];
+      if (val === undefined) return SYNTAX_ERR;
+      const parsed = parseStreamId(val);
+      if (!parsed) return INVALID_STREAM_ID_ERR;
+      maxDeletedId = parsed;
+      i++;
+    } else {
+      return SYNTAX_ERR;
+    }
+  }
+
+  const lookup = getStream(db, key);
+  if (lookup.error) return lookup.error;
+
+  let stream = lookup.stream;
+  if (!stream) {
+    stream = new RedisStream();
+    db.set(key, 'stream', 'stream', stream);
+  }
+
+  // The new ID must be >= current last ID
+  if (compareStreamIds(newId, stream.lastId) < 0) {
+    return errorReply(
+      'ERR',
+      'The ID specified in XSETID is smaller than the target stream top item'
+    );
+  }
+
+  stream.setLastId(newId);
+
+  if (entriesAdded >= 0) {
+    stream.setEntriesAdded(entriesAdded);
+  }
+  if (maxDeletedId) {
+    stream.setMaxDeletedEntryId(maxDeletedId);
+  }
+
+  return OK;
+}
+
+// ─── XCLAIM ──────────────────────────────────────────────────────────
+
+/**
+ * XCLAIM key group consumer min-idle-time id [id ...] [IDLE ms] [TIME ms] [RETRYCOUNT count] [FORCE] [JUSTID] [LASTID id]
+ */
+export function xclaim(db: Database, clockMs: number, args: string[]): Reply {
+  if (args.length < 5) {
+    return errorReply('ERR', "wrong number of arguments for 'xclaim' command");
+  }
+
+  const key = args[0] as string;
+  const groupName = args[1] as string;
+  const consumerName = args[2] as string;
+  const minIdleStr = args[3] as string;
+
+  const minIdleTime = Number(minIdleStr);
+  if (!Number.isInteger(minIdleTime) || minIdleTime < 0) {
+    return errorReply('ERR', 'value is not an integer or out of range');
+  }
+
+  const lookup = getStream(db, key);
+  if (lookup.error) return lookup.error;
+  if (!lookup.stream) {
+    return errorReply(
+      'ERR',
+      "No such key '" +
+        key +
+        "' or consumer group '" +
+        groupName +
+        "' in XCLAIM"
+    );
+  }
+
+  const stream = lookup.stream;
+  const group = stream.getGroup(groupName);
+  if (!group) {
+    return errorReply(
+      'NOGROUP',
+      "No such key '" +
+        key +
+        "' or consumer group '" +
+        groupName +
+        "' in XCLAIM"
+    );
+  }
+
+  // Parse IDs and options
+  const claimIds: StreamId[] = [];
+  let idle: number | null = null;
+  let timeMs: number | null = null;
+  let retrycount: number | null = null;
+  let force = false;
+  let justid = false;
+  let _lastid: StreamId | null = null;
+
+  let i = 4;
+  // First parse IDs until we hit an option keyword
+  while (i < args.length) {
+    const upper = (args[i] as string).toUpperCase();
+    if (
+      upper === 'IDLE' ||
+      upper === 'TIME' ||
+      upper === 'RETRYCOUNT' ||
+      upper === 'FORCE' ||
+      upper === 'JUSTID' ||
+      upper === 'LASTID'
+    ) {
+      break;
+    }
+    const parsed = parseStreamId(args[i] as string);
+    if (!parsed) return INVALID_STREAM_ID_ERR;
+    claimIds.push(parsed);
+    i++;
+  }
+
+  if (claimIds.length === 0) {
+    return errorReply('ERR', "wrong number of arguments for 'xclaim' command");
+  }
+
+  // Parse options
+  while (i < args.length) {
+    const upper = (args[i] as string).toUpperCase();
+    if (upper === 'IDLE') {
+      i++;
+      if (i >= args.length) return SYNTAX_ERR;
+      const n = Number(args[i]);
+      if (!Number.isInteger(n) || n < 0) {
+        return errorReply('ERR', 'value is not an integer or out of range');
+      }
+      idle = n;
+      i++;
+    } else if (upper === 'TIME') {
+      i++;
+      if (i >= args.length) return SYNTAX_ERR;
+      const n = Number(args[i]);
+      if (!Number.isInteger(n) || n < 0) {
+        return errorReply('ERR', 'value is not an integer or out of range');
+      }
+      timeMs = n;
+      i++;
+    } else if (upper === 'RETRYCOUNT') {
+      i++;
+      if (i >= args.length) return SYNTAX_ERR;
+      const n = Number(args[i]);
+      if (!Number.isInteger(n) || n < 0) {
+        return errorReply('ERR', 'value is not an integer or out of range');
+      }
+      retrycount = n;
+      i++;
+    } else if (upper === 'FORCE') {
+      force = true;
+      i++;
+    } else if (upper === 'JUSTID') {
+      justid = true;
+      i++;
+    } else if (upper === 'LASTID') {
+      i++;
+      if (i >= args.length) return SYNTAX_ERR;
+      const parsed = parseStreamId(args[i] as string);
+      if (!parsed) return INVALID_STREAM_ID_ERR;
+      _lastid = parsed;
+      i++;
+    } else {
+      return SYNTAX_ERR;
+    }
+  }
+
+  // Determine delivery time for claimed entries
+  let deliveryTime: number;
+  if (timeMs !== null) {
+    deliveryTime = timeMs;
+  } else if (idle !== null) {
+    deliveryTime = clockMs - idle;
+  } else {
+    deliveryTime = clockMs;
+  }
+
+  // Ensure consumer exists
+  const consumer = ensureConsumer(group, consumerName, clockMs);
+
+  // Update LASTID if provided
+  if (_lastid !== null) {
+    if (compareStreamIds(_lastid, group.lastDeliveredId) > 0) {
+      group.lastDeliveredId = { ..._lastid };
+    }
+  }
+
+  const result: Reply[] = [];
+
+  for (const claimId of claimIds) {
+    const entryIdStr = streamIdToString(claimId);
+    const pe = group.pel.get(entryIdStr);
+
+    if (!pe) {
+      // Not in PEL — only claim if FORCE and entry exists in stream
+      // (min-idle-time does not apply to FORCE-created entries)
+      if (force && stream.hasEntry(entryIdStr)) {
+        const newPe: PendingEntry = {
+          entryId: entryIdStr,
+          consumer: consumerName,
+          deliveryTime,
+          deliveryCount: retrycount !== null ? retrycount : 1,
+        };
+        group.pel.set(entryIdStr, newPe);
+        consumer.pending.set(entryIdStr, newPe);
+
+        if (justid) {
+          result.push(bulkReply(entryIdStr));
+        } else {
+          const entries = stream.range(claimId, claimId, 1);
+          if (entries.length > 0) {
+            result.push(entryToReply(entries[0] as StreamEntry));
+          }
+        }
+      }
+      // If not in PEL and not FORCE, skip silently
+      continue;
+    }
+
+    // Check min-idle-time: skip entries that haven't been idle long enough
+    const idleTime = clockMs - pe.deliveryTime;
+    if (idleTime < minIdleTime) continue;
+
+    // Check if entry was deleted from stream — remove from PEL (Redis 7.0+)
+    if (!stream.hasEntry(entryIdStr)) {
+      const oldConsumer = group.consumers.get(pe.consumer);
+      if (oldConsumer) {
+        oldConsumer.pending.delete(entryIdStr);
+      }
+      group.pel.delete(entryIdStr);
+      continue;
+    }
+
+    // Transfer ownership: remove from old consumer
+    const oldConsumer = group.consumers.get(pe.consumer);
+    if (oldConsumer) {
+      oldConsumer.pending.delete(entryIdStr);
+    }
+
+    // Update PEL entry
+    pe.consumer = consumerName;
+    pe.deliveryTime = deliveryTime;
+    pe.deliveryCount = retrycount !== null ? retrycount : pe.deliveryCount + 1;
+
+    // Add to new consumer's pending
+    consumer.pending.set(entryIdStr, pe);
+    consumer.activeTime = clockMs;
+
+    if (justid) {
+      result.push(bulkReply(entryIdStr));
+    } else {
+      const entries = stream.range(claimId, claimId, 1);
+      if (entries.length > 0) {
+        result.push(entryToReply(entries[0] as StreamEntry));
+      }
+    }
+  }
+
+  return arrayReply(result);
+}
+
+// ─── XAUTOCLAIM ──────────────────────────────────────────────────────
+
+/**
+ * XAUTOCLAIM key group consumer min-idle-time start [COUNT count] [JUSTID]
+ */
+export function xautoclaim(
+  db: Database,
+  clockMs: number,
+  args: string[]
+): Reply {
+  if (args.length < 5) {
+    return errorReply(
+      'ERR',
+      "wrong number of arguments for 'xautoclaim' command"
+    );
+  }
+
+  const key = args[0] as string;
+  const groupName = args[1] as string;
+  const consumerName = args[2] as string;
+  const minIdleStr = args[3] as string;
+  const startArg = args[4] as string;
+
+  const minIdleTime = Number(minIdleStr);
+  if (!Number.isInteger(minIdleTime) || minIdleTime < 0) {
+    return errorReply('ERR', 'value is not an integer or out of range');
+  }
+
+  // Parse start ID — "0-0" means start from beginning
+  const startId = parseStreamId(startArg);
+  if (!startId) return INVALID_STREAM_ID_ERR;
+
+  let count = 100; // default
+  let justid = false;
+
+  let i = 5;
+  while (i < args.length) {
+    const upper = (args[i] as string).toUpperCase();
+    if (upper === 'COUNT') {
+      i++;
+      if (i >= args.length) return SYNTAX_ERR;
+      const n = Number(args[i]);
+      if (!Number.isInteger(n) || n < 0) {
+        return errorReply('ERR', 'value is not an integer or out of range');
+      }
+      count = n;
+      i++;
+    } else if (upper === 'JUSTID') {
+      justid = true;
+      i++;
+    } else {
+      return SYNTAX_ERR;
+    }
+  }
+
+  const lookup = getStream(db, key);
+  if (lookup.error) return lookup.error;
+  if (!lookup.stream) {
+    return errorReply(
+      'NOGROUP',
+      "No such key '" +
+        key +
+        "' or consumer group '" +
+        groupName +
+        "' in XAUTOCLAIM"
+    );
+  }
+
+  const stream = lookup.stream;
+  const group = stream.getGroup(groupName);
+  if (!group) {
+    return errorReply(
+      'NOGROUP',
+      "No such key '" +
+        key +
+        "' or consumer group '" +
+        groupName +
+        "' in XAUTOCLAIM"
+    );
+  }
+
+  // Ensure consumer exists
+  const consumer = ensureConsumer(group, consumerName, clockMs);
+
+  // Collect all PEL entries with ID >= startId, sorted by ID
+  const candidates: PendingEntry[] = [];
+  for (const [entryId, pe] of group.pel) {
+    const eid = safeParseId(entryId);
+    if (compareStreamIds(eid, startId) < 0) continue;
+    candidates.push(pe);
+  }
+  candidates.sort((a, b) =>
+    compareStreamIds(safeParseId(a.entryId), safeParseId(b.entryId))
+  );
+
+  // Iterate PEL entries matching Redis behavior:
+  // - Deleted entries decrement count
+  // - Entries with insufficient idle time do NOT decrement count
+  // - Successfully claimed entries decrement count
+  // - attempts cap: count * 10
+  const claimedEntries: Reply[] = [];
+  const deletedIds: Reply[] = [];
+  let remaining = count;
+  let attempts = count * 10;
+  let lastScannedIdx = -1;
+
+  for (
+    let ci = 0;
+    ci < candidates.length && remaining > 0 && attempts > 0;
+    ci++
+  ) {
+    attempts--;
+    const pe = candidates[ci] as PendingEntry;
+    const entryIdStr = pe.entryId;
+    lastScannedIdx = ci;
+
+    // Check if entry was deleted from stream
+    if (!stream.hasEntry(entryIdStr)) {
+      deletedIds.push(bulkReply(entryIdStr));
+      const oldConsumer = group.consumers.get(pe.consumer);
+      if (oldConsumer) {
+        oldConsumer.pending.delete(entryIdStr);
+      }
+      group.pel.delete(entryIdStr);
+      remaining--;
+      continue;
+    }
+
+    // Check idle time — skip without consuming count
+    const idleTime = clockMs - pe.deliveryTime;
+    if (idleTime < minIdleTime) continue;
+
+    // Transfer ownership
+    const oldConsumer = group.consumers.get(pe.consumer);
+    if (oldConsumer) {
+      oldConsumer.pending.delete(entryIdStr);
+    }
+
+    pe.consumer = consumerName;
+    pe.deliveryTime = clockMs;
+    pe.deliveryCount++;
+
+    consumer.pending.set(entryIdStr, pe);
+    consumer.activeTime = clockMs;
+
+    if (justid) {
+      claimedEntries.push(bulkReply(entryIdStr));
+    } else {
+      const eid = safeParseId(entryIdStr);
+      const entries = stream.range(eid, eid, 1);
+      if (entries.length > 0) {
+        claimedEntries.push(entryToReply(entries[0] as StreamEntry));
+      }
+    }
+    remaining--;
+  }
+
+  // Compute next cursor: points to the entry after the last scanned one
+  let nextCursor = '0-0';
+  if (lastScannedIdx >= 0 && lastScannedIdx + 1 < candidates.length) {
+    nextCursor = (candidates[lastScannedIdx + 1] as PendingEntry).entryId;
+  }
+
+  return arrayReply([
+    bulkReply(nextCursor),
+    arrayReply(claimedEntries),
+    arrayReply(deletedIds),
+  ]);
+}
+
+// ─── XINFO ───────────────────────────────────────────────────────────
+
+function xinfoStream(db: Database, args: string[]): Reply {
+  if (args.length < 1) {
+    return errorReply(
+      'ERR',
+      "wrong number of arguments for 'xinfo|stream' command"
+    );
+  }
+
+  const key = args[0] as string;
+  const lookup = getStream(db, key);
+  if (lookup.error) return lookup.error;
+  if (!lookup.stream) {
+    return errorReply('ERR', 'no such key');
+  }
+
+  const stream = lookup.stream;
+
+  // Check for FULL option
+  let full = false;
+  let fullCount = 10; // default for FULL
+  let i = 1;
+  while (i < args.length) {
+    const upper = (args[i] as string).toUpperCase();
+    if (upper === 'FULL') {
+      full = true;
+      i++;
+      if (i < args.length && (args[i] as string).toUpperCase() === 'COUNT') {
+        i++;
+        if (i >= args.length) return SYNTAX_ERR;
+        const n = Number(args[i]);
+        if (!Number.isInteger(n) || n < 0) {
+          return errorReply('ERR', 'value is not an integer or out of range');
+        }
+        fullCount = n;
+        i++;
+      }
+    } else {
+      return SYNTAX_ERR;
+    }
+  }
+
+  if (full) {
+    return xinfoStreamFull(stream, fullCount);
+  }
+
+  // Standard XINFO STREAM response
+  const firstEntry = stream.firstEntry();
+  const lastEntry = stream.lastEntry();
+
+  const result: Reply[] = [
+    bulkReply('length'),
+    integerReply(stream.length),
+    bulkReply('radix-tree-keys'),
+    integerReply(1),
+    bulkReply('radix-tree-nodes'),
+    integerReply(2),
+    bulkReply('last-generated-id'),
+    bulkReply(stream.lastIdString),
+    bulkReply('max-deleted-entry-id'),
+    bulkReply(streamIdToString(stream.maxDeletedEntryId)),
+    bulkReply('entries-added'),
+    integerReply(stream.entriesAdded),
+    bulkReply('recorded-first-entry-id'),
+    bulkReply(streamIdToString(stream.recordedFirstEntryId)),
+    bulkReply('groups'),
+    integerReply(stream.groups.size),
+    bulkReply('first-entry'),
+    firstEntry ? entryToReply(firstEntry) : bulkReply(null),
+    bulkReply('last-entry'),
+    lastEntry ? entryToReply(lastEntry) : bulkReply(null),
+  ];
+
+  return arrayReply(result);
+}
+
+function xinfoStreamFull(stream: RedisStream, count: number): Reply {
+  const entries = stream.getEntries();
+  const limitedEntries = count === 0 ? entries : entries.slice(0, count);
+
+  const groupReplies: Reply[] = [];
+  for (const [, group] of stream.groups) {
+    const pelEntries: Reply[] = [];
+    let pelCount = 0;
+    for (const [, pe] of group.pel) {
+      if (count > 0 && pelCount >= count) break;
+      pelEntries.push(
+        arrayReply([
+          bulkReply(pe.entryId),
+          bulkReply(pe.consumer),
+          integerReply(pe.deliveryTime),
+          integerReply(pe.deliveryCount),
+        ])
+      );
+      pelCount++;
+    }
+
+    const consumerReplies: Reply[] = [];
+    for (const [, consumer] of group.consumers) {
+      const cPelEntries: Reply[] = [];
+      let cPelCount = 0;
+      for (const [, pe] of consumer.pending) {
+        if (count > 0 && cPelCount >= count) break;
+        cPelEntries.push(
+          arrayReply([
+            bulkReply(pe.entryId),
+            integerReply(pe.deliveryTime),
+            integerReply(pe.deliveryCount),
+          ])
+        );
+        cPelCount++;
+      }
+
+      consumerReplies.push(
+        arrayReply([
+          bulkReply('name'),
+          bulkReply(consumer.name),
+          bulkReply('seen-time'),
+          integerReply(consumer.seenTime),
+          bulkReply('active-time'),
+          integerReply(consumer.activeTime),
+          bulkReply('pel-count'),
+          integerReply(consumer.pending.size),
+          bulkReply('pel'),
+          arrayReply(cPelEntries),
+        ])
+      );
+    }
+
+    groupReplies.push(
+      arrayReply([
+        bulkReply('name'),
+        bulkReply(group.name),
+        bulkReply('last-delivered-id'),
+        bulkReply(streamIdToString(group.lastDeliveredId)),
+        bulkReply('entries-read'),
+        integerReply(group.entriesRead),
+        bulkReply('pel-count'),
+        integerReply(group.pel.size),
+        bulkReply('pel'),
+        arrayReply(pelEntries),
+        bulkReply('consumers'),
+        arrayReply(consumerReplies),
+      ])
+    );
+  }
+
+  const result: Reply[] = [
+    bulkReply('length'),
+    integerReply(stream.length),
+    bulkReply('radix-tree-keys'),
+    integerReply(1),
+    bulkReply('radix-tree-nodes'),
+    integerReply(2),
+    bulkReply('last-generated-id'),
+    bulkReply(stream.lastIdString),
+    bulkReply('max-deleted-entry-id'),
+    bulkReply(streamIdToString(stream.maxDeletedEntryId)),
+    bulkReply('entries-added'),
+    integerReply(stream.entriesAdded),
+    bulkReply('recorded-first-entry-id'),
+    bulkReply(stream.firstEntry()?.id ?? '0-0'),
+    bulkReply('entries'),
+    arrayReply(limitedEntries.map(entryToReply)),
+    bulkReply('groups'),
+    arrayReply(groupReplies),
+  ];
+
+  return arrayReply(result);
+}
+
+function xinfoGroups(db: Database, args: string[]): Reply {
+  if (args.length < 1) {
+    return errorReply(
+      'ERR',
+      "wrong number of arguments for 'xinfo|groups' command"
+    );
+  }
+
+  const key = args[0] as string;
+  const lookup = getStream(db, key);
+  if (lookup.error) return lookup.error;
+  if (!lookup.stream) {
+    return errorReply('ERR', 'no such key');
+  }
+
+  const stream = lookup.stream;
+  const result: Reply[] = [];
+
+  for (const [, group] of stream.groups) {
+    result.push(
+      arrayReply([
+        bulkReply('name'),
+        bulkReply(group.name),
+        bulkReply('consumers'),
+        integerReply(group.consumers.size),
+        bulkReply('pending'),
+        integerReply(group.pel.size),
+        bulkReply('last-delivered-id'),
+        bulkReply(streamIdToString(group.lastDeliveredId)),
+        bulkReply('entries-read'),
+        integerReply(group.entriesRead),
+        bulkReply('lag'),
+        integerReply(Math.max(0, stream.entriesAdded - group.entriesRead)),
+      ])
+    );
+  }
+
+  return arrayReply(result);
+}
+
+function xinfoConsumers(db: Database, clockMs: number, args: string[]): Reply {
+  if (args.length < 2) {
+    return errorReply(
+      'ERR',
+      "wrong number of arguments for 'xinfo|consumers' command"
+    );
+  }
+
+  const key = args[0] as string;
+  const groupName = args[1] as string;
+
+  const lookup = getStream(db, key);
+  if (lookup.error) return lookup.error;
+  if (!lookup.stream) {
+    return errorReply('ERR', 'no such key');
+  }
+
+  const group = lookup.stream.getGroup(groupName);
+  if (!group) {
+    return errorReply(
+      'NOGROUP',
+      "No such consumer group '" + groupName + "' for key name '" + key + "'"
+    );
+  }
+
+  const result: Reply[] = [];
+  for (const [, consumer] of group.consumers) {
+    const idle = clockMs - consumer.seenTime;
+    const inactive =
+      consumer.activeTime > 0 ? clockMs - consumer.activeTime : -1;
+    result.push(
+      arrayReply([
+        bulkReply('name'),
+        bulkReply(consumer.name),
+        bulkReply('pending'),
+        integerReply(consumer.pending.size),
+        bulkReply('idle'),
+        integerReply(Math.max(0, idle)),
+        bulkReply('inactive'),
+        integerReply(inactive >= 0 ? inactive : -1),
+      ])
+    );
+  }
+
+  return arrayReply(result);
+}
+
+function xinfo(ctx: CommandContext, args: string[]): Reply {
+  if (args.length === 0) {
+    return errorReply('ERR', "wrong number of arguments for 'xinfo' command");
+  }
+
+  const subcommand = (args[0] as string).toUpperCase();
+  const subArgs = args.slice(1);
+
+  switch (subcommand) {
+    case 'STREAM':
+      return xinfoStream(ctx.db, subArgs);
+    case 'GROUPS':
+      return xinfoGroups(ctx.db, subArgs);
+    case 'CONSUMERS':
+      return xinfoConsumers(ctx.db, ctx.engine.clock(), subArgs);
+    case 'HELP':
+      return arrayReply([
+        bulkReply(
+          'XINFO <subcommand> [<arg> [value] [opt] ...]. Subcommands are:'
+        ),
+        bulkReply('CONSUMERS <key> <groupname>'),
+        bulkReply('    Return list of consumers for a consumer group.'),
+        bulkReply('GROUPS <key>'),
+        bulkReply('    Return list of consumer groups for a stream.'),
+        bulkReply('STREAM <key> [FULL [COUNT <count>]]'),
+        bulkReply('    Return information about the stream stored at <key>.'),
+        bulkReply('HELP'),
+        bulkReply('    Return this help message.'),
+      ]);
+    default:
+      return errorReply(
+        'ERR',
+        `unknown subcommand or wrong number of arguments for 'xinfo|${args[0]}' command`
+      );
+  }
 }
 
 export const specs: CommandSpec[] = [
@@ -1356,5 +2182,108 @@ export const specs: CommandSpec[] = [
     lastKey: 1,
     keyStep: 1,
     categories: ['@read', '@stream', '@slow'],
+  },
+  {
+    name: 'xdel',
+    handler: (ctx, args) => xdel(ctx.db, args),
+    arity: -3,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@stream', '@fast'],
+  },
+  {
+    name: 'xtrim',
+    handler: (ctx, args) => xtrim(ctx.db, args),
+    arity: -4,
+    flags: ['write'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@stream', '@slow'],
+  },
+  {
+    name: 'xsetid',
+    handler: (ctx, args) => xsetid(ctx.db, args),
+    arity: -3,
+    flags: ['write'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@stream', '@slow'],
+  },
+  {
+    name: 'xclaim',
+    handler: (ctx, args) => xclaim(ctx.db, ctx.engine.clock(), args),
+    arity: -6,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@stream', '@fast'],
+  },
+  {
+    name: 'xautoclaim',
+    handler: (ctx, args) => xautoclaim(ctx.db, ctx.engine.clock(), args),
+    arity: -7,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@stream', '@fast'],
+  },
+  {
+    name: 'xinfo',
+    handler: (ctx, args) => xinfo(ctx, args),
+    arity: -2,
+    flags: ['readonly'],
+    firstKey: 2,
+    lastKey: 2,
+    keyStep: 1,
+    categories: ['@read', '@stream', '@slow'],
+    subcommands: [
+      {
+        name: 'xinfo|stream',
+        handler: (ctx, args) => xinfoStream(ctx.db, args),
+        arity: -3,
+        flags: ['readonly'],
+        firstKey: 2,
+        lastKey: 2,
+        keyStep: 1,
+        categories: ['@read', '@stream', '@slow'],
+      },
+      {
+        name: 'xinfo|groups',
+        handler: (ctx, args) => xinfoGroups(ctx.db, args),
+        arity: 3,
+        flags: ['readonly'],
+        firstKey: 2,
+        lastKey: 2,
+        keyStep: 1,
+        categories: ['@read', '@stream', '@slow'],
+      },
+      {
+        name: 'xinfo|consumers',
+        handler: (ctx, args) =>
+          xinfoConsumers(ctx.db, ctx.engine.clock(), args),
+        arity: 4,
+        flags: ['readonly'],
+        firstKey: 2,
+        lastKey: 2,
+        keyStep: 1,
+        categories: ['@read', '@stream', '@slow'],
+      },
+      {
+        name: 'xinfo|help',
+        handler: (ctx, args) => xinfo(ctx, ['HELP', ...args]),
+        arity: 2,
+        flags: ['readonly'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@read', '@stream', '@slow'],
+      },
+    ],
   },
 ];
