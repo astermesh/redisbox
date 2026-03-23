@@ -2076,9 +2076,26 @@ export const specs: CommandSpec[] = [
   {
     name: 'xadd',
     handler: (ctx, args) => {
+      const key = args[0] ?? '';
+      // Capture entry count before to detect trimming
+      const hasTrim = args.some((a) => {
+        const u = a.toUpperCase();
+        return u === 'MAXLEN' || u === 'MINID';
+      });
+      const pre = getStream(ctx.db, key);
+      const lengthBefore = pre.stream ? pre.stream.length : 0;
       const reply = xadd(ctx.db, ctx.engine.clock(), args);
       if (reply.kind === 'bulk' && reply.value !== null) {
-        notify(ctx, EVENT_FLAGS.STREAM, 'xadd', args[0] ?? '');
+        notify(ctx, EVENT_FLAGS.STREAM, 'xadd', key);
+        // Emit secondary xtrim if trimming actually removed entries
+        if (hasTrim) {
+          const post = getStream(ctx.db, key);
+          const lengthAfter = post.stream ? post.stream.length : 0;
+          // After adding 1 entry, if length didn't increase by 1, trimming removed entries
+          if (lengthAfter < lengthBefore + 1) {
+            notify(ctx, EVENT_FLAGS.STREAM, 'xtrim', key);
+          }
+        }
       }
       return reply;
     },
@@ -2263,7 +2280,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'xdel',
-    handler: (ctx, args) => xdel(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = xdel(ctx.db, args);
+      if (reply.kind === 'integer' && (reply.value as number) > 0) {
+        notify(ctx, EVENT_FLAGS.STREAM, 'xdel', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'fast'],
     firstKey: 1,
@@ -2273,7 +2296,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'xtrim',
-    handler: (ctx, args) => xtrim(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = xtrim(ctx.db, args);
+      if (reply.kind === 'integer' && (reply.value as number) > 0) {
+        notify(ctx, EVENT_FLAGS.STREAM, 'xtrim', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -4,
     flags: ['write'],
     firstKey: 1,
@@ -2283,7 +2312,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'xsetid',
-    handler: (ctx, args) => xsetid(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = xsetid(ctx.db, args);
+      if (reply === OK) {
+        notify(ctx, EVENT_FLAGS.STREAM, 'xsetid', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write'],
     firstKey: 1,

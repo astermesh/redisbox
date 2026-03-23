@@ -9,7 +9,6 @@ import {
   NOT_INTEGER_ERR,
 } from '../types.ts';
 import type { CommandSpec } from '../command-table.ts';
-import { notify, EVENT_FLAGS } from '../notify.ts';
 
 const DB_OUT_OF_RANGE_ERR = errorReply('ERR', 'DB index is out of range');
 const INVALID_DB_INDEX_ERR = errorReply('ERR', 'invalid DB index');
@@ -140,13 +139,7 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'swapdb',
-    handler: (ctx, args) => {
-      const reply = swapdb(ctx.engine, args);
-      if (reply === OK) {
-        notify(ctx, EVENT_FLAGS.GENERIC, 'swapdb', args[0] ?? '');
-      }
-      return reply;
-    },
+    handler: (_ctx, args) => swapdb(_ctx.engine, args),
     arity: 3,
     flags: ['write', 'fast'],
     firstKey: 0,

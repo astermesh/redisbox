@@ -267,12 +267,12 @@ describe('keyspace event integration', () => {
       expectEvent('set', 'k');
     });
 
-    it('GETDEL emits "getdel" when key exists', () => {
+    it('GETDEL emits "del" when key exists', () => {
       ctx.db.set('k', 'string', 'raw', 'v');
       clearEvents();
 
       exec(findSpec(stringSpecs, 'getdel'), ['k']);
-      expectEvent('getdel', 'k');
+      expectEvent('del', 'k');
     });
 
     it('GETDEL does not emit when key does not exist', () => {
@@ -280,12 +280,12 @@ describe('keyspace event integration', () => {
       expectNoEvents();
     });
 
-    it('GETEX emits "getex" with no options', () => {
+    it('GETEX does not emit with no options (bare GETEX)', () => {
       ctx.db.set('k', 'string', 'raw', 'v');
       clearEvents();
 
       exec(findSpec(stringSpecs, 'getex'), ['k']);
-      expectEvent('getex', 'k');
+      expectNoEvents();
     });
 
     it('GETEX emits "expire" with EX option', () => {
@@ -296,12 +296,12 @@ describe('keyspace event integration', () => {
       expectEvent('expire', 'k');
     });
 
-    it('GETEX emits "pexpire" with PX option', () => {
+    it('GETEX emits "expire" with PX option', () => {
       ctx.db.set('k', 'string', 'raw', 'v');
       clearEvents();
 
       exec(findSpec(stringSpecs, 'getex'), ['k', 'PX', '10000']);
-      expectEvent('pexpire', 'k');
+      expectEvent('expire', 'k');
     });
 
     it('GETEX emits "persist" with PERSIST option', () => {
@@ -696,6 +696,69 @@ describe('keyspace event integration', () => {
       expectEvent('xgroup-delconsumer', 'k');
     });
 
+    it('XDEL emits "xdel" when entries deleted', () => {
+      const addResult = exec(findSpec(streamSpecs, 'xadd'), [
+        'k',
+        '*',
+        'f',
+        'v',
+      ]);
+      const id =
+        addResult.kind === 'bulk' ? (addResult.value as string) : '1-0';
+      clearEvents();
+
+      exec(findSpec(streamSpecs, 'xdel'), ['k', id]);
+      expectEvent('xdel', 'k');
+    });
+
+    it('XTRIM emits "xtrim" when entries trimmed', () => {
+      exec(findSpec(streamSpecs, 'xadd'), ['k', '*', 'f', 'v1']);
+      exec(findSpec(streamSpecs, 'xadd'), ['k', '*', 'f', 'v2']);
+      exec(findSpec(streamSpecs, 'xadd'), ['k', '*', 'f', 'v3']);
+      clearEvents();
+
+      exec(findSpec(streamSpecs, 'xtrim'), ['k', 'MAXLEN', '1']);
+      expectEvent('xtrim', 'k');
+    });
+
+    it('XSETID emits "xsetid" on success', () => {
+      exec(findSpec(streamSpecs, 'xadd'), ['k', '1-0', 'f', 'v']);
+      clearEvents();
+
+      exec(findSpec(streamSpecs, 'xsetid'), ['k', '99-0']);
+      expectEvent('xsetid', 'k');
+    });
+
+    it('XADD with MAXLEN emits secondary "xtrim" when entries trimmed', () => {
+      exec(findSpec(streamSpecs, 'xadd'), ['k', '*', 'f', 'v1']);
+      exec(findSpec(streamSpecs, 'xadd'), ['k', '*', 'f', 'v2']);
+      clearEvents();
+
+      exec(findSpec(streamSpecs, 'xadd'), ['k', 'MAXLEN', '2', '*', 'f', 'v3']);
+      expectEvent('xadd', 'k');
+      expectEvent('xtrim', 'k');
+    });
+
+    it('XADD with MAXLEN does not emit "xtrim" when no entries trimmed', () => {
+      exec(findSpec(streamSpecs, 'xadd'), ['k', '*', 'f', 'v1']);
+      clearEvents();
+
+      exec(findSpec(streamSpecs, 'xadd'), [
+        'k',
+        'MAXLEN',
+        '10',
+        '*',
+        'f',
+        'v2',
+      ]);
+      expectEvent('xadd', 'k');
+      const evts = getEvents();
+      const xtrimEvts = evts.filter(
+        (e) => e.channel === '__keyevent@0__:xtrim' || e.message === 'xtrim'
+      );
+      expect(xtrimEvts).toHaveLength(0);
+    });
+
     it('XGROUP CREATECONSUMER emits "xgroup-createconsumer"', () => {
       exec(findSpec(streamSpecs, 'xadd'), ['k', '*', 'f', 'v']);
       exec(findSpec(streamSpecs, 'xgroup'), ['CREATE', 'k', 'grp', '$']);
@@ -839,9 +902,9 @@ describe('keyspace event integration', () => {
       expectNoEvents();
     });
 
-    it('SWAPDB emits "swapdb" notification', () => {
+    it('SWAPDB does not emit keyspace events (matches Redis)', () => {
       exec(findSpec(databaseSpecs, 'swapdb'), ['0', '1']);
-      expectEvent('swapdb', '0');
+      expectNoEvents();
     });
   });
 

@@ -842,15 +842,12 @@ export const specs: CommandSpec[] = [
       if (reply !== NIL && reply.kind === 'bulk') {
         // Determine event name based on options
         const opt = args.length > 1 ? (args[1] ?? '').toUpperCase() : '';
-        if (opt === 'EX' || opt === 'EXAT') {
-          notify(ctx, EVENT_FLAGS.STRING, 'expire', args[0] ?? '');
-        } else if (opt === 'PX' || opt === 'PXAT') {
-          notify(ctx, EVENT_FLAGS.STRING, 'pexpire', args[0] ?? '');
+        if (opt === 'EX' || opt === 'EXAT' || opt === 'PX' || opt === 'PXAT') {
+          notify(ctx, EVENT_FLAGS.GENERIC, 'expire', args[0] ?? '');
         } else if (opt === 'PERSIST') {
-          notify(ctx, EVENT_FLAGS.STRING, 'persist', args[0] ?? '');
-        } else {
-          notify(ctx, EVENT_FLAGS.STRING, 'getex', args[0] ?? '');
+          notify(ctx, EVENT_FLAGS.GENERIC, 'persist', args[0] ?? '');
         }
+        // bare GETEX (no options) emits nothing in Redis
       }
       return reply;
     },
@@ -866,7 +863,7 @@ export const specs: CommandSpec[] = [
     handler: (ctx, args) => {
       const reply = getdel(ctx.db, args);
       if (reply !== NIL && reply.kind === 'bulk') {
-        notify(ctx, EVENT_FLAGS.STRING, 'getdel', args[0] ?? '');
+        notify(ctx, EVENT_FLAGS.GENERIC, 'del', args[0] ?? '');
       }
       return reply;
     },
