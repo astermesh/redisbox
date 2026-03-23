@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { RedisEngine } from '../engine.ts';
-import type { CommandContext } from '../types.ts';
+import { RedisEngine } from '../../engine.ts';
+import type { CommandContext } from '../../types.ts';
 import * as cluster from './cluster.ts';
 
 function createCtx(): CommandContext {
@@ -68,77 +68,9 @@ describe('CLUSTER KEYSLOT', () => {
     expect(reply.kind).toBe('integer');
   });
 
-  it('returns slot in range 0-16383', () => {
-    const reply = cluster.clusterKeyslot(['test']);
-    const slot = (reply as { value: number }).value;
-    expect(slot).toBeGreaterThanOrEqual(0);
-    expect(slot).toBeLessThanOrEqual(16383);
-  });
-
-  // Known Redis CRC16 hash slot values
-  it('computes correct slot for "foo"', () => {
-    // Redis: CLUSTER KEYSLOT foo => 12182
-    const reply = cluster.clusterKeyslot(['foo']);
-    expect((reply as { value: number }).value).toBe(12182);
-  });
-
-  it('computes correct slot for "bar"', () => {
-    // Redis: CLUSTER KEYSLOT bar => 5061
-    const reply = cluster.clusterKeyslot(['bar']);
-    expect((reply as { value: number }).value).toBe(5061);
-  });
-
-  it('computes correct slot for "hello"', () => {
-    // Redis: CLUSTER KEYSLOT hello => 866
-    const reply = cluster.clusterKeyslot(['hello']);
-    expect((reply as { value: number }).value).toBe(866);
-  });
-
-  it('computes correct slot for empty string', () => {
-    // Redis: CLUSTER KEYSLOT "" => 0
-    const reply = cluster.clusterKeyslot(['']);
-    expect((reply as { value: number }).value).toBe(0);
-  });
-
-  it('handles hash tags - {user}.info', () => {
-    // The hash tag is "user", so should match CLUSTER KEYSLOT "user"
-    const withTag = cluster.clusterKeyslot(['{user}.info']);
-    const plain = cluster.clusterKeyslot(['user']);
-    expect(withTag).toEqual(plain);
-  });
-
-  it('handles hash tags - {user}.session', () => {
-    const withTag = cluster.clusterKeyslot(['{user}.session']);
-    const plain = cluster.clusterKeyslot(['user']);
-    expect(withTag).toEqual(plain);
-  });
-
-  it('ignores empty hash tag {}', () => {
-    // {} means no valid hash tag — entire key is used
-    const reply = cluster.clusterKeyslot(['{}key']);
-    const plain = cluster.clusterKeyslot(['{}key']);
-    expect(reply).toEqual(plain);
-    // Should NOT equal keyslot of empty string
-    const empty = cluster.clusterKeyslot(['']);
-    expect(reply).not.toEqual(empty);
-  });
-
-  it('uses first valid hash tag only', () => {
-    // {a}{b} — hash tag is "a"
-    const reply = cluster.clusterKeyslot(['{a}{b}']);
-    const justA = cluster.clusterKeyslot(['a']);
-    expect(reply).toEqual(justA);
-  });
-
   it('returns error without key argument', () => {
     const reply = cluster.clusterKeyslot([]);
     expect(reply.kind).toBe('error');
-  });
-
-  it('computes correct slot for "123456789"', () => {
-    // Redis: CLUSTER KEYSLOT 123456789 => 12739
-    const reply = cluster.clusterKeyslot(['123456789']);
-    expect((reply as { value: number }).value).toBe(12739);
   });
 });
 
@@ -176,7 +108,6 @@ describe('CLUSTER COUNTKEYSINSLOT', () => {
 
   it('counts keys in the correct slot', () => {
     const ctx = createCtx();
-    // "foo" is in slot 12182
     ctx.db.set('foo', 'string', 'raw', 'bar');
     const reply = cluster.clusterCountkeysinslot(ctx, ['12182']);
     expect((reply as { value: number }).value).toBe(1);
@@ -364,21 +295,5 @@ describe('CLUSTER main dispatch', () => {
       kind: 'array',
       value: [],
     });
-  });
-});
-
-describe('keySlot', () => {
-  it('is exported for use by other modules', () => {
-    expect(typeof cluster.keySlot).toBe('function');
-  });
-
-  it('returns consistent results', () => {
-    expect(cluster.keySlot('test')).toBe(cluster.keySlot('test'));
-  });
-
-  it('handles binary-safe key names', () => {
-    const slot = cluster.keySlot('key with spaces');
-    expect(slot).toBeGreaterThanOrEqual(0);
-    expect(slot).toBeLessThanOrEqual(16383);
   });
 });

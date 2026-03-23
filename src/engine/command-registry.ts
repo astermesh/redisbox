@@ -20,7 +20,7 @@ import { specs as setSpecs } from './commands/set/index.ts';
 import { specs as sortedSetSpecs } from './commands/sorted-set/index.ts';
 import { specs as pubsubSpecs } from './commands/pubsub/index.ts';
 import { specs as infoSpecs } from './commands/info.ts';
-import { specs as clusterSpecs } from './commands/cluster.ts';
+import { specs as clusterSpecs } from './commands/cluster/index.ts';
 import { specs as commandSpecs } from './commands/command.ts';
 import { specs as streamSpecs } from './commands/stream/index.ts';
 import { specs as aclSpecs } from './commands/acl/index.ts';
