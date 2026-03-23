@@ -44,7 +44,8 @@
     "tcl:setup": "bash scripts/setup-redis-tests.sh",
     "tcl:test": "npx tsx scripts/run-tcl-tests.ts",
     "tcl:test:verbose": "npx tsx scripts/run-tcl-tests.ts --verbose",
-    "tcl:list": "npx tsx scripts/run-tcl-tests.ts --list"
+    "tcl:list": "npx tsx scripts/run-tcl-tests.ts --list",
+    "parity:check": "npx tsx scripts/check-parity.ts"
   },
   "engines": {
     "node": ">=18"

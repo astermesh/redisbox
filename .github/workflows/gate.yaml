@@ -57,9 +57,14 @@ jobs:
       type: ${{ inputs.type || 'all' }}
       platforms: ${{ inputs.platforms || 'node,deno,bun,browser' }}
 
+  parity:
+    needs: static
+    if: needs.changes.outputs.code == 'true'
+    uses: ./.github/workflows/_parity-tests.yaml
+
   result:
     runs-on: ubuntu-latest
-    needs: [changes, static, platforms]
+    needs: [changes, static, platforms, parity]
     if: always()
     steps:
       - name: Verify
@@ -74,6 +79,10 @@ jobs:
           fi
           if [[ "${{ needs.platforms.result }}" != "success" ]]; then
             echo "Platform tests failed"
+            exit 1
+          fi
+          if [[ "${{ needs.parity.result }}" != "success" ]]; then
+            echo "Parity tests failed"
             exit 1
           fi
           echo "All checks passed"

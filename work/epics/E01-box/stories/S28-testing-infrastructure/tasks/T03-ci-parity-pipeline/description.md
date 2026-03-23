@@ -1,5 +1,7 @@
 # T03: CI Pipeline for Parity Verification
 
+**Status:** done
+
 Set up GitHub Actions CI to run differential tests and TCL suite against real Redis on every PR.
 
 ## Details

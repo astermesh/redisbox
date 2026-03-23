@@ -1,5 +1,7 @@
 # S28: Testing Infrastructure
 
+**Status:** done
+
 Set up the differential testing infrastructure for verifying exact Redis behavioral parity. This is the foundation for the project's primary quality metric: every test must produce identical results against both RedisBox and real Redis.
 
 ## Scope
