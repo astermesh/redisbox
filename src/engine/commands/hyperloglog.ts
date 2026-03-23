@@ -4,6 +4,7 @@ import {
   integerReply,
   arrayReply,
   bulkReply,
+  statusReply,
   errorReply,
   OK,
   ZERO,
@@ -44,9 +45,9 @@ const HLL_ALPHA = 0.7213 / (1 + 1.079 / HLL_REGISTERS);
 
 // --- Error constants ---
 
-const HLL_WRONGTYPE_ERR = errorReply(
-  'WRONGTYPE',
-  'Key is not a valid HyperLogLog string value.'
+const HLL_INVALIDOBJ_ERR = errorReply(
+  'INVALIDOBJ',
+  'Corrupted HLL object detected'
 );
 
 // --- Binary string helpers (Latin-1) ---
@@ -627,7 +628,7 @@ function getHll(
   if (!entry) return { bytes: null, error: null };
   if (entry.type !== 'string') return { bytes: null, error: WRONGTYPE_ERR };
   const bytes = stringToBytes(entry.value as string);
-  if (!isValidHll(bytes)) return { bytes: null, error: HLL_WRONGTYPE_ERR };
+  if (!isValidHll(bytes)) return { bytes: null, error: HLL_INVALIDOBJ_ERR };
   return { bytes, error: null };
 }
 
@@ -774,16 +775,21 @@ export function pfdebug(ctx: CommandContext, args: string[]): Reply {
   }
 
   if (subcmd === 'GETREG') {
-    const regs = getRegisters(bytes);
+    // Redis converts sparse to dense in-place before reading registers
+    let current = bytes;
+    if (hllEncoding(current) === HLL_SPARSE) {
+      current = sparseToDense(current);
+      saveHll(ctx.db, key, current);
+    }
     const replies: Reply[] = new Array(HLL_REGISTERS);
     for (let i = 0; i < HLL_REGISTERS; i++) {
-      replies[i] = integerReply(regs[i] ?? 0);
+      replies[i] = integerReply(denseGetRegister(current, i));
     }
     return arrayReply(replies);
   }
 
   if (subcmd === 'ENCODING') {
-    return bulkReply(hllEncoding(bytes) === HLL_DENSE ? 'dense' : 'sparse');
+    return statusReply(hllEncoding(bytes) === HLL_DENSE ? 'dense' : 'sparse');
   }
 
   if (subcmd === 'TODENSE') {
@@ -797,7 +803,7 @@ export function pfdebug(ctx: CommandContext, args: string[]): Reply {
 
   if (subcmd === 'DECODE') {
     if (hllEncoding(bytes) === HLL_DENSE) {
-      return bulkReply('dense');
+      return errorReply('ERR', 'HLL encoding is not sparse');
     }
     const parts: string[] = [];
     let pos = HLL_HDR_SIZE;
@@ -822,6 +828,8 @@ export function pfdebug(ctx: CommandContext, args: string[]): Reply {
 
 export function pfselftest(ctx: CommandContext): Reply {
   void ctx;
+
+  // Test 1: Validate HLL headers
   const sparse = createSparseHll();
   if (!isValidHll(sparse)) {
     return errorReply('ERR', 'PFSELFTEST failed: invalid sparse HLL header');
@@ -832,7 +840,7 @@ export function pfselftest(ctx: CommandContext): Reply {
     return errorReply('ERR', 'PFSELFTEST failed: invalid dense HLL header');
   }
 
-  // Verify sparse-to-dense conversion preserves registers
+  // Test 2: Verify sparse-to-dense conversion preserves registers
   let testHll = createSparseHll();
   const testResult = sparseSet(testHll, 0, 5, 3000);
   if (testResult && testResult.changed) {
@@ -846,7 +854,7 @@ export function pfselftest(ctx: CommandContext): Reply {
     }
   }
 
-  // Verify MurmurHash against known test vectors (seed 0xadc83b19)
+  // Test 3: Verify MurmurHash against known test vectors (seed 0xadc83b19)
   const hashVectors: [string, bigint][] = [
     ['', 0xd8dfea6585bc9732n],
     ['test', 0xff211d0b0982e4e6n],
@@ -859,6 +867,50 @@ export function pfselftest(ctx: CommandContext): Reply {
       return errorReply(
         'ERR',
         `PFSELFTEST failed: hash mismatch for '${input}'`
+      );
+    }
+  }
+
+  // Test 4: Verify hash-to-register assignment consistency
+  // Ensure hllPatLen returns valid register indices and run lengths
+  const patTestInputs = ['a', 'b', 'c', '0', 'test', 'Redis', 'hello'];
+  for (const input of patTestInputs) {
+    const [index, runLen] = hllPatLen(input);
+    if (index < 0 || index >= HLL_REGISTERS) {
+      return errorReply(
+        'ERR',
+        `PFSELFTEST failed: register index ${index} out of range for '${input}'`
+      );
+    }
+    if (runLen < 1 || runLen > HLL_Q + 1) {
+      return errorReply(
+        'ERR',
+        `PFSELFTEST failed: run length ${runLen} out of range for '${input}'`
+      );
+    }
+  }
+
+  // Test 5: Verify cardinality estimation accuracy across ranges
+  // Standard error of HLL is 1.04 / sqrt(m) ≈ 0.81% for m=16384
+  const stdError = 1.04 / Math.sqrt(HLL_REGISTERS);
+  const testRanges = [10, 100, 1000, 10000, 100000];
+
+  for (const n of testRanges) {
+    let hllBytes = createSparseHll();
+
+    for (let j = 0; j < n; j++) {
+      const elem = `selftest:${j}`;
+      const result = hllAdd(hllBytes, elem, 3000);
+      hllBytes = result.bytes;
+    }
+
+    const estimated = hllCount(hllBytes);
+    // Allow 2x standard error, with a minimum of 5 for very small cardinalities
+    const maxError = Math.max(n * 2 * stdError, 5);
+    if (Math.abs(estimated - n) > maxError) {
+      return errorReply(
+        'ERR',
+        `PFSELFTEST failed: cardinality ${n} estimated as ${estimated} (error ${Math.abs(estimated - n)}, max allowed ${Math.round(maxError)})`
       );
     }
   }
@@ -903,7 +955,7 @@ export const specs: CommandSpec[] = [
     name: 'pfdebug',
     handler: (ctx, args) => pfdebug(ctx, args),
     arity: 3,
-    flags: ['admin'],
+    flags: ['write', 'denyoom', 'admin'],
     firstKey: 2,
     lastKey: 2,
     keyStep: 1,

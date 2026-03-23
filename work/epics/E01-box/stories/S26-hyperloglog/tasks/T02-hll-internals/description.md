@@ -1,5 +1,7 @@
 # T02: HyperLogLog Internals and Debug Commands
 
+**Status:** done
+
 Implement PFDEBUG and PFSELFTEST debug commands, and verify HLL internal consistency.
 
 ## Details
