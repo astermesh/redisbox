@@ -172,4 +172,5 @@ export interface CommandContext {
   eviction?: import('./eviction-manager.ts').EvictionManager;
   ibi?: import('./hooks/ibi.ts').IbiHookManager;
   scriptManager?: import('./scripting/script-manager.ts').ScriptManager;
+  obi?: import('./hooks/obi.ts').ObiHookManager;
 }

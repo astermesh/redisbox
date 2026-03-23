@@ -122,6 +122,11 @@ export class AsyncHook<Ctx, T> {
 export class SyncHook<T> {
   private readonly handlers: SyncHookFn<T>[] = [];
 
+  /** Number of registered handlers. */
+  get size(): number {
+    return this.handlers.length;
+  }
+
   /** Register a hook handler. */
   tap(fn: SyncHookFn<T>): void {
     this.handlers.push(fn);
