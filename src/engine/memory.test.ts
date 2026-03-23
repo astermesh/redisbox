@@ -137,16 +137,16 @@ describe('estimateKeyMemory', () => {
 
   describe('sorted set values', () => {
     it('estimates listpack-encoded zset', () => {
-      const z = new Map([['a', 1]]);
+      const z = { dict: new Map([['a', 1]]) };
       const e = entry('zset', 'listpack', z);
       const mem = estimateKeyMemory('k', e, false);
       expect(mem).toBeGreaterThan(80);
     });
 
     it('estimates skiplist-encoded zset', () => {
-      const z = new Map<string, number>();
-      for (let i = 0; i < 200; i++) z.set(`member${i}`, i);
-      const e = entry('zset', 'skiplist', z);
+      const dict = new Map<string, number>();
+      for (let i = 0; i < 200; i++) dict.set(`member${i}`, i);
+      const e = entry('zset', 'skiplist', { dict });
       const mem = estimateKeyMemory('k', e, false);
       expect(mem).toBeGreaterThan(1000);
     });
@@ -163,8 +163,8 @@ describe('estimateKeyMemory', () => {
       ['list', 'quicklist', ['a']],
       ['set', 'intset', new Set(['1'])],
       ['set', 'hashtable', new Set(['a'])],
-      ['zset', 'listpack', new Map([['a', 1]])],
-      ['zset', 'skiplist', new Map([['a', 1]])],
+      ['zset', 'listpack', { dict: new Map([['a', 1]]) }],
+      ['zset', 'skiplist', { dict: new Map([['a', 1]]) }],
       ['stream', 'stream', null],
     ];
     for (const [type, encoding, value] of cases) {

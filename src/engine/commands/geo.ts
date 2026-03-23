@@ -13,7 +13,11 @@ import {
 import { SkipList } from '../skip-list.ts';
 import { parseFloat64, formatFloat } from './incr.ts';
 import type { CommandSpec } from '../command-table.ts';
-import type { SortedSetData } from './sorted-set.ts';
+import {
+  type SortedSetData,
+  chooseEncoding,
+  updateEncoding,
+} from './sorted-set.ts';
 
 // --- Constants ---
 
@@ -228,7 +232,7 @@ function getOrCreateZset(
     sl: new SkipList(rng),
     dict: new Map(),
   };
-  db.set(key, 'zset', 'skiplist', zset);
+  db.set(key, 'zset', 'listpack', zset);
   return { zset, error: null };
 }
 
@@ -544,6 +548,7 @@ export function geoadd(db: Database, args: string[], rng: () => number): Reply {
   }
 
   removeIfEmpty(db, key, zset);
+  updateEncoding(db, key);
 
   return integerReply(ch ? added + updated : added);
 }
@@ -945,7 +950,7 @@ export function geosearchstore(
     dstZset.dict.set(r.member, score);
   }
 
-  db.set(dst, 'zset', 'skiplist', dstZset);
+  db.set(dst, 'zset', chooseEncoding(dstZset.dict), dstZset);
   return integerReply(results.length);
 }
 
@@ -1085,7 +1090,7 @@ export function georadius(
       dstZset.dict.set(r.member, score);
     }
 
-    db.set(dstKey, 'zset', 'skiplist', dstZset);
+    db.set(dstKey, 'zset', chooseEncoding(dstZset.dict), dstZset);
     return integerReply(results.length);
   }
 
