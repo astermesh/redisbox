@@ -7,7 +7,7 @@
 
 import { spawn } from 'node:child_process';
 import { access, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { startRedisBoxServer, type RedisBoxServer } from './redisbox-server.ts';
 import {
   parseTclTestOutput,
@@ -51,20 +51,27 @@ export async function discoverTests(redisDir: string): Promise<string[]> {
   const testsDir = join(redisDir, 'tests');
   const results: string[] = [];
 
-  for (const subdir of ['unit', 'integration']) {
-    const dirPath = join(testsDir, subdir);
+  async function scanDir(dirPath: string): Promise<void> {
+    let entries;
     try {
-      await access(dirPath);
+      entries = await readdir(dirPath, { withFileTypes: true });
     } catch {
-      continue;
+      return;
     }
 
-    const files = await readdir(dirPath);
-    for (const file of files) {
-      if (file.endsWith('.tcl')) {
-        results.push(`${subdir}/${file.replace('.tcl', '')}`);
+    for (const entry of entries) {
+      const fullPath = join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        await scanDir(fullPath);
+      } else if (entry.name.endsWith('.tcl')) {
+        const rel = relative(testsDir, fullPath).replace('.tcl', '');
+        results.push(rel);
       }
     }
+  }
+
+  for (const subdir of ['unit', 'integration']) {
+    await scanDir(join(testsDir, subdir));
   }
 
   return results.sort();
@@ -87,8 +94,10 @@ export async function isTestSuiteAvailable(redisDir: string): Promise<boolean> {
  */
 export async function isTclAvailable(): Promise<boolean> {
   return new Promise((resolve) => {
-    const proc = spawn('tclsh', ['<<', 'puts ok'], { shell: true });
+    const proc = spawn('tclsh', { stdio: ['pipe', 'ignore', 'ignore'] });
     proc.on('error', () => resolve(false));
+    proc.stdin.write('puts ok\nexit 0\n');
+    proc.stdin.end();
     proc.on('close', (code) => resolve(code === 0));
   });
 }

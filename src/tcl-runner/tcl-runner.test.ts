@@ -81,6 +81,19 @@ describe('discoverTests', () => {
     expect(tests).toEqual(['integration/repl', 'unit/auth']);
   });
 
+  it('discovers tests in subdirectories recursively', async () => {
+    const unitDir = join(tempDir, 'tests', 'unit');
+    const typeDir = join(tempDir, 'tests', 'unit', 'type');
+    await mkdir(typeDir, { recursive: true });
+    await writeFile(join(unitDir, 'auth.tcl'), '');
+    await writeFile(join(typeDir, 'hash.tcl'), '');
+    await writeFile(join(typeDir, 'string.tcl'), '');
+
+    const tests = await discoverTests(tempDir);
+
+    expect(tests).toEqual(['unit/auth', 'unit/type/hash', 'unit/type/string']);
+  });
+
   it('ignores non-tcl files', async () => {
     const unitDir = join(tempDir, 'tests', 'unit');
     await mkdir(unitDir, { recursive: true });
