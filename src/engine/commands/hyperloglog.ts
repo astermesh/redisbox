@@ -4,6 +4,7 @@ import {
   integerReply,
   arrayReply,
   bulkReply,
+  statusReply,
   errorReply,
   OK,
   ZERO,
@@ -44,9 +45,9 @@ const HLL_ALPHA = 0.7213 / (1 + 1.079 / HLL_REGISTERS);
 
 // --- Error constants ---
 
-const HLL_WRONGTYPE_ERR = errorReply(
-  'WRONGTYPE',
-  'Key is not a valid HyperLogLog string value.'
+const HLL_INVALIDOBJ_ERR = errorReply(
+  'INVALIDOBJ',
+  'Corrupted HLL object detected'
 );
 
 // --- Binary string helpers (Latin-1) ---
@@ -627,7 +628,7 @@ function getHll(
   if (!entry) return { bytes: null, error: null };
   if (entry.type !== 'string') return { bytes: null, error: WRONGTYPE_ERR };
   const bytes = stringToBytes(entry.value as string);
-  if (!isValidHll(bytes)) return { bytes: null, error: HLL_WRONGTYPE_ERR };
+  if (!isValidHll(bytes)) return { bytes: null, error: HLL_INVALIDOBJ_ERR };
   return { bytes, error: null };
 }
 
@@ -774,16 +775,21 @@ export function pfdebug(ctx: CommandContext, args: string[]): Reply {
   }
 
   if (subcmd === 'GETREG') {
-    const regs = getRegisters(bytes);
+    // Redis converts sparse to dense in-place before reading registers
+    let current = bytes;
+    if (hllEncoding(current) === HLL_SPARSE) {
+      current = sparseToDense(current);
+      saveHll(ctx.db, key, current);
+    }
     const replies: Reply[] = new Array(HLL_REGISTERS);
     for (let i = 0; i < HLL_REGISTERS; i++) {
-      replies[i] = integerReply(regs[i] ?? 0);
+      replies[i] = integerReply(denseGetRegister(current, i));
     }
     return arrayReply(replies);
   }
 
   if (subcmd === 'ENCODING') {
-    return bulkReply(hllEncoding(bytes) === HLL_DENSE ? 'dense' : 'sparse');
+    return statusReply(hllEncoding(bytes) === HLL_DENSE ? 'dense' : 'sparse');
   }
 
   if (subcmd === 'TODENSE') {
@@ -797,7 +803,7 @@ export function pfdebug(ctx: CommandContext, args: string[]): Reply {
 
   if (subcmd === 'DECODE') {
     if (hllEncoding(bytes) === HLL_DENSE) {
-      return bulkReply('dense');
+      return errorReply('ERR', 'HLL encoding is not sparse');
     }
     const parts: string[] = [];
     let pos = HLL_HDR_SIZE;
@@ -949,7 +955,7 @@ export const specs: CommandSpec[] = [
     name: 'pfdebug',
     handler: (ctx, args) => pfdebug(ctx, args),
     arity: 3,
-    flags: ['admin'],
+    flags: ['write', 'denyoom', 'admin'],
     firstKey: 2,
     lastKey: 2,
     keyStep: 1,

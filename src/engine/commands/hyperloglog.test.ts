@@ -79,8 +79,8 @@ describe('PFADD', () => {
     const result = hll.pfadd(ctx, ['mykey', 'a']);
     expect(result).toEqual({
       kind: 'error',
-      prefix: 'WRONGTYPE',
-      message: 'Key is not a valid HyperLogLog string value.',
+      prefix: 'INVALIDOBJ',
+      message: 'Corrupted HLL object detected',
     });
   });
 
@@ -93,7 +93,7 @@ describe('PFADD', () => {
     }
     hll.pfadd(ctx, ['mykey', ...elements]);
     const enc = hll.pfdebug(ctx, ['ENCODING', 'mykey']);
-    expect(enc).toEqual({ kind: 'bulk', value: 'dense' });
+    expect(enc).toEqual({ kind: 'status', value: 'dense' });
     // Adding more elements to dense should still work
     const result = hll.pfadd(ctx, ['mykey', 'newelem']);
     expect(result.kind).toBe('integer');
@@ -186,8 +186,8 @@ describe('PFCOUNT', () => {
     const result = hll.pfcount(ctx, ['mykey']);
     expect(result).toEqual({
       kind: 'error',
-      prefix: 'WRONGTYPE',
-      message: 'Key is not a valid HyperLogLog string value.',
+      prefix: 'INVALIDOBJ',
+      message: 'Corrupted HLL object detected',
     });
   });
 
@@ -393,7 +393,7 @@ describe('PFDEBUG', () => {
     const { ctx } = createDb();
     hll.pfadd(ctx, ['mykey', 'a']);
     const result = hll.pfdebug(ctx, ['ENCODING', 'mykey']);
-    expect(result).toEqual({ kind: 'bulk', value: 'sparse' });
+    expect(result).toEqual({ kind: 'status', value: 'sparse' });
   });
 
   it('ENCODING returns dense after promotion', () => {
@@ -404,14 +404,14 @@ describe('PFDEBUG', () => {
     }
     hll.pfadd(ctx, ['mykey', ...elements]);
     const result = hll.pfdebug(ctx, ['ENCODING', 'mykey']);
-    expect(result).toEqual({ kind: 'bulk', value: 'dense' });
+    expect(result).toEqual({ kind: 'status', value: 'dense' });
   });
 
   it('TODENSE converts sparse to dense and returns 1', () => {
     const { ctx } = createDb();
     hll.pfadd(ctx, ['mykey', 'a']);
     expect(hll.pfdebug(ctx, ['ENCODING', 'mykey'])).toEqual({
-      kind: 'bulk',
+      kind: 'status',
       value: 'sparse',
     });
 
@@ -419,7 +419,7 @@ describe('PFDEBUG', () => {
     expect(result).toEqual({ kind: 'integer', value: 1 });
 
     expect(hll.pfdebug(ctx, ['ENCODING', 'mykey'])).toEqual({
-      kind: 'bulk',
+      kind: 'status',
       value: 'dense',
     });
   });
@@ -466,7 +466,7 @@ describe('Sparse/Dense transition', () => {
     const { ctx } = createDb();
     hll.pfadd(ctx, ['mykey', 'a']);
     const result = hll.pfdebug(ctx, ['ENCODING', 'mykey']);
-    expect(result).toEqual({ kind: 'bulk', value: 'sparse' });
+    expect(result).toEqual({ kind: 'status', value: 'sparse' });
   });
 
   it('transitions to dense with many unique elements', () => {
@@ -477,7 +477,7 @@ describe('Sparse/Dense transition', () => {
     }
     hll.pfadd(ctx, ['mykey', ...elements]);
     const result = hll.pfdebug(ctx, ['ENCODING', 'mykey']);
-    expect(result).toEqual({ kind: 'bulk', value: 'dense' });
+    expect(result).toEqual({ kind: 'status', value: 'dense' });
   });
 });
 
@@ -560,16 +560,21 @@ describe('Hash function and register assignment', () => {
     }
   });
 
-  it('GETREG works for both sparse and dense', () => {
+  it('GETREG converts sparse to dense in-place (Redis behavior)', () => {
     const { ctx } = createDb();
-    hll.pfadd(ctx, ['sparse', 'a', 'b', 'c']);
-    const sparseRegs = hll.pfdebug(ctx, ['GETREG', 'sparse']);
-
-    // Convert to dense and check registers are identical
-    hll.pfdebug(ctx, ['TODENSE', 'sparse']);
-    const denseRegs = hll.pfdebug(ctx, ['GETREG', 'sparse']);
-
-    expect(sparseRegs).toEqual(denseRegs);
+    hll.pfadd(ctx, ['mykey', 'a', 'b', 'c']);
+    // Key starts as sparse
+    expect(hll.pfdebug(ctx, ['ENCODING', 'mykey'])).toEqual({
+      kind: 'status',
+      value: 'sparse',
+    });
+    // GETREG converts to dense as a side effect
+    const regs = hll.pfdebug(ctx, ['GETREG', 'mykey']);
+    expect(regs.kind).toBe('array');
+    expect(hll.pfdebug(ctx, ['ENCODING', 'mykey'])).toEqual({
+      kind: 'status',
+      value: 'dense',
+    });
   });
 });
 
@@ -600,12 +605,16 @@ describe('PFDEBUG DECODE', () => {
     }
   });
 
-  it('DECODE returns "dense" for dense-encoded HLL', () => {
+  it('DECODE returns error for dense-encoded HLL', () => {
     const { ctx } = createDb();
     hll.pfadd(ctx, ['mykey', 'a']);
     hll.pfdebug(ctx, ['TODENSE', 'mykey']);
     const result = hll.pfdebug(ctx, ['DECODE', 'mykey']);
-    expect(result).toEqual({ kind: 'bulk', value: 'dense' });
+    expect(result).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'HLL encoding is not sparse',
+    });
   });
 
   it('DECODE register count sums to 16384', () => {
