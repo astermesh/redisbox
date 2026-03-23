@@ -1,5 +1,5 @@
 /**
- * Unit tests for parity harness comparison utilities.
+ * Unit tests for RESP comparison utilities.
  *
  * These tests verify the comparison logic in isolation, without
  * requiring any network connections or Redis instances.
@@ -13,7 +13,7 @@ import {
   assertRespUnordered,
   assertRespStructure,
   formatResp,
-} from './parity-harness.ts';
+} from './resp-comparison.ts';
 
 // ============================================================================
 // normalizeResp
