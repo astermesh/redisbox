@@ -185,4 +185,24 @@ describe('LatencyManager', () => {
       expect(lm.has('command')).toBe(true);
     });
   });
+
+  describe('allTimeMax', () => {
+    it('returns 0 for unknown event', () => {
+      const lm = new LatencyManager();
+      expect(lm.allTimeMax('unknown')).toBe(0);
+    });
+
+    it('returns all-time max even after samples evicted', () => {
+      const lm = new LatencyManager();
+      lm.record('command', 999, 50, 1000);
+      // Fill up to evict the first sample
+      for (let i = 1; i <= 160; i++) {
+        lm.record('command', 100, 50, 1000 + i);
+      }
+      // The 999ms sample was evicted but all-time max is preserved
+      const history = lm.history('command');
+      expect(history.every((s) => s.latency <= 100)).toBe(true);
+      expect(lm.allTimeMax('command')).toBe(999);
+    });
+  });
 });

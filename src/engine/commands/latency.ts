@@ -8,6 +8,7 @@ import type { Reply, CommandContext } from '../types.ts';
 import {
   arrayReply,
   bulkReply,
+  errorReply,
   integerReply,
   unknownSubcommandError,
   EMPTY_ARRAY,
@@ -36,9 +37,6 @@ export function latencyLatest(ctx: CommandContext): Reply {
 }
 
 export function latencyHistory(ctx: CommandContext, args: string[]): Reply {
-  if (args.length === 0) {
-    return unknownSubcommandError('latency', 'HISTORY');
-  }
   const event = args[0] ?? '';
   const samples = ctx.engine.latency.history(event);
   if (samples.length === 0) return EMPTY_ARRAY;
@@ -57,17 +55,15 @@ export function latencyReset(ctx: CommandContext, args: string[]): Reply {
 }
 
 export function latencyGraph(ctx: CommandContext, args: string[]): Reply {
-  if (args.length === 0) {
-    return unknownSubcommandError('latency', 'GRAPH');
-  }
   const event = args[0] ?? '';
   const samples = ctx.engine.latency.history(event);
 
   if (samples.length === 0) {
-    return bulkReply(`${event} - `);
+    return errorReply('ERR', `No samples available for event '${event}'`);
   }
 
-  return bulkReply(buildGraph(event, samples));
+  const allTimeMax = ctx.engine.latency.allTimeMax(event);
+  return bulkReply(buildGraph(event, samples, allTimeMax));
 }
 
 export function latencyDoctor(ctx: CommandContext): Reply {
@@ -75,18 +71,46 @@ export function latencyDoctor(ctx: CommandContext): Reply {
 
   if (entries.length === 0) {
     return bulkReply(
-      'I have no latency reports to analyze. ' +
-        "Be sure to enable latency tracking if you haven't already. " +
-        'You can enable it with: "CONFIG SET latency-monitor-threshold <milliseconds>".'
+      "I'm sorry, Dave, I can't do that. Latency monitoring is disabled in this Redis instance. " +
+        'You may use "CONFIG SET latency-monitor-threshold <milliseconds>." in order to enable it. ' +
+        "If we weren't in a deep space mission I'd suggest to take a look at https://redis.io/topics/latency-monitor."
     );
   }
 
-  const lines: string[] = [];
-  for (const e of entries) {
+  const lines: string[] = [
+    "Dave, I have observed latency spikes in this Redis instance. You don't mind talking about it, do you Dave?\n",
+  ];
+
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    if (!e) continue;
+    const samples = ctx.engine.latency.history(e.event);
+    const count = samples.length;
+    const avg =
+      count > 0
+        ? Math.round(samples.reduce((s, x) => s + x.latency, 0) / count)
+        : 0;
+    const mad =
+      count > 0
+        ? Math.round(
+            samples.reduce((s, x) => s + Math.abs(x.latency - avg), 0) / count
+          )
+        : 0;
+    const first = samples[0];
+    const last = samples.at(-1);
+    const period =
+      first && last && count > 1
+        ? Math.round((last.timestamp - first.timestamp) / (count - 1))
+        : 0;
+
     lines.push(
-      `${e.event} - latest: ${e.latest} ms, all-time max: ${e.max} ms.`
+      `${i + 1}. ${e.event}: ${count} latency spike${count !== 1 ? 's' : ''} (average ${avg}ms, mean deviation ${mad}ms, period ${period} sec). Worst all time event ${e.max}ms.`
     );
   }
+
+  lines.push(
+    "\nWhile there are latency events logged, I'm not able to suggest any easy fix. Please use the Redis community to get some help, providing this report in your help request.\n"
+  );
 
   return bulkReply(lines.join('\n'));
 }
@@ -97,52 +121,63 @@ export function latencyHelp(): Reply {
     'DOCTOR',
     '    Return a human readable latency analysis report.',
     'GRAPH <event>',
-    '    Return a latency graph for the <event> class.',
+    '    Return an ASCII latency graph for the <event> class.',
     'HISTORY <event>',
     '    Return time-latency samples for the <event> class.',
     'LATEST',
     '    Return the latest latency samples for all events.',
-    'RESET [<event> [event ...]]',
-    '    Reset latency data for one or more events.',
-    '    (default: reset all events)',
+    'RESET [<event> ...]',
+    '    Reset latency data of one or more <event> classes.',
+    '    (default: reset all data for all event classes)',
     'HELP',
-    '    Return this help.',
+    '    Print this help.',
   ];
   return arrayReply(lines.map((l) => bulkReply(l)));
 }
 
 // ---------------------------------------------------------------------------
-// Graph builder
+// Graph builder — matches Redis LATENCY GRAPH output
 // ---------------------------------------------------------------------------
 
-function buildGraph(event: string, samples: LatencySample[]): string {
+const GRAPH_COLS = 80;
+const GRAPH_ROWS = 4;
+const GRAPH_CHARSET = '_o#';
+
+function buildGraph(
+  event: string,
+  samples: LatencySample[],
+  allTimeMax: number
+): string {
   const maxLatency = Math.max(...samples.map((s) => s.latency));
   const minLatency = Math.min(...samples.map((s) => s.latency));
-  const graphHeight = 16;
   const lines: string[] = [];
 
   lines.push(
-    `${event} - high ${maxLatency} ms, low ${minLatency} ms (all time high ${maxLatency} ms)`
+    `${event} - high ${maxLatency} ms, low ${minLatency} ms (all time high ${allTimeMax} ms)`
   );
+  lines.push('-'.repeat(GRAPH_COLS));
 
-  // Build columns of the graph
+  // Build sparkline columns — resample to GRAPH_COLS if needed
+  const resampled = resample(samples, GRAPH_COLS);
+
+  // Build column heights and characters
   const cols: string[] = [];
-  for (const sample of samples) {
-    const height =
+  for (const latency of resampled) {
+    const normalized =
       maxLatency === minLatency
-        ? graphHeight
-        : Math.max(
-            1,
-            Math.round(
-              ((sample.latency - minLatency) / (maxLatency - minLatency)) *
-                (graphHeight - 1)
-            ) + 1
-          );
-    cols.push('#'.repeat(height).padStart(graphHeight, ' '));
+        ? 1
+        : (latency - minLatency) / (maxLatency - minLatency);
+    const height = Math.max(1, Math.round(normalized * (GRAPH_ROWS - 1)) + 1);
+    const charIdx = Math.min(
+      Math.floor(normalized * GRAPH_CHARSET.length),
+      GRAPH_CHARSET.length - 1
+    );
+    const ch = GRAPH_CHARSET[charIdx] ?? '#';
+    cols.push(ch.repeat(height).padStart(GRAPH_ROWS, ' '));
   }
 
   // Render rows top-to-bottom
-  for (let row = 0; row < graphHeight; row++) {
+  for (let row = 0; row < GRAPH_ROWS; row++) {
     let line = '';
     for (const col of cols) {
       line += col[row] ?? ' ';
@@ -150,17 +185,46 @@ function buildGraph(event: string, samples: LatencySample[]): string {
     lines.push(line.trimEnd());
   }
 
-  // Time axis labels
+  // Time axis
   if (samples.length > 0) {
     const first = samples[0];
     const last = samples.at(-1);
     if (first && last) {
       const elapsed = last.timestamp - first.timestamp;
-      lines.push(`${elapsed}s`);
+      lines.push(formatElapsed(elapsed));
     }
   }
 
   return lines.join('\n');
+}
+
+/** Resample an array of samples to exactly targetLen latency values */
+function resample(samples: LatencySample[], targetLen: number): number[] {
+  if (samples.length === 0) return [];
+  if (samples.length <= targetLen) {
+    return samples.map((s) => s.latency);
+  }
+
+  const result: number[] = [];
+  for (let i = 0; i < targetLen; i++) {
+    const pos = (i / (targetLen - 1)) * (samples.length - 1);
+    const lo = Math.floor(pos);
+    const hi = Math.min(lo + 1, samples.length - 1);
+    const loSample = samples[lo];
+    const hiSample = samples[hi];
+    if (!loSample || !hiSample) continue;
+    // Take the max in the bucket (Redis uses max for merged samples)
+    result.push(Math.max(loSample.latency, hiSample.latency));
+  }
+  return result;
+}
+
+/** Format elapsed seconds with appropriate unit */
+function formatElapsed(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.round(seconds / 3600)}h`;
+  return `${Math.round(seconds / 86400)}d`;
 }
 
 // ---------------------------------------------------------------------------
@@ -211,7 +275,7 @@ export const specs: CommandSpec[] = [
         name: 'LATEST',
         handler: latency,
         arity: 2,
-        flags: ['admin', 'loading', 'stale', 'fast'],
+        flags: ['admin', 'loading', 'stale'],
         firstKey: 0,
         lastKey: 0,
         keyStep: 0,
@@ -261,11 +325,11 @@ export const specs: CommandSpec[] = [
         name: 'HELP',
         handler: latency,
         arity: 2,
-        flags: ['admin', 'loading', 'stale'],
+        flags: ['loading', 'stale'],
         firstKey: 0,
         lastKey: 0,
         keyStep: 0,
-        categories: ['@admin', '@slow', '@dangerous'],
+        categories: ['@slow'],
       },
     ],
   },

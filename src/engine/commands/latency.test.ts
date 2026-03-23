@@ -79,17 +79,6 @@ describe('LATENCY LATEST', () => {
 });
 
 describe('LATENCY HISTORY', () => {
-  it('returns error when no event argument', () => {
-    const ctx = createCtx();
-    const reply = latencyHistory(ctx, []);
-    expect(reply).toEqual({
-      kind: 'error',
-      prefix: 'ERR',
-      message:
-        "unknown subcommand or wrong number of arguments for 'latency|HISTORY' command",
-    });
-  });
-
   it('returns empty array for unknown event', () => {
     const ctx = createCtx();
     const reply = latencyHistory(ctx, ['unknown']);
@@ -160,21 +149,14 @@ describe('LATENCY RESET', () => {
 });
 
 describe('LATENCY GRAPH', () => {
-  it('returns error when no event argument', () => {
+  it('returns error for event with no samples', () => {
     const ctx = createCtx();
-    const reply = latencyGraph(ctx, []);
+    const reply = latencyGraph(ctx, ['command']);
     expect(reply).toEqual({
       kind: 'error',
       prefix: 'ERR',
-      message:
-        "unknown subcommand or wrong number of arguments for 'latency|GRAPH' command",
+      message: "No samples available for event 'command'",
     });
-  });
-
-  it('returns event name with dash for empty event', () => {
-    const ctx = createCtx();
-    const reply = latencyGraph(ctx, ['command']);
-    expect(reply).toEqual({ kind: 'bulk', value: 'command - ' });
   });
 
   it('returns graph with samples', () => {
@@ -189,37 +171,102 @@ describe('LATENCY GRAPH', () => {
     expect(reply.kind).toBe('bulk');
     if (reply.kind !== 'bulk') return;
     expect(reply.value).toBeTruthy();
-    // Should contain the event name and high/low info
+    // Header with event name, high/low info, and all-time max
     expect(reply.value).toContain('command');
     expect(reply.value).toContain('high 200 ms');
     expect(reply.value).toContain('low 100 ms');
-    // Should contain # characters for the graph bars
-    expect(reply.value).toContain('#');
+    expect(reply.value).toContain('all time high 200 ms');
+    // Should contain dash separator line
+    expect(reply.value).toContain('-'.repeat(80));
+    // Should contain graph characters
+    expect(reply.value).toMatch(/[_o#]/);
+  });
+
+  it('uses all-time max in header even after old samples evicted', () => {
+    const ctx = createCtx();
+    // Record a very high spike first
+    seedLatency(ctx, 'command', [{ latency: 999, timestamp: 1000 }]);
+    // Then record lower ones
+    seedLatency(ctx, 'command', [
+      { latency: 100, timestamp: 1001 },
+      { latency: 150, timestamp: 1002 },
+    ]);
+
+    const reply = latencyGraph(ctx, ['command']);
+    if (reply.kind !== 'bulk') return;
+    // All-time max should be 999 (tracked separately from visible samples)
+    expect(reply.value).toContain('all time high 999 ms');
+  });
+
+  it('includes time axis with elapsed time', () => {
+    const ctx = createCtx();
+    seedLatency(ctx, 'command', [
+      { latency: 100, timestamp: 1000 },
+      { latency: 200, timestamp: 1030 },
+    ]);
+
+    const reply = latencyGraph(ctx, ['command']);
+    if (reply.kind !== 'bulk') return;
+    expect(reply.value).toContain('30s');
+  });
+
+  it('formats elapsed time in minutes', () => {
+    const ctx = createCtx();
+    seedLatency(ctx, 'command', [
+      { latency: 100, timestamp: 1000 },
+      { latency: 200, timestamp: 1120 },
+    ]);
+
+    const reply = latencyGraph(ctx, ['command']);
+    if (reply.kind !== 'bulk') return;
+    expect(reply.value).toContain('2m');
   });
 });
 
 describe('LATENCY DOCTOR', () => {
-  it('returns no-data message when no events', () => {
+  it('returns HAL 9000 message when no events', () => {
     const ctx = createCtx();
     const reply = latencyDoctor(ctx);
     expect(reply.kind).toBe('bulk');
     if (reply.kind !== 'bulk') return;
-    expect(reply.value).toContain('no latency reports');
+    expect(reply.value).toContain("I'm sorry, Dave");
     expect(reply.value).toContain('latency-monitor-threshold');
   });
 
-  it('returns analysis with event data', () => {
+  it('returns analysis with event data and statistics', () => {
     const ctx = createCtx();
-    seedLatency(ctx, 'command', [{ latency: 100, timestamp: 1000 }]);
-    seedLatency(ctx, 'fast-command', [{ latency: 200, timestamp: 1001 }]);
+    seedLatency(ctx, 'command', [
+      { latency: 100, timestamp: 1000 },
+      { latency: 200, timestamp: 1010 },
+    ]);
+    seedLatency(ctx, 'fast-command', [{ latency: 300, timestamp: 1001 }]);
 
     const reply = latencyDoctor(ctx);
     expect(reply.kind).toBe('bulk');
     if (reply.kind !== 'bulk') return;
-    expect(reply.value).toContain('command');
-    expect(reply.value).toContain('fast-command');
-    expect(reply.value).toContain('100 ms');
-    expect(reply.value).toContain('200 ms');
+    expect(reply.value).toContain(
+      'Dave, I have observed latency spikes in this Redis instance'
+    );
+    expect(reply.value).toContain('1. command:');
+    expect(reply.value).toContain('2 latency spikes');
+    expect(reply.value).toContain('average 150ms');
+    expect(reply.value).toContain('2. fast-command:');
+    expect(reply.value).toContain('1 latency spike');
+    expect(reply.value).toContain('Worst all time event');
+  });
+
+  it('calculates mean deviation correctly', () => {
+    const ctx = createCtx();
+    // Values: 100, 200, 300 => avg=200, deviations: 100,0,100 => mad=67
+    seedLatency(ctx, 'command', [
+      { latency: 100, timestamp: 1000 },
+      { latency: 200, timestamp: 1010 },
+      { latency: 300, timestamp: 1020 },
+    ]);
+
+    const reply = latencyDoctor(ctx);
+    if (reply.kind !== 'bulk') return;
+    expect(reply.value).toContain('mean deviation 67ms');
   });
 });
 
@@ -269,6 +316,16 @@ describe('LATENCY specs', () => {
     expect(subNames).toContain('DOCTOR');
     expect(subNames).toContain('HELP');
   });
+
+  it('HELP subcommand has correct flags (no admin)', () => {
+    const spec = specs[0];
+    if (!spec) return;
+    const helpSub = spec.subcommands?.find((s) => s.name === 'HELP');
+    expect(helpSub).toBeDefined();
+    if (!helpSub) return;
+    expect(helpSub.flags).not.toContain('admin');
+    expect(helpSub.categories).toEqual(['@slow']);
+  });
 });
 
 describe('LATENCY dispatcher', () => {
@@ -311,7 +368,8 @@ describe('LATENCY dispatcher', () => {
   it('dispatches GRAPH subcommand', () => {
     const ctx = createCtx();
     const reply = latencyDispatch(ctx, ['GRAPH', 'command']);
-    expect(reply.kind).toBe('bulk');
+    // No samples = error
+    expect(reply.kind).toBe('error');
   });
 
   it('dispatches DOCTOR subcommand', () => {

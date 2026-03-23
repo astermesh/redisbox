@@ -140,4 +140,9 @@ export class LatencyManager {
     const data = this.events.get(event);
     return data !== undefined && data.samples.length > 0;
   }
+
+  /** Return the all-time maximum latency for an event, or 0 if unknown */
+  allTimeMax(event: string): number {
+    return this.events.get(event)?.max ?? 0;
+  }
 }
