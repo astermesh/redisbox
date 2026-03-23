@@ -37,8 +37,9 @@ describe('lfuTimeElapsed', () => {
 
   it('handles 16-bit wraparound', () => {
     // Clock wrapped: now < lastDecrTime
-    expect(lfuTimeElapsed(65530, 5)).toBe(11); // 65536 - 65530 + 5
-    expect(lfuTimeElapsed(65535, 0)).toBe(1);
+    // Matches Redis: 65535 - ldt + now
+    expect(lfuTimeElapsed(65530, 5)).toBe(10); // 65535 - 65530 + 5
+    expect(lfuTimeElapsed(65535, 0)).toBe(0); // 65535 - 65535 + 0
   });
 });
 
@@ -67,7 +68,7 @@ describe('lfuDecrAndReturn', () => {
   });
 
   it('handles wraparound in minutes clock', () => {
-    // lastDecr=65530, now=5 → elapsed=11, decayTime=2 → 5 periods
+    // lastDecr=65530, now=5 → elapsed=10 (Redis: 65535-65530+5), decayTime=2 → 5 periods
     expect(lfuDecrAndReturn(10, 65530, 5, 2)).toBe(5);
   });
 });

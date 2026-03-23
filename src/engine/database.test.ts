@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Database } from './database.ts';
+import { ConfigStore } from '../config-store.ts';
 
 function createDb(time = 1000): {
   db: Database;
@@ -670,9 +671,6 @@ describe('Database', () => {
       decayTime?: string;
       logFactor?: string;
     }) {
-      const { ConfigStore } =
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        require('../config-store.ts') as typeof import('../config-store.ts');
       let now = opts?.time ?? 1000;
       const config = new ConfigStore();
       config.set('maxmemory-policy', opts?.policy ?? 'allkeys-lfu');

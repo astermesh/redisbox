@@ -19,6 +19,7 @@ import type { Reply } from './types.ts';
 import { errorReply } from './types.ts';
 import { parseMemorySize } from './memory.ts';
 import { getLruClock, estimateIdleTime } from './lru.ts';
+import { lfuGetTimeInMinutes, lfuDecrAndReturn } from './lfu.ts';
 
 export type EvictionPolicy =
   | 'noeviction'
@@ -284,16 +285,17 @@ export class EvictionManager {
   }
 
   /**
-   * Sample keys and evict the one with the lowest frequency counter (smallest lruFreq).
-   * Ties are broken by LRU clock (oldest access wins).
+   * Sample keys and evict using approximated LFU with the eviction pool.
+   * Matches Redis: scores each key as `255 - LFUDecrAndReturn(o)` and
+   * uses the same pool mechanism as LRU eviction.
    */
   private evictByLfu(volatileOnly: boolean, samples: number): boolean {
-    let bestKey: string | null = null;
-    let bestDb: Database | null = null;
-    let bestFreq = Infinity;
-    let bestClock = Infinity;
+    const nowMinutes = lfuGetTimeInMinutes(this.engine.clock());
+    const decayTime = this.getLfuDecayTime();
 
-    for (const db of this.engine.databases) {
+    for (let dbIdx = 0; dbIdx < this.engine.databases.length; dbIdx++) {
+      const db = this.engine.databases[dbIdx];
+      if (!db) continue;
       const keys = volatileOnly
         ? db.sampleVolatileKeys(samples, this.engine.rng)
         : db.sampleKeys(samples, this.engine.rng);
@@ -301,23 +303,25 @@ export class EvictionManager {
       for (const key of keys) {
         const entry = db.getRaw(key);
         if (!entry) continue;
-        if (
-          entry.lruFreq < bestFreq ||
-          (entry.lruFreq === bestFreq && entry.lruClock < bestClock)
-        ) {
-          bestFreq = entry.lruFreq;
-          bestClock = entry.lruClock;
-          bestKey = key;
-          bestDb = db;
-        }
+
+        const counter = lfuDecrAndReturn(
+          entry.lruFreq,
+          entry.lfuLastDecrTime,
+          nowMinutes,
+          decayTime
+        );
+        const idle = 255 - counter;
+        this.insertIntoPool(idle, key, dbIdx);
       }
     }
 
-    if (bestKey && bestDb) {
-      bestDb.delete(bestKey);
-      return true;
-    }
-    return false;
+    return this.evictFromPool();
+  }
+
+  private getLfuDecayTime(): number {
+    const result = this.config.get('lfu-decay-time');
+    const n = parseInt(result[1] ?? '1', 10);
+    return isNaN(n) ? 1 : n;
   }
 
   /**

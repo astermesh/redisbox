@@ -39,7 +39,7 @@ export function lfuTimeElapsed(
   if (nowMinutes >= lastDecrTime) {
     return nowMinutes - lastDecrTime;
   }
-  return nowMinutes + LFU_MINUTES_MAX + 1 - lastDecrTime;
+  return LFU_MINUTES_MAX - lastDecrTime + nowMinutes;
 }
 
 /**
