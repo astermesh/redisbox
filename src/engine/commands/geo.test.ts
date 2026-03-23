@@ -1853,3 +1853,45 @@ describe('COUNT ANY with sorting', () => {
     expect(result.kind).toBe('error');
   });
 });
+
+// --- Encoding transitions for GEO-backed sorted sets ---
+
+describe('geo encoding transitions', () => {
+  it('GEOADD uses listpack for small geo sets', () => {
+    const { db, rng } = createDb();
+    geo.geoadd(db, ['k', '13.361', '38.115', 'Palermo'], rng);
+    expect(db.get('k')?.encoding).toBe('listpack');
+  });
+
+  it('GEOADD transitions to skiplist when exceeding entry count', () => {
+    const { db, rng } = createDb();
+    const args: string[] = ['k'];
+    for (let i = 0; i <= 128; i++) {
+      args.push(String((i % 180) - 90), String((i % 170) - 85), `loc${i}`);
+    }
+    geo.geoadd(db, args, rng);
+    expect(db.get('k')?.encoding).toBe('skiplist');
+  });
+
+  it('GEOADD transitions to skiplist when member exceeds byte length', () => {
+    const { db, rng } = createDb();
+    const longName = 'x'.repeat(65);
+    geo.geoadd(db, ['k', '13.361', '38.115', longName], rng);
+    expect(db.get('k')?.encoding).toBe('skiplist');
+  });
+
+  it('GEOSEARCHSTORE creates listpack for small result', () => {
+    const { db, rng } = createDb();
+    geo.geoadd(
+      db,
+      ['src', '13.361', '38.115', 'Palermo', '15.087', '37.502', 'Catania'],
+      rng
+    );
+    geo.geosearchstore(
+      db,
+      ['dst', 'src', 'FROMLONLAT', '15', '37', 'BYRADIUS', '200', 'km'],
+      rng
+    );
+    expect(db.get('dst')?.encoding).toBe('listpack');
+  });
+});

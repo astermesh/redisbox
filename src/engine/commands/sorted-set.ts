@@ -45,7 +45,9 @@ function fitsListpack(
 /**
  * Choose initial encoding for a new sorted set based on its contents.
  */
-function chooseEncoding(dict: Map<string, number>): 'listpack' | 'skiplist' {
+export function chooseEncoding(
+  dict: Map<string, number>
+): 'listpack' | 'skiplist' {
   return fitsListpack(dict) ? 'listpack' : 'skiplist';
 }
 
@@ -54,7 +56,7 @@ function chooseEncoding(dict: Map<string, number>): 'listpack' | 'skiplist' {
  * Redis only transitions in one direction: listpack → skiplist.
  * Once promoted, it never reverts back — even if the set shrinks.
  */
-function updateEncoding(db: Database, key: string): void {
+export function updateEncoding(db: Database, key: string): void {
   const entry = db.get(key);
   if (!entry || entry.type !== 'zset') return;
   if (entry.encoding === 'skiplist') return; // never demote
