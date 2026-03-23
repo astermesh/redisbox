@@ -152,10 +152,12 @@ describe('MEMORY USAGE', () => {
 });
 
 describe('MEMORY DOCTOR', () => {
-  it('returns bulk string', () => {
+  it('returns bulk string matching Redis default', () => {
     const reply = cmd.memoryDoctor();
     expect(reply.kind).toBe('bulk');
-    expect((reply as { value: string }).value).toContain('no memory problems');
+    expect((reply as { value: string }).value).toContain(
+      "I can't find any memory issue"
+    );
   });
 });
 
@@ -173,6 +175,13 @@ describe('MEMORY PURGE', () => {
 });
 
 describe('MEMORY STATS', () => {
+  function findField(
+    arr: { kind: string; value: unknown }[],
+    name: string
+  ): number {
+    return arr.findIndex((r) => r.kind === 'bulk' && r.value === name);
+  }
+
   it('returns array with memory info', () => {
     const { engine } = createDb();
     const reply = cmd.memoryStats(engine);
@@ -185,9 +194,7 @@ describe('MEMORY STATS', () => {
     const { engine } = createDb();
     const reply = cmd.memoryStats(engine);
     const arr = (reply as { value: { kind: string; value: unknown }[] }).value;
-    const idx = arr.findIndex(
-      (r) => r.kind === 'bulk' && r.value === 'keys.count'
-    );
+    const idx = findField(arr, 'keys.count');
     expect(idx).toBeGreaterThanOrEqual(0);
     expect(arr[idx + 1]).toEqual({ kind: 'integer', value: 0 });
   });
@@ -198,10 +205,53 @@ describe('MEMORY STATS', () => {
     db.set('b', 'string', 'raw', 'v');
     const reply = cmd.memoryStats(engine);
     const arr = (reply as { value: { kind: string; value: unknown }[] }).value;
-    const idx = arr.findIndex(
-      (r) => r.kind === 'bulk' && r.value === 'keys.count'
-    );
+    const idx = findField(arr, 'keys.count');
     expect(arr[idx + 1]).toEqual({ kind: 'integer', value: 2 });
+  });
+
+  it('omits db entries for empty databases', () => {
+    const { engine } = createDb();
+    const reply = cmd.memoryStats(engine);
+    const arr = (reply as { value: { kind: string; value: unknown }[] }).value;
+    const dbIdx = findField(arr, 'db.0');
+    expect(dbIdx).toBe(-1);
+  });
+
+  it('includes db entry only for non-empty databases', () => {
+    const { engine } = createDb();
+    engine.db(0).set('a', 'string', 'raw', 'v');
+    engine.db(2).set('b', 'string', 'raw', 'v');
+    const reply = cmd.memoryStats(engine);
+    const arr = (reply as { value: { kind: string; value: unknown }[] }).value;
+    expect(findField(arr, 'db.0')).toBeGreaterThanOrEqual(0);
+    expect(findField(arr, 'db.1')).toBe(-1);
+    expect(findField(arr, 'db.2')).toBeGreaterThanOrEqual(0);
+  });
+
+  it('includes fragmentation fields', () => {
+    const { engine } = createDb();
+    const reply = cmd.memoryStats(engine);
+    const arr = (reply as { value: { kind: string; value: unknown }[] }).value;
+    expect(
+      findField(arr, 'allocator-fragmentation.ratio')
+    ).toBeGreaterThanOrEqual(0);
+    expect(
+      findField(arr, 'allocator-fragmentation.bytes')
+    ).toBeGreaterThanOrEqual(0);
+    expect(findField(arr, 'allocator-rss.ratio')).toBeGreaterThanOrEqual(0);
+    expect(findField(arr, 'allocator-rss.bytes')).toBeGreaterThanOrEqual(0);
+    expect(findField(arr, 'rss-overhead.ratio')).toBeGreaterThanOrEqual(0);
+    expect(findField(arr, 'rss-overhead.bytes')).toBeGreaterThanOrEqual(0);
+    expect(findField(arr, 'fragmentation')).toBeGreaterThanOrEqual(0);
+    expect(findField(arr, 'fragmentation.bytes')).toBeGreaterThanOrEqual(0);
+  });
+
+  it('returns 0.00% for dataset.percentage when empty', () => {
+    const { engine } = createDb();
+    const reply = cmd.memoryStats(engine);
+    const arr = (reply as { value: { kind: string; value: unknown }[] }).value;
+    const idx = findField(arr, 'dataset.percentage');
+    expect(arr[idx + 1]).toEqual({ kind: 'bulk', value: '0.00%' });
   });
 });
 
@@ -211,6 +261,17 @@ describe('MEMORY HELP', () => {
     expect(reply.kind).toBe('array');
     const arr = (reply as { value: unknown[] }).value;
     expect(arr.length).toBeGreaterThan(0);
+  });
+
+  it('includes all subcommand names', () => {
+    const reply = cmd.memoryHelp();
+    const arr = (reply as { value: { value: string }[] }).value;
+    const text = arr.map((r) => r.value).join('\n');
+    expect(text).toContain('DOCTOR');
+    expect(text).toContain('MALLOC-STATS');
+    expect(text).toContain('PURGE');
+    expect(text).toContain('STATS');
+    expect(text).toContain('USAGE');
   });
 });
 

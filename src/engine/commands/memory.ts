@@ -60,7 +60,10 @@ export function memoryUsage(db: Database, args: string[]): Reply {
 }
 
 export function memoryDoctor(): Reply {
-  return bulkReply('Sam, I have no memory problems');
+  return bulkReply(
+    "Hi Sam, I can't find any memory issue in your instance. " +
+      'I can only account for what occurs on this base.\n'
+  );
 }
 
 export function memoryMallocStats(): Reply {
@@ -85,6 +88,8 @@ export function memoryStats(engine: RedisEngine): Reply {
     heapTotal = mem.heapTotal;
   }
 
+  const keyCount = countAllKeys(engine);
+
   const stats: Reply[] = [
     bulkReply('peak.allocated'),
     integerReply(used),
@@ -106,60 +111,86 @@ export function memoryStats(engine: RedisEngine): Reply {
     integerReply(0),
     bulkReply('functions.caches'),
     integerReply(0),
-    bulkReply('dbnum'),
-    integerReply(engine.databases.length),
-    bulkReply('db.0'),
-    arrayReply([
-      bulkReply('overhead.hashtable.main'),
-      integerReply(0),
-      bulkReply('overhead.hashtable.expires'),
-      integerReply(0),
-      bulkReply('overhead.hashtable.slot-to-key'),
-      integerReply(0),
-    ]),
+  ];
+
+  // Per-database entries — only for non-empty databases (matches real Redis)
+  for (let i = 0; i < engine.databases.length; i++) {
+    const db = engine.databases[i];
+    if (db && db.size > 0) {
+      stats.push(
+        bulkReply(`db.${i}`),
+        arrayReply([
+          bulkReply('overhead.hashtable.main'),
+          integerReply(0),
+          bulkReply('overhead.hashtable.expires'),
+          integerReply(0),
+          bulkReply('overhead.hashtable.slot-to-key'),
+          integerReply(0),
+        ])
+      );
+    }
+  }
+
+  stats.push(
     bulkReply('overhead.total'),
     integerReply(0),
     bulkReply('keys.count'),
-    integerReply(countAllKeys(engine)),
+    integerReply(keyCount),
     bulkReply('keys.bytes-per-key'),
     integerReply(avgBytesPerKey(engine, used)),
     bulkReply('dataset.bytes'),
     integerReply(used),
     bulkReply('dataset.percentage'),
-    bulkReply('100.00%'),
+    bulkReply(used > 0 ? '100.00%' : '0.00%'),
     bulkReply('peak.percentage'),
-    bulkReply('100.00%'),
+    bulkReply(used > 0 ? '100.00%' : '0.00%'),
     bulkReply('allocator.allocated'),
     integerReply(heapUsed),
     bulkReply('allocator.active'),
     integerReply(heapTotal),
     bulkReply('allocator.resident'),
     integerReply(rss),
-  ];
+    bulkReply('allocator-fragmentation.ratio'),
+    bulkReply(heapUsed > 0 ? (heapTotal / heapUsed).toFixed(2) : '0.00'),
+    bulkReply('allocator-fragmentation.bytes'),
+    integerReply(Math.max(0, heapTotal - heapUsed)),
+    bulkReply('allocator-rss.ratio'),
+    bulkReply(heapTotal > 0 ? (rss / heapTotal).toFixed(2) : '0.00'),
+    bulkReply('allocator-rss.bytes'),
+    integerReply(Math.max(0, rss - heapTotal)),
+    bulkReply('rss-overhead.ratio'),
+    bulkReply('1.00'),
+    bulkReply('rss-overhead.bytes'),
+    integerReply(0),
+    bulkReply('fragmentation'),
+    bulkReply(used > 0 ? (rss / used).toFixed(2) : '0.00'),
+    bulkReply('fragmentation.bytes'),
+    integerReply(Math.max(0, rss - used))
+  );
 
   return arrayReply(stats);
 }
 
 export function memoryHelp(): Reply {
   return arrayReply([
-    bulkReply(
-      'MEMORY <subcommand> [<arg> [value] [opt] ...]. Subcommands are:'
-    ),
     bulkReply('DOCTOR'),
     bulkReply('    Return memory problems reports.'),
-    bulkReply('HELP'),
-    bulkReply('    Return subcommand help summary.'),
     bulkReply('MALLOC-STATS'),
     bulkReply(
       '    Return internal statistics report from the memory allocator.'
     ),
     bulkReply('PURGE'),
-    bulkReply('    Ask the allocator to release memory.'),
+    bulkReply(
+      '    Attempt to purge dirty pages for reclamation by the allocator.'
+    ),
     bulkReply('STATS'),
     bulkReply('    Return information about the memory usage of the server.'),
     bulkReply('USAGE <key> [SAMPLES <count>]'),
     bulkReply(
-      '    Return memory in bytes used by <key> and its value. Nested values are sampled with <count> (default: 5).'
+      '    Return memory in bytes used by <key> and its value. Nested values are'
+    ),
+    bulkReply(
+      '    sampled up to <count> times (default: 5, 0 means sample all).'
     ),
   ]);
 }
@@ -238,7 +269,7 @@ export const specs: CommandSpec[] = [
         firstKey: 2,
         lastKey: 2,
         keyStep: 1,
-        categories: ['@slow'],
+        categories: ['@read', '@slow'],
       },
       {
         name: 'doctor',
@@ -284,7 +315,7 @@ export const specs: CommandSpec[] = [
         name: 'help',
         handler: () => memoryHelp(),
         arity: 2,
-        flags: ['readonly'],
+        flags: ['loading', 'stale'],
         firstKey: 0,
         lastKey: 0,
         keyStep: 0,
