@@ -25,7 +25,7 @@ describe('parseKeyspaceEventFlags', () => {
     expect(flags & EVENT_FLAGS.KEYEVENT).not.toBe(0);
   });
 
-  it('parses A flag as alias for g$lshzxetd', () => {
+  it('parses A flag as alias for g$lshzxet', () => {
     const flags = parseKeyspaceEventFlags('A');
     expect(flags & EVENT_FLAGS.GENERIC).not.toBe(0);
     expect(flags & EVENT_FLAGS.STRING).not.toBe(0);
@@ -36,8 +36,8 @@ describe('parseKeyspaceEventFlags', () => {
     expect(flags & EVENT_FLAGS.EXPIRED).not.toBe(0);
     expect(flags & EVENT_FLAGS.EVICTED).not.toBe(0);
     expect(flags & EVENT_FLAGS.STREAM).not.toBe(0);
-    expect(flags & EVENT_FLAGS.MODULE).not.toBe(0);
-    // A does NOT include K, E, m, or n
+    // A does NOT include K, E, m, d, or n
+    expect(flags & EVENT_FLAGS.MODULE).toBe(0);
     expect(flags & EVENT_FLAGS.KEYSPACE).toBe(0);
     expect(flags & EVENT_FLAGS.KEYEVENT).toBe(0);
     expect(flags & EVENT_FLAGS.KEY_MISS).toBe(0);
@@ -71,6 +71,31 @@ describe('parseKeyspaceEventFlags', () => {
     expect(parseKeyspaceEventFlags('KQZ')).toBe(-1);
     expect(parseKeyspaceEventFlags('Q')).toBe(-1);
     expect(parseKeyspaceEventFlags('Kg!')).toBe(-1);
+  });
+
+  it('parses A combined with K and E', () => {
+    const flags = parseKeyspaceEventFlags('AKE');
+    expect(flags & EVENT_FLAGS.KEYSPACE).not.toBe(0);
+    expect(flags & EVENT_FLAGS.KEYEVENT).not.toBe(0);
+    expect(flags & EVENT_FLAGS.GENERIC).not.toBe(0);
+    expect(flags & EVENT_FLAGS.STRING).not.toBe(0);
+  });
+
+  it('parses A combined with extra flags d and n', () => {
+    const flags = parseKeyspaceEventFlags('AKdn');
+    expect(flags & EVENT_FLAGS.MODULE).not.toBe(0);
+    expect(flags & EVENT_FLAGS.NEW).not.toBe(0);
+    expect(flags & EVENT_FLAGS.KEYSPACE).not.toBe(0);
+  });
+
+  it('returns -1 for lowercase k (only uppercase K is valid)', () => {
+    expect(parseKeyspaceEventFlags('k')).toBe(-1);
+  });
+
+  it('handles duplicate characters idempotently', () => {
+    const single = parseKeyspaceEventFlags('Kg');
+    const duped = parseKeyspaceEventFlags('KKKggg');
+    expect(single).toBe(duped);
   });
 });
 
@@ -112,6 +137,34 @@ describe('keyspaceEventsFlagsToString', () => {
     const flags = parseKeyspaceEventFlags('KKKggg');
     expect(keyspaceEventsFlagsToString(flags)).toBe('gK');
   });
+
+  it('serializes d and n when A is not active', () => {
+    const flags = parseKeyspaceEventFlags('Kgdn');
+    const result = keyspaceEventsFlagsToString(flags);
+    expect(result).toBe('gdnK');
+  });
+
+  it('drops d and n when A is active (matches Redis)', () => {
+    // When all A-type flags are set, d and n are in the else branch
+    // and get dropped — this matches Redis behavior
+    const flags = parseKeyspaceEventFlags('AKdn');
+    expect(keyspaceEventsFlagsToString(flags)).toBe('AK');
+  });
+
+  it('serializes m always (outside else branch)', () => {
+    const flags = parseKeyspaceEventFlags('AKm');
+    expect(keyspaceEventsFlagsToString(flags)).toBe('AKm');
+  });
+
+  it('serializes module flag alone', () => {
+    expect(keyspaceEventsFlagsToString(EVENT_FLAGS.MODULE)).toBe('d');
+  });
+
+  it('preserves canonical order for all individual flags', () => {
+    const flags = parseKeyspaceEventFlags('mEnK$gd');
+    const result = keyspaceEventsFlagsToString(flags);
+    expect(result).toBe('g$dnKEm');
+  });
 });
 
 describe('normalizeKeyspaceEventConfig', () => {
@@ -128,6 +181,11 @@ describe('normalizeKeyspaceEventConfig', () => {
   });
 
   it('normalizes to A when all type flags present', () => {
+    expect(normalizeKeyspaceEventConfig('Kg$lshzxet')).toBe('AK');
+  });
+
+  it('normalizes to A and drops d when all type flags plus module', () => {
+    // Redis drops d and n when A is used (they are inside the else branch)
     expect(normalizeKeyspaceEventConfig('Kg$lshzxetd')).toBe('AK');
   });
 });
@@ -219,7 +277,7 @@ describe('notifyKeyspaceEvent', () => {
     expect(messages).toHaveLength(1);
   });
 
-  it('handles A flag enabling all type events', () => {
+  it('handles A flag enabling all standard type events', () => {
     config.set('notify-keyspace-events', 'KA');
     pubsub.subscribe(1, '__keyspace@0__:mykey');
 
@@ -234,7 +292,29 @@ describe('notifyKeyspaceEvent', () => {
     notifyKeyspaceEvent(config, pubsub, EVENT_FLAGS.HASH, 'hset', 'mykey', 0);
     expect(messages).toHaveLength(1);
 
-    // A includes MODULE
+    messages.length = 0;
+    notifyKeyspaceEvent(
+      config,
+      pubsub,
+      EVENT_FLAGS.SORTEDSET,
+      'zadd',
+      'mykey',
+      0
+    );
+    expect(messages).toHaveLength(1);
+
+    messages.length = 0;
+    notifyKeyspaceEvent(
+      config,
+      pubsub,
+      EVENT_FLAGS.EXPIRED,
+      'expired',
+      'mykey',
+      0
+    );
+    expect(messages).toHaveLength(1);
+
+    // A does NOT include module (d) — must be enabled separately
     messages.length = 0;
     notifyKeyspaceEvent(
       config,
@@ -244,7 +324,7 @@ describe('notifyKeyspaceEvent', () => {
       'mykey',
       0
     );
-    expect(messages).toHaveLength(1);
+    expect(messages).toHaveLength(0);
   });
 
   it('delivers to pattern subscribers', () => {
@@ -383,8 +463,93 @@ describe('notifyKeyspaceEvent', () => {
   });
 
   it('config collapses to A when all type flags present', () => {
-    config.set('notify-keyspace-events', 'KEg$lshzxetd');
+    config.set('notify-keyspace-events', 'KEg$lshzxet');
     const result = config.get('notify-keyspace-events');
     expect(result[1]).toBe('AKE');
+  });
+
+  it('config collapses to A and drops d/n when all flags plus extras', () => {
+    config.set('notify-keyspace-events', 'KEg$lshzxetdn');
+    const result = config.get('notify-keyspace-events');
+    // d and n are inside the else branch in Redis — dropped when A is used
+    expect(result[1]).toBe('AKE');
+  });
+
+  it('does nothing when only type flags set without K or E', () => {
+    // "At least K or E must be set for any notifications"
+    config.set('notify-keyspace-events', 'g$lsh');
+    pubsub.subscribe(1, '__keyspace@0__:mykey');
+    pubsub.subscribe(2, '__keyevent@0__:set');
+    notifyKeyspaceEvent(config, pubsub, EVENT_FLAGS.STRING, 'set', 'mykey', 0);
+    expect(messages).toHaveLength(0);
+  });
+
+  it('does nothing when A set without K or E', () => {
+    config.set('notify-keyspace-events', 'A');
+    pubsub.subscribe(1, '__keyspace@0__:mykey');
+    notifyKeyspaceEvent(config, pubsub, EVENT_FLAGS.GENERIC, 'del', 'mykey', 0);
+    expect(messages).toHaveLength(0);
+  });
+
+  it('enables notifications after CONFIG SET and disables after reset', () => {
+    config.set('notify-keyspace-events', 'Kg');
+    pubsub.subscribe(1, '__keyspace@0__:mykey');
+
+    notifyKeyspaceEvent(config, pubsub, EVENT_FLAGS.GENERIC, 'del', 'mykey', 0);
+    expect(messages).toHaveLength(1);
+
+    // Disable notifications
+    messages.length = 0;
+    config.set('notify-keyspace-events', '');
+    notifyKeyspaceEvent(config, pubsub, EVENT_FLAGS.GENERIC, 'del', 'mykey', 0);
+    expect(messages).toHaveLength(0);
+  });
+
+  it('selectively enables only configured event types', () => {
+    // Enable only hash events on keyspace channel
+    config.set('notify-keyspace-events', 'Kh');
+    pubsub.subscribe(1, '__keyspace@0__:mykey');
+
+    // Hash event — should fire
+    notifyKeyspaceEvent(config, pubsub, EVENT_FLAGS.HASH, 'hset', 'mykey', 0);
+    expect(messages).toHaveLength(1);
+
+    // String event — should not fire ($ not enabled)
+    messages.length = 0;
+    notifyKeyspaceEvent(config, pubsub, EVENT_FLAGS.STRING, 'set', 'mykey', 0);
+    expect(messages).toHaveLength(0);
+
+    // List event — should not fire (l not enabled)
+    notifyKeyspaceEvent(config, pubsub, EVENT_FLAGS.LIST, 'lpush', 'mykey', 0);
+    expect(messages).toHaveLength(0);
+  });
+
+  it('handles module (d) event type', () => {
+    config.set('notify-keyspace-events', 'Kd');
+    pubsub.subscribe(1, '__keyspace@0__:mykey');
+    notifyKeyspaceEvent(
+      config,
+      pubsub,
+      EVENT_FLAGS.MODULE,
+      'module-event',
+      'mykey',
+      0
+    );
+    expect(messages).toHaveLength(1);
+  });
+
+  it('handles A with module events (A does not include d)', () => {
+    // A doesn't include d, so module events should NOT fire with just KA
+    config.set('notify-keyspace-events', 'KA');
+    pubsub.subscribe(1, '__keyspace@0__:mykey');
+    notifyKeyspaceEvent(
+      config,
+      pubsub,
+      EVENT_FLAGS.MODULE,
+      'module-event',
+      'mykey',
+      0
+    );
+    expect(messages).toHaveLength(0);
   });
 });
