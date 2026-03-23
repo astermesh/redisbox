@@ -1,5 +1,7 @@
 # T01: Dual-Backend Test Harness
 
+**Status:** done
+
 Build a test utility that runs the same Redis commands against both RedisBox and a real Redis instance, then compares responses.
 
 ## Details
