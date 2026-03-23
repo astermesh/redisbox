@@ -1,5 +1,7 @@
 # S14: Blocking Commands
 
+**Status:** done
+
 Implement blocking variants of list, sorted set, and stream commands. Clients block until data is available or timeout expires. Requires cross-client notification when data is pushed.
 
 ## Tasks

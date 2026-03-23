@@ -2,6 +2,7 @@ import { Database } from './database.ts';
 import type { EngineDeps } from './types.ts';
 import { PubSubManager } from './pubsub-manager.ts';
 import { BlockingManager } from './blocking-manager.ts';
+import { TimeoutManager } from './timeout-manager.ts';
 import { estimateKeyMemory } from './memory.ts';
 import { AclStore } from './acl-store.ts';
 import { SlowlogManager } from './slowlog.ts';
@@ -22,6 +23,7 @@ export class RedisEngine {
   readonly rng: () => number;
   readonly pubsub = new PubSubManager();
   readonly blocking = new BlockingManager();
+  readonly timeouts: TimeoutManager;
   readonly acl = new AclStore();
   readonly slowlog = new SlowlogManager();
   readonly latency = new LatencyManager();
@@ -38,6 +40,7 @@ export class RedisEngine {
     this.clock = () => this.obi.clock();
     this.rng = () => this.obi.rng();
     this.startTime = this.clock();
+    this.timeouts = new TimeoutManager(this.blocking, this.clock);
 
     this.databases = [];
     for (let i = 0; i < NUM_DATABASES; i++) {
