@@ -449,6 +449,7 @@ describe('createCommandTable (registry)', () => {
       'evalsha',
       'eval_ro',
       'evalsha_ro',
+      'script',
       'time',
       'debug',
       'monitor',
