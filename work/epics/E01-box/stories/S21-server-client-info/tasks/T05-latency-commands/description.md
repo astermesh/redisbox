@@ -1,5 +1,7 @@
 # T05: LATENCY Commands
 
+**Status:** done
+
 Implement the LATENCY monitoring subsystem (since Redis 2.8.13). Tracks latency spikes for various server events.
 
 ## Commands
