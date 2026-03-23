@@ -29,6 +29,7 @@ import { specs as hyperloglogSpecs } from './commands/hyperloglog.ts';
 import { specs as geoSpecs } from './commands/geo.ts';
 import { specs as replicationSpecs } from './commands/replication.ts';
 import { specs as slowlogSpecs } from './commands/slowlog.ts';
+import { specs as latencySpecs } from './commands/latency.ts';
 import { specs as persistenceSpecs } from './commands/persistence.ts';
 import { specs as scriptingSpecs } from './commands/scripting.ts';
 import { specs as serverSpecs } from './commands/server.ts';
@@ -63,6 +64,7 @@ const allSpecs: CommandSpec[] = [
   ...geoSpecs,
   ...replicationSpecs,
   ...slowlogSpecs,
+  ...latencySpecs,
   ...persistenceSpecs,
   ...scriptingSpecs,
   ...serverSpecs,

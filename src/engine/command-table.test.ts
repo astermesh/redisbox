@@ -433,6 +433,7 @@ describe('createCommandTable (registry)', () => {
       'psync',
       'waitaof',
       'slowlog',
+      'latency',
       'bgsave',
       'bgrewriteaof',
       'save',

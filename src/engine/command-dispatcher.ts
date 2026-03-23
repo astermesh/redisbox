@@ -447,6 +447,20 @@ export class CommandDispatcher {
         '',
         ctx.client?.name ?? ''
       );
+
+      // Record to latency monitor if duration exceeds threshold
+      const latencyThresholdMs = parseInt(
+        ctx.config.get('latency-monitor-threshold')[1] ?? '0',
+        10
+      );
+      const durationMs = Math.round(durationUs / 1000);
+      const isFast = def.flags.has('fast');
+      ctx.engine.latency.record(
+        isFast ? 'fast-command' : 'command',
+        durationMs,
+        latencyThresholdMs,
+        timestampSec
+      );
     }
 
     // Sync subscriber mode from client state (set by SUBSCRIBE/UNSUBSCRIBE handlers)
