@@ -93,6 +93,43 @@ describe('ScriptManager', () => {
     });
   });
 
+  describe('validateScript', () => {
+    it('returns null for valid script', () => {
+      expect(manager.validateScript('return 1')).toBeNull();
+    });
+
+    it('returns null for empty script', () => {
+      expect(manager.validateScript('')).toBeNull();
+    });
+
+    it('returns error string for syntax error', () => {
+      const err = manager.validateScript('invalid lua !!!');
+      expect(err).not.toBeNull();
+      expect(typeof err).toBe('string');
+    });
+
+    it('returns error for incomplete script', () => {
+      const err = manager.validateScript('function foo()');
+      expect(err).not.toBeNull();
+    });
+
+    it('does not execute the script (no side effects)', () => {
+      // If the script were executed, it would set a global
+      manager.validateScript('MY_VALIDATE_TEST = true');
+      // Verify no global was set
+      const result = manager.evalScript(
+        'return MY_VALIDATE_TEST',
+        [],
+        [],
+        false,
+        undefined,
+        makeExecutor()
+      );
+      // Should be nil (not set), which maps to bulkReply(null)
+      expect(result).toEqual(bulkReply(null));
+    });
+  });
+
   describe('evalScript', () => {
     it('executes a simple script', () => {
       const result = manager.evalScript(
