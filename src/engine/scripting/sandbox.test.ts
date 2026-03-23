@@ -582,12 +582,12 @@ describe('sandbox', () => {
       expect(result.values).toEqual([-12345]);
     });
 
-    it('round-trips a string with length prefix', async () => {
+    it('round-trips a zero-terminated string', async () => {
       const result = await engine.execute(`
         local packed = struct.pack(">s", "hello")
         return struct.unpack(">s", packed)
       `);
-      // The >s format packs a length-prefixed string
+      // The s format packs a zero-terminated string (matching Redis struct library)
       expect(result.values).toEqual(['hello']);
     });
 
@@ -737,18 +737,18 @@ describe('sandbox', () => {
       expect(result.values[0]).toBe('170829,749902,96372');
     });
 
-    it('produces Redis-compatible sequence with hardcoded initial state', async () => {
-      // Redis initializes PRNG with state {0x330E, 0xABCD, 0x1234}
-      // This is the state after engine init, before any randomseed call
+    it('produces Redis-compatible sequence with default per-EVAL state', async () => {
+      // Redis calls redisSrand48(0) before every EVAL for deterministic replication.
+      // applySandbox initializes with srand48(0), so the default state matches.
+      // This test verifies the sequence WITHOUT any explicit randomseed call.
       const result = await engine.execute(`
         local v1 = math.random(1000000)
         local v2 = math.random(1000000)
         local v3 = math.random(1000000)
         return v1 .. "," .. v2 .. "," .. v3
       `);
-      // Verified against real Redis: EVAL "return math.random(1000000)" 0
-      // (without any randomseed call, using default state)
-      expect(result.values[0]).toBe('396465,840486,353337');
+      // Same as seed=0 — matches Redis EVAL behavior
+      expect(result.values[0]).toBe('170829,749902,96372');
     });
   });
 });

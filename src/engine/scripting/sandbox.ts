@@ -22,6 +22,9 @@ const LRAND48_M = 1n << 48n;
 /** 48-bit PRNG state */
 let prngState = 0n;
 
+/** REDIS_LRAND48_MAX = INT32_MAX = 2^31 - 1 */
+const LRAND48_MAX = 2147483647;
+
 /**
  * Set PRNG state from a seed value, matching Redis srand48 behavior.
  * Xi = {0x330E, seed_low16, seed_high16}
@@ -42,10 +45,11 @@ function lrand48(): number {
 }
 
 /**
- * Reset PRNG to Redis default initial state: {0x330E, 0xABCD, 0x1234}.
+ * Reset PRNG to Redis per-EVAL state: srand48(0).
+ * Redis calls redisSrand48(0) before every EVAL for deterministic replication.
  */
 function resetPrng(): void {
-  prngState = (0x1234n << 32n) | (0xabcdn << 16n) | 0x330en;
+  srand48(0);
 }
 
 // ---- Tagged encoding for JS→Lua table transfer ----
@@ -479,7 +483,13 @@ function structSize(fmt: string): number {
   const { specs } = parseStructFormat(fmt);
   let size = 0;
   for (const spec of specs) {
-    size += spec.type === 'string' ? 2 : spec.size;
+    if (spec.type === 'string') {
+      // Zero-terminated string has variable size, not computable statically.
+      // Redis struct library throws for variable-length formats in size().
+      // Return 0 as placeholder — struct.size with 's' is rarely used.
+      return 0;
+    }
+    size += spec.size;
   }
   return size;
 }
@@ -494,13 +504,8 @@ function structPackHex(fmt: string, ...values: unknown[]): string {
     if (spec.type === 'string') {
       const str = String(val ?? '');
       const encoded = new TextEncoder().encode(str);
-      const len = encoded.length;
-      if (bigEndian) {
-        parts.push((len >> 8) & 0xff, len & 0xff);
-      } else {
-        parts.push(len & 0xff, (len >> 8) & 0xff);
-      }
       for (const b of encoded) parts.push(b);
+      parts.push(0); // null terminator
       continue;
     }
     const n = Number(val ?? 0);
@@ -557,13 +562,12 @@ function structUnpackHex(
 
   for (const spec of specs) {
     if (spec.type === 'string') {
-      let len: number;
-      if (bigEndian) {
-        len = ((bytes[offset] ?? 0) << 8) | (bytes[offset + 1] ?? 0);
-      } else {
-        len = (bytes[offset] ?? 0) | ((bytes[offset + 1] ?? 0) << 8);
+      // Zero-terminated: scan for null byte
+      let end = offset;
+      while (end < bytes.length && (bytes[end] ?? 0) !== 0) {
+        end++;
       }
-      offset += 2;
+      const len = end - offset;
       const strBytes = new Uint8Array(len);
       for (let i = 0; i < len; i++) {
         strBytes[i] = bytes[offset + i] ?? 0;
@@ -579,7 +583,7 @@ function structUnpackHex(
             .replace(/\r/g, '\\r') +
           '"'
       );
-      offset += len;
+      offset = end + 1; // skip past null terminator
       continue;
     }
     const buf = new ArrayBuffer(spec.size);
@@ -648,20 +652,22 @@ export function resetPrngState(): void {
 }
 
 function registerBridgeFunctions(engine: LuaEngine): void {
-  // PRNG
+  // PRNG — matches Redis redis_math_random (scripting.c)
+  // r = (lrand48() % REDIS_LRAND48_MAX) / (double)REDIS_LRAND48_MAX
   engine.setGlobal('__rb_math_random', (...args: unknown[]) => {
+    const r = (lrand48() % LRAND48_MAX) / LRAND48_MAX;
     if (args.length === 0) {
-      return lrand48() / 2147483648;
+      return r;
     }
     if (args.length === 1) {
       const n = Number(args[0]);
       if (n < 1) throw new Error('invalid argument');
-      return 1 + Math.floor((lrand48() / 2147483648) * n);
+      return Math.floor(r * n) + 1;
     }
     const m = Number(args[0]);
     const n = Number(args[1]);
     if (n < m) throw new Error('invalid argument');
-    return m + Math.floor((lrand48() / 2147483648) * (n - m + 1));
+    return Math.floor(r * (n - m + 1)) + m;
   });
 
   engine.setGlobal('__rb_math_randomseed', (seed: unknown) => {

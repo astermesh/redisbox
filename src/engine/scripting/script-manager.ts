@@ -18,7 +18,7 @@ import { LuaScriptError } from './lua-engine.ts';
 import type { CommandExecutor } from './redis-bridge.ts';
 import { registerRedisBridge } from './redis-bridge.ts';
 import { WasmoonEngine } from './wasmoon-engine.ts';
-import { applySandbox } from './sandbox.ts';
+import { applySandbox, resetPrngState } from './sandbox.ts';
 import { sha1 } from '../sha1.ts';
 import type { Reply } from '../types.ts';
 import {
@@ -198,6 +198,9 @@ export class ScriptManager {
       : executor;
 
     try {
+      // Redis resets PRNG to srand48(0) before every EVAL for deterministic replication
+      resetPrngState();
+
       // Set KEYS and ARGV as Lua tables
       this.setKeysAndArgv(keys, argv);
 
