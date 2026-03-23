@@ -1,16 +1,36 @@
 import type { Database } from '../../database.ts';
 import type { Reply } from '../../types.ts';
 import { WRONGTYPE_ERR, NOT_INTEGER_ERR } from '../../types.ts';
+import type { ConfigStore } from '../../../config-store.ts';
 
 import {
   strByteLength,
+  configInt,
   DEFAULT_MAX_LISTPACK_ENTRIES,
   DEFAULT_MAX_LISTPACK_VALUE,
 } from '../../utils.ts';
 
 /**
+ * Map negative list-max-listpack-size fill factors to byte limits.
+ * Matches Redis behavior for quicklist node sizing.
+ */
+const FILL_TO_BYTES: Record<number, number> = {
+  [-1]: 4096,
+  [-2]: 8192,
+  [-3]: 16384,
+  [-4]: 32768,
+  [-5]: 65536,
+};
+
+/**
  * Check if a list should use listpack encoding based on current state.
- * Returns true if the list is small enough for listpack.
+ *
+ * Supports Redis `list-max-listpack-size` semantics:
+ * - Positive value: max number of entries in the listpack
+ * - Negative values (-1 to -5): max total byte size per listpack node
+ *
+ * When called with legacy (maxEntries, maxValue) parameters, uses the
+ * old entry-count + element-size logic for backward compatibility.
  */
 export function fitsListpack(
   items: string[],
@@ -20,6 +40,26 @@ export function fitsListpack(
   if (items.length > maxEntries) return false;
   for (const item of items) {
     if (strByteLength(item) > maxValue) return false;
+  }
+  return true;
+}
+
+/**
+ * Check if a list fits in a listpack using list-max-listpack-size semantics.
+ */
+export function fitsListpackBySize(
+  items: string[],
+  maxListpackSize: number
+): boolean {
+  if (maxListpackSize >= 1) {
+    return items.length <= maxListpackSize;
+  }
+  const limit = FILL_TO_BYTES[maxListpackSize];
+  if (limit === undefined) return false;
+  let totalBytes = 0;
+  for (const item of items) {
+    totalBytes += strByteLength(item);
+    if (totalBytes > limit) return false;
   }
   return true;
 }
@@ -60,13 +100,24 @@ export function getExistingList(
  * Redis only transitions in one direction: listpack → quicklist.
  * Once promoted, it never reverts back — even if the list shrinks.
  */
-export function updateEncoding(db: Database, key: string): void {
+export function updateEncoding(
+  db: Database,
+  key: string,
+  config?: ConfigStore
+): void {
   const entry = db.get(key);
   if (!entry || entry.type !== 'list') return;
   if (entry.encoding === 'quicklist') return; // never demote
   const items = entry.value as string[];
-  if (!fitsListpack(items)) {
-    entry.encoding = 'quicklist';
+  if (config) {
+    const maxListpackSize = configInt(config, 'list-max-listpack-size', -2);
+    if (!fitsListpackBySize(items, maxListpackSize)) {
+      entry.encoding = 'quicklist';
+    }
+  } else {
+    if (!fitsListpack(items)) {
+      entry.encoding = 'quicklist';
+    }
   }
 }
 

@@ -3,8 +3,10 @@ import type { Reply } from '../../types.ts';
 import { WRONGTYPE_ERR } from '../../types.ts';
 import { SkipList } from '../../skip-list.ts';
 import { formatFloat } from '../incr.ts';
+import type { ConfigStore } from '../../../config-store.ts';
 import {
   strByteLength,
+  configInt,
   DEFAULT_MAX_LISTPACK_ENTRIES,
   DEFAULT_MAX_LISTPACK_VALUE,
 } from '../../utils.ts';
@@ -22,17 +24,42 @@ function fitsListpack(
 }
 
 export function chooseEncoding(
-  dict: Map<string, number>
+  dict: Map<string, number>,
+  config?: ConfigStore
 ): 'listpack' | 'skiplist' {
-  return fitsListpack(dict) ? 'listpack' : 'skiplist';
+  const maxEntries = configInt(
+    config,
+    'zset-max-listpack-entries',
+    DEFAULT_MAX_LISTPACK_ENTRIES
+  );
+  const maxValue = configInt(
+    config,
+    'zset-max-listpack-value',
+    DEFAULT_MAX_LISTPACK_VALUE
+  );
+  return fitsListpack(dict, maxEntries, maxValue) ? 'listpack' : 'skiplist';
 }
 
-export function updateEncoding(db: Database, key: string): void {
+export function updateEncoding(
+  db: Database,
+  key: string,
+  config?: ConfigStore
+): void {
   const entry = db.get(key);
   if (!entry || entry.type !== 'zset') return;
   if (entry.encoding === 'skiplist') return; // never demote
   const zset = entry.value as SortedSetData;
-  if (!fitsListpack(zset.dict)) {
+  const maxEntries = configInt(
+    config,
+    'zset-max-listpack-entries',
+    DEFAULT_MAX_LISTPACK_ENTRIES
+  );
+  const maxValue = configInt(
+    config,
+    'zset-max-listpack-value',
+    DEFAULT_MAX_LISTPACK_VALUE
+  );
+  if (!fitsListpack(zset.dict, maxEntries, maxValue)) {
     entry.encoding = 'skiplist';
   }
 }

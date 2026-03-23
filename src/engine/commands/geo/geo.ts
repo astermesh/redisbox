@@ -9,6 +9,7 @@ import {
 } from '../../types.ts';
 import { formatFloat } from '../incr.ts';
 import type { CommandSpec } from '../../command-table.ts';
+import type { ConfigStore } from '../../../config-store.ts';
 import {
   type SortedSetData,
   updateEncoding,
@@ -46,7 +47,12 @@ function removeIfEmpty(db: Database, key: string, zset: SortedSetData): void {
 
 // --- GEOADD ---
 
-export function geoadd(db: Database, args: string[], rng: () => number): Reply {
+export function geoadd(
+  db: Database,
+  args: string[],
+  rng: () => number,
+  config?: ConfigStore
+): Reply {
   if (args.length < 4) {
     return errorReply('ERR', "wrong number of arguments for 'geoadd' command");
   }
@@ -134,7 +140,7 @@ export function geoadd(db: Database, args: string[], rng: () => number): Reply {
   }
 
   removeIfEmpty(db, key, zset);
-  updateEncoding(db, key);
+  updateEncoding(db, key, config);
 
   return integerReply(ch ? added + updated : added);
 }
@@ -235,7 +241,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'geoadd',
     handler: (ctx, args) => {
-      const reply = geoadd(ctx.db, args, ctx.engine.rng);
+      const reply = geoadd(ctx.db, args, ctx.engine.rng, ctx.config);
       if (reply.kind === 'integer' && (reply.value as number) >= 0) {
         notify(ctx, EVENT_FLAGS.SORTEDSET, 'zadd', args[0] ?? '');
       }
@@ -291,7 +297,7 @@ export const specs: CommandSpec[] = [
   {
     name: 'geosearchstore',
     handler: (ctx, args) => {
-      const reply = geosearchstore(ctx.db, args, ctx.engine.rng);
+      const reply = geosearchstore(ctx.db, args, ctx.engine.rng, ctx.config);
       if (reply.kind === 'integer') {
         notify(ctx, EVENT_FLAGS.SORTEDSET, 'geosearchstore', args[0] ?? '');
       }
@@ -306,7 +312,7 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'georadius',
-    handler: (ctx, args) => georadius(ctx.db, args, ctx.engine.rng),
+    handler: (ctx, args) => georadius(ctx.db, args, ctx.engine.rng, ctx.config),
     arity: -6,
     flags: ['write', 'movablekeys'],
     firstKey: 1,
@@ -316,7 +322,8 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'georadiusbymember',
-    handler: (ctx, args) => georadiusbymember(ctx.db, args, ctx.engine.rng),
+    handler: (ctx, args) =>
+      georadiusbymember(ctx.db, args, ctx.engine.rng, ctx.config),
     arity: -5,
     flags: ['write', 'movablekeys'],
     firstKey: 1,

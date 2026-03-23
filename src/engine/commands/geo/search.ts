@@ -10,6 +10,7 @@ import {
 } from '../../types.ts';
 import { SkipList } from '../../skip-list.ts';
 import { parseFloat64, formatFloat } from '../incr.ts';
+import type { ConfigStore } from '../../../config-store.ts';
 import {
   type SortedSetData,
   chooseEncoding,
@@ -456,7 +457,8 @@ export function geosearch(db: Database, args: string[]): Reply {
 export function geosearchstore(
   db: Database,
   args: string[],
-  rng: () => number
+  rng: () => number,
+  config?: ConfigStore
 ): Reply {
   if (args.length < 2) {
     return errorReply(
@@ -526,7 +528,7 @@ export function geosearchstore(
     dstZset.dict.set(r.member, score);
   }
 
-  db.set(dst, 'zset', chooseEncoding(dstZset.dict), dstZset);
+  db.set(dst, 'zset', chooseEncoding(dstZset.dict, config), dstZset);
   return integerReply(results.length);
 }
 
@@ -535,7 +537,8 @@ export function geosearchstore(
 export function georadius(
   db: Database,
   args: string[],
-  rng: () => number
+  rng: () => number,
+  config?: ConfigStore
 ): Reply {
   if (args.length < 5) {
     return errorReply(
@@ -666,7 +669,7 @@ export function georadius(
       dstZset.dict.set(r.member, score);
     }
 
-    db.set(dstKey, 'zset', chooseEncoding(dstZset.dict), dstZset);
+    db.set(dstKey, 'zset', chooseEncoding(dstZset.dict, config), dstZset);
     return integerReply(results.length);
   }
 
@@ -678,7 +681,8 @@ export function georadius(
 export function georadiusbymember(
   db: Database,
   args: string[],
-  rng: () => number
+  rng: () => number,
+  config?: ConfigStore
 ): Reply {
   if (args.length < 4) {
     return errorReply(
@@ -701,7 +705,7 @@ export function georadiusbymember(
 
   // Rewrite as georadius call: key lon lat radius unit ...rest
   const newArgs = [key, String(pos[0]), String(pos[1]), ...args.slice(2)];
-  return georadius(db, newArgs, rng);
+  return georadius(db, newArgs, rng, config);
 }
 
 // --- GEORADIUS_RO ---

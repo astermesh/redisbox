@@ -1,8 +1,10 @@
 import type { Database } from '../../database.ts';
 import type { Reply } from '../../types.ts';
 import { errorReply, WRONGTYPE_ERR } from '../../types.ts';
+import type { ConfigStore } from '../../../config-store.ts';
 import {
   strByteLength,
+  configInt,
   DEFAULT_MAX_LISTPACK_ENTRIES,
   DEFAULT_MAX_LISTPACK_VALUE,
 } from '../../utils.ts';
@@ -70,12 +72,26 @@ export function getExistingHash(
  * Redis only transitions in one direction: listpack → hashtable.
  * Once promoted, it never reverts back — even if the hash shrinks.
  */
-export function updateEncoding(db: Database, key: string): void {
+export function updateEncoding(
+  db: Database,
+  key: string,
+  config?: ConfigStore
+): void {
   const entry = db.get(key);
   if (!entry || entry.type !== 'hash') return;
   if (entry.encoding === 'hashtable') return; // never demote
   const hash = entry.value as Map<string, string>;
-  if (!fitsListpack(hash)) {
+  const maxEntries = configInt(
+    config,
+    'hash-max-listpack-entries',
+    DEFAULT_MAX_LISTPACK_ENTRIES
+  );
+  const maxValue = configInt(
+    config,
+    'hash-max-listpack-value',
+    DEFAULT_MAX_LISTPACK_VALUE
+  );
+  if (!fitsListpack(hash, maxEntries, maxValue)) {
     entry.encoding = 'hashtable';
   }
 }
