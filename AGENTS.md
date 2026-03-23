@@ -223,9 +223,39 @@ A large file is not a problem in itself — it is a symptom of wrong grouping ru
 
 Code that evolves together should live close together (same module, same directory); code that evolves independently should be separated. This is an important grouping criterion.
 
-### Test Placement
+### Module Organization
 
-Tests must be co-located with the code they test (e.g., `foo.ts` → `foo.test.ts` in the same directory). Do not separate tests into a dedicated test tree.
+**Co-location principle:** source, tests, and specs live together.
+
+- Every source file `foo.ts` must have a co-located `foo.test.ts` in the same directory
+- Command/handler specs (`CommandSpec[]`, route definitions, etc.) must be defined in the same file as the functions they wrap — not aggregated in a separate file
+- If a file aggregates specs from multiple modules (e.g., a registry), it uses `...spread` from each module's own specs export
+
+**When to create a subdirectory:**
+
+- When a domain has 2+ source files (not counting tests) — group them in a subdirectory with an `index.ts` barrel
+- Single-file domains stay in the parent directory
+
+**Naming inside subdirectories:**
+
+- Do NOT repeat the directory name in filenames: `set/set-ops.ts` is wrong, `set/ops.ts` is right
+- The main file can match the directory name (`list/list.ts`) since it's the primary entry point — this is the one exception
+- `index.ts` is for re-exports only — no logic, no specs
+- `utils.ts` / `types.ts` are for internal helpers shared within the subdirectory
+
+**Splitting files:**
+
+- Split by responsibility, not by size — a 500-line file with one cohesive responsibility is fine
+- Each split file must have a clear, independent purpose that can be described in one phrase (e.g., "range queries", "set operations", "blocking variants")
+- Specs for functions in `foo.ts` go in `foo.ts` — never in a different file
+- If you split `big.ts` into `a.ts` and `b.ts`, split the tests the same way: `a.test.ts` and `b.test.ts`
+
+**Test files:**
+
+- Every source file `foo.ts` must have a co-located `foo.test.ts` in the same directory — do not separate tests into a dedicated test tree
+- Test file imports the source file it tests — not `index.ts` or other modules
+- Exception: test helpers (like `createDb()`) may import from sibling modules to set up test state
+- No orphan tests — every `.test.ts` must have a matching source file
 
 ### File Naming Conventions
 
