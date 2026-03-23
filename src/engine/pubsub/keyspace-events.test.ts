@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { PubSubManager } from './pubsub-manager.ts';
-import { ConfigStore } from '../config-store.ts';
+import { ConfigStore } from '../../config-store.ts';
 import {
   notifyKeyspaceEvent,
   parseKeyspaceEventFlags,
@@ -8,7 +8,7 @@ import {
   normalizeKeyspaceEventConfig,
   EVENT_FLAGS,
 } from './keyspace-events.ts';
-import type { Reply } from './types.ts';
+import type { Reply } from '../types.ts';
 
 describe('parseKeyspaceEventFlags', () => {
   it('returns 0 for empty string', () => {

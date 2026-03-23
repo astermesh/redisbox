@@ -166,10 +166,10 @@ export interface CommandContext {
   config?: import('../config-store.ts').ConfigStore;
   clientStore?: import('../server/client-state.ts').ClientStateStore;
   commandTable?: import('./command-table.ts').CommandTable;
-  pubsub?: import('./pubsub-manager.ts').PubSubManager;
-  blocking?: import('./blocking-manager.ts').BlockingManager;
+  pubsub?: import('./pubsub/pubsub-manager.ts').PubSubManager;
+  blocking?: import('./blocking/blocking-manager.ts').BlockingManager;
   acl?: import('./acl-store.ts').AclStore;
-  eviction?: import('./eviction-manager.ts').EvictionManager;
+  eviction?: import('./memory/eviction-manager.ts').EvictionManager;
   ibi?: import('./hooks/ibi.ts').IbiHookManager;
   scriptManager?: import('./scripting/script-manager.ts').ScriptManager;
   obi?: import('./hooks/obi.ts').ObiHookManager;

@@ -12,8 +12,8 @@
  */
 
 import type { BlockingManager } from './blocking-manager.ts';
-import type { Reply } from './types.ts';
-import { NIL_ARRAY } from './types.ts';
+import type { Reply } from '../types.ts';
+import { NIL_ARRAY } from '../types.ts';
 
 export interface TimeoutResult {
   clientId: number;

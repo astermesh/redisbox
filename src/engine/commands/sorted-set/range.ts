@@ -13,7 +13,7 @@ import {
 import { SkipList } from '../../skip-list.ts';
 import { parseFloat64 } from '../incr.ts';
 import type { CommandSpec } from '../../command-table.ts';
-import { notify, EVENT_FLAGS } from '../../notify.ts';
+import { notify, EVENT_FLAGS } from '../../pubsub/notify.ts';
 import type { SortedSetData } from './types.ts';
 import { formatScore, getExistingZset, chooseEncoding } from './types.ts';
 

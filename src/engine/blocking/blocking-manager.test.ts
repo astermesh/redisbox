@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { BlockingManager } from './blocking-manager.ts';
 import type { BlockedEntry } from './blocking-manager.ts';
-import type { Reply } from './types.ts';
+import type { Reply } from '../types.ts';
 
 function bulkReply(value: string | null): Reply {
   return { kind: 'bulk', value };

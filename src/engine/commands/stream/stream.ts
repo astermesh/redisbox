@@ -1,6 +1,6 @@
 import type { CommandSpec } from '../../command-table.ts';
 import { OK } from '../../types.ts';
-import { notify, EVENT_FLAGS } from '../../notify.ts';
+import { notify, EVENT_FLAGS } from '../../pubsub/notify.ts';
 import { getStream } from './utils.ts';
 import { xadd, xlen, xdel, xtrim, xsetid } from './write.ts';
 import { xrange, xrevrange, xread } from './read.ts';

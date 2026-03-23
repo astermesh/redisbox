@@ -8,9 +8,9 @@
  * Handles message delivery via a registered sender callback.
  */
 
-import type { Reply } from './types.ts';
-import { arrayReply, bulkReply } from './types.ts';
-import { matchGlob } from './glob-pattern.ts';
+import type { Reply } from '../types.ts';
+import { arrayReply, bulkReply } from '../types.ts';
+import { matchGlob } from '../glob-pattern.ts';
 
 export type MessageSender = (clientId: number, reply: Reply) => void;
 

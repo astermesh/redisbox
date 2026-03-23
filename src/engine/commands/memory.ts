@@ -17,7 +17,7 @@ import {
   unknownSubcommandError,
   NOT_INTEGER_ERR,
 } from '../types.ts';
-import { estimateKeyMemoryWithSamples } from '../memory.ts';
+import { estimateKeyMemoryWithSamples } from '../memory/memory.ts';
 import type { CommandSpec } from '../command-table.ts';
 
 const DEFAULT_SAMPLES = 5;

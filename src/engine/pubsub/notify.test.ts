@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { RedisEngine } from './engine.ts';
-import { ConfigStore } from '../config-store.ts';
-import type { CommandContext, Reply } from './types.ts';
-import { ClientState } from '../server/client-state.ts';
+import { RedisEngine } from '../engine.ts';
+import { ConfigStore } from '../../config-store.ts';
+import type { CommandContext, Reply } from '../types.ts';
+import { ClientState } from '../../server/client-state.ts';
 import { notify, EVENT_FLAGS } from './notify.ts';
 
 interface CapturedMsg {

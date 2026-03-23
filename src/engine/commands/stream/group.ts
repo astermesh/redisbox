@@ -4,7 +4,7 @@ import type { CommandContext } from '../../types.ts';
 import { errorReply, integerReply, OK, SYNTAX_ERR } from '../../types.ts';
 import { RedisStream, parseStreamId } from '../../stream.ts';
 import type { StreamId } from '../../stream.ts';
-import { notify, EVENT_FLAGS } from '../../notify.ts';
+import { notify, EVENT_FLAGS } from '../../pubsub/notify.ts';
 import { getStream, INVALID_STREAM_ID_ERR } from './utils.ts';
 
 function xgroupCreate(db: Database, args: string[]): Reply {

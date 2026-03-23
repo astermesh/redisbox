@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { RedisEngine } from './engine.ts';
-import type { Database } from './database.ts';
-import { ConfigStore } from '../config-store.ts';
+import { RedisEngine } from '../engine.ts';
+import type { Database } from '../database.ts';
+import { ConfigStore } from '../../config-store.ts';
 import { EvictionManager } from './eviction-manager.ts';
 
 function createSetup(opts?: { clock?: () => number; rng?: () => number }) {

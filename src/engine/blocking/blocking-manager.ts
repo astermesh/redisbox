@@ -13,7 +13,7 @@
  *   because data may have been consumed by a previous client
  */
 
-import type { Reply } from './types.ts';
+import type { Reply } from '../types.ts';
 
 /**
  * Callback that attempts to serve a blocked client.

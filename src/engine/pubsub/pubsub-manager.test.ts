@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { PubSubManager } from './pubsub-manager.ts';
-import type { Reply } from './types.ts';
+import type { Reply } from '../types.ts';
 
 describe('PubSubManager', () => {
   describe('subscribe', () => {

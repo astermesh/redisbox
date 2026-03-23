@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { TimeoutManager } from './timeout-manager.ts';
 import { BlockingManager } from './blocking-manager.ts';
 import type { BlockedEntry } from './blocking-manager.ts';
-import { NIL_ARRAY } from './types.ts';
-import { RedisEngine } from './engine.ts';
-import { VirtualClock } from '../sim/virtual-clock.ts';
+import { NIL_ARRAY } from '../types.ts';
+import { RedisEngine } from '../engine.ts';
+import { VirtualClock } from '../../sim/virtual-clock.ts';
 
 function neverServe(): BlockedEntry['tryServe'] {
   return () => null;

@@ -6,7 +6,7 @@ import {
   estimateKeyMemoryWithSamples,
   parseMemorySize,
 } from './memory.ts';
-import type { RedisEntry } from './types.ts';
+import type { RedisEntry } from '../types.ts';
 
 function entry(
   type: RedisEntry['type'],

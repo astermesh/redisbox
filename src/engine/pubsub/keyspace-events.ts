@@ -10,7 +10,7 @@
  *   __keyevent@{db}__:{event} → key name as message   (E flag)
  */
 
-import type { ConfigStore } from '../config-store.ts';
+import type { ConfigStore } from '../../config-store.ts';
 import type { PubSubManager } from './pubsub-manager.ts';
 
 // ---------------------------------------------------------------------------

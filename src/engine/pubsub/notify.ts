@@ -5,7 +5,7 @@
  * the core notifyKeyspaceEvent function.
  */
 
-import type { CommandContext } from './types.ts';
+import type { CommandContext } from '../types.ts';
 import { notifyKeyspaceEvent } from './keyspace-events.ts';
 
 export { EVENT_FLAGS } from './keyspace-events.ts';

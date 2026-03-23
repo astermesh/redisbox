@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { RedisEngine } from '../../engine.ts';
 import type { Database } from '../../database.ts';
 import type { CommandContext, Reply } from '../../types.ts';
-import { BlockingManager } from '../../blocking-manager.ts';
+import { BlockingManager } from '../../blocking/blocking-manager.ts';
 import * as sortedSet from './index.ts';
 import * as blockingSortedSet from './blocking.ts';
 

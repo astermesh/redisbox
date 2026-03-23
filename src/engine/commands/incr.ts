@@ -12,7 +12,7 @@ import {
 import { determineStringEncoding } from './string/index.ts';
 import { INT64_MAX, INT64_MIN } from '../utils.ts';
 import type { CommandSpec } from '../command-table.ts';
-import { notify, EVENT_FLAGS } from '../notify.ts';
+import { notify, EVENT_FLAGS } from '../pubsub/notify.ts';
 
 /**
  * Parse a string as a 64-bit signed integer.

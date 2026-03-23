@@ -22,7 +22,7 @@ import {
 } from '../../types.ts';
 import type { CommandSpec } from '../../command-table.ts';
 import { formatScore } from './index.ts';
-import { notify, EVENT_FLAGS } from '../../notify.ts';
+import { notify, EVENT_FLAGS } from '../../pubsub/notify.ts';
 import type { SortedSetData } from './index.ts';
 
 /**

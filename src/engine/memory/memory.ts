@@ -8,7 +8,7 @@
  * - Per-type value estimation
  */
 
-import type { RedisEntry } from './types.ts';
+import type { RedisEntry } from '../types.ts';
 
 // ---------------------------------------------------------------------------
 // jemalloc allocation bin sizes (64-bit)

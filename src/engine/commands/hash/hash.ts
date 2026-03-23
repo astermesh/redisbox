@@ -19,7 +19,7 @@ import {
 } from '../../types.ts';
 import type { CommandSpec } from '../../command-table.ts';
 import { parseInteger, parseFloat64, formatFloat } from '../incr.ts';
-import { notify, EVENT_FLAGS } from '../../notify.ts';
+import { notify, EVENT_FLAGS } from '../../pubsub/notify.ts';
 import { matchGlob } from '../../glob-pattern.ts';
 import { partialShuffle, INT64_MAX, INT64_MIN } from '../../utils.ts';
 import { parseScanCursor, parseScanOptions } from '../scan-utils.ts';

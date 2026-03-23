@@ -19,7 +19,7 @@ import { parseFloat64, parseInteger } from '../incr.ts';
 import { matchGlob } from '../../glob-pattern.ts';
 import { partialShuffle } from '../../utils.ts';
 import type { CommandSpec } from '../../command-table.ts';
-import { notify, EVENT_FLAGS } from '../../notify.ts';
+import { notify, EVENT_FLAGS } from '../../pubsub/notify.ts';
 import { parseScanCursor, parseScanOptions } from '../scan-utils.ts';
 import type { SortedSetData } from './types.ts';
 import {

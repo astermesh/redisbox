@@ -6,7 +6,7 @@
  */
 
 import { matchGlob } from './engine/glob-pattern.ts';
-import { normalizeKeyspaceEventConfig } from './engine/keyspace-events.ts';
+import { normalizeKeyspaceEventConfig } from './engine/pubsub/keyspace-events.ts';
 
 // ---------------------------------------------------------------------------
 // Config parameter definitions

@@ -15,7 +15,7 @@ import {
   wrongArityError,
   invalidExpireTimeError,
 } from '../../types.ts';
-import { notify, EVENT_FLAGS } from '../../notify.ts';
+import { notify, EVENT_FLAGS } from '../../pubsub/notify.ts';
 import { determineStringEncoding } from './encoding.ts';
 import { parseIntArg } from './encoding.ts';
 import { append, strlen, setrange, getrange, lcs } from './mutation.ts';

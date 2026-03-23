@@ -12,15 +12,15 @@
  * - Evict the candidate with the highest idle time from the pool
  */
 
-import type { RedisEngine } from './engine.ts';
-import type { ConfigStore } from '../config-store.ts';
-import type { Database } from './database.ts';
-import type { Reply } from './types.ts';
-import { errorReply } from './types.ts';
+import type { RedisEngine } from '../engine.ts';
+import type { ConfigStore } from '../../config-store.ts';
+import type { Database } from '../database.ts';
+import type { Reply } from '../types.ts';
+import { errorReply } from '../types.ts';
 import { parseMemorySize } from './memory.ts';
 import { getLruClock, estimateIdleTime } from './lru.ts';
 import { lfuGetTimeInMinutes, lfuDecrAndReturn } from './lfu.ts';
-import { notifyKeyspaceEvent, EVENT_FLAGS } from './keyspace-events.ts';
+import { notifyKeyspaceEvent, EVENT_FLAGS } from '../pubsub/keyspace-events.ts';
 
 export type EvictionPolicy =
   | 'noeviction'

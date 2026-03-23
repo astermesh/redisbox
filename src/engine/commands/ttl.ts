@@ -8,7 +8,7 @@ import {
   NOT_INTEGER_ERR,
 } from '../types.ts';
 import type { CommandSpec } from '../command-table.ts';
-import { notify, EVENT_FLAGS } from '../notify.ts';
+import { notify, EVENT_FLAGS } from '../pubsub/notify.ts';
 
 const NO_TTL = integerReply(-1);
 const NO_KEY = integerReply(-2);

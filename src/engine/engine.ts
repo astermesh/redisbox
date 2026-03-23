@@ -1,9 +1,9 @@
 import { Database } from './database.ts';
 import type { EngineDeps } from './types.ts';
-import { PubSubManager } from './pubsub-manager.ts';
-import { BlockingManager } from './blocking-manager.ts';
-import { TimeoutManager } from './timeout-manager.ts';
-import { estimateKeyMemory } from './memory.ts';
+import { PubSubManager } from './pubsub/pubsub-manager.ts';
+import { BlockingManager } from './blocking/blocking-manager.ts';
+import { TimeoutManager } from './blocking/timeout-manager.ts';
+import { estimateKeyMemory } from './memory/memory.ts';
 import { AclStore } from './acl-store.ts';
 import { SlowlogManager } from './slowlog.ts';
 import { LatencyManager } from './latency.ts';

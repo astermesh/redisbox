@@ -4,7 +4,7 @@ import { psubscribe } from './pattern.ts';
 import { RedisEngine } from '../../engine.ts';
 import { ClientState } from '../../../server/client-state.ts';
 import type { CommandContext, Reply } from '../../types.ts';
-import { PubSubManager } from '../../pubsub-manager.ts';
+import { PubSubManager } from '../../pubsub/pubsub-manager.ts';
 
 function createCtx(opts?: { clientId?: number }): {
   ctx: CommandContext;

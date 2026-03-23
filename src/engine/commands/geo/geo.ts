@@ -15,7 +15,7 @@ import {
   getOrCreateZset,
   getExistingZset,
 } from '../sorted-set/index.ts';
-import { notify, EVENT_FLAGS } from '../../notify.ts';
+import { notify, EVENT_FLAGS } from '../../pubsub/notify.ts';
 import {
   UNIT_ERR,
   geohashEncode,

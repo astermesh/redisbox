@@ -1,7 +1,7 @@
 import type { Database } from './database.ts';
 import type { ConfigStore } from '../config-store.ts';
-import type { PubSubManager } from './pubsub-manager.ts';
-import { notifyKeyspaceEvent, EVENT_FLAGS } from './keyspace-events.ts';
+import type { PubSubManager } from './pubsub/pubsub-manager.ts';
+import { notifyKeyspaceEvent, EVENT_FLAGS } from './pubsub/keyspace-events.ts';
 
 /**
  * Redis active expiration cycles (slow and fast variants).
