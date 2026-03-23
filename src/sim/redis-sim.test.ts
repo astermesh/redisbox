@@ -6,6 +6,7 @@ import {
 } from '../engine/command-dispatcher.ts';
 import { createCommandTable } from '../engine/command-registry.ts';
 import type { CommandContext } from '../engine/types.ts';
+import type { Reply } from '../engine/types.ts';
 
 describe('RedisSim', () => {
   describe('construction', () => {
@@ -583,6 +584,376 @@ describe('RedisSim', () => {
           prefix: 'ERR',
           message: 'fail',
         });
+      });
+    });
+  });
+
+  describe('behavioral modification', () => {
+    function setupDispatcher(sim: RedisSim) {
+      const table = createCommandTable();
+      const dispatcher = new CommandDispatcher(table);
+      const state = createTransactionState();
+      const ctx: CommandContext = {
+        db: sim.engine.db(0),
+        engine: sim.engine,
+        ibi: sim.engine.ibi,
+      };
+      return { dispatcher, state, ctx };
+    }
+
+    describe('setCacheMissRate', () => {
+      it('returns nil for GET at configured rate', async () => {
+        const sim = new RedisSim({ rng: () => 0.3 });
+        const { dispatcher, state, ctx } = setupDispatcher(sim);
+
+        ctx.db.set('k', 'string', 'raw', 'hello');
+
+        // rate=0.5, rng=0.3 < 0.5 → cache miss (nil)
+        sim.setCacheMissRate(0.5);
+
+        const result = await dispatcher.dispatchAsync(state, ctx, ['GET', 'k']);
+        expect(result).toEqual({ kind: 'bulk', value: null });
+      });
+
+      it('returns actual value when rng >= rate', async () => {
+        const sim = new RedisSim({ rng: () => 0.8 });
+        const { dispatcher, state, ctx } = setupDispatcher(sim);
+
+        ctx.db.set('k', 'string', 'raw', 'hello');
+        sim.setCacheMissRate(0.5);
+
+        const result = await dispatcher.dispatchAsync(state, ctx, ['GET', 'k']);
+        expect(result).toEqual({ kind: 'bulk', value: 'hello' });
+      });
+
+      it('rate 0 never causes cache misses', async () => {
+        const sim = new RedisSim({ rng: () => 0.0 });
+        const { dispatcher, state, ctx } = setupDispatcher(sim);
+
+        ctx.db.set('k', 'string', 'raw', 'val');
+        sim.setCacheMissRate(0);
+
+        const result = await dispatcher.dispatchAsync(state, ctx, ['GET', 'k']);
+        expect(result).toEqual({ kind: 'bulk', value: 'val' });
+      });
+
+      it('rate 1 always causes cache misses', async () => {
+        const sim = new RedisSim({ rng: () => 0.99 });
+        const { dispatcher, state, ctx } = setupDispatcher(sim);
+
+        ctx.db.set('k', 'string', 'raw', 'val');
+        sim.setCacheMissRate(1);
+
+        const result = await dispatcher.dispatchAsync(state, ctx, ['GET', 'k']);
+        expect(result).toEqual({ kind: 'bulk', value: null });
+      });
+
+      it('intercepts MGET and returns nil per-key at configured rate', async () => {
+        let callCount = 0;
+        const sim = new RedisSim({
+          rng: () => {
+            callCount++;
+            // Alternate: first key miss, second key hit
+            return callCount % 2 === 1 ? 0.1 : 0.9;
+          },
+        });
+        const { dispatcher, state, ctx } = setupDispatcher(sim);
+
+        ctx.db.set('k1', 'string', 'raw', 'v1');
+        ctx.db.set('k2', 'string', 'raw', 'v2');
+
+        sim.setCacheMissRate(0.5);
+
+        const result = await dispatcher.dispatchAsync(state, ctx, [
+          'MGET',
+          'k1',
+          'k2',
+        ]);
+        expect(result).toEqual({
+          kind: 'array',
+          value: [
+            { kind: 'bulk', value: null },
+            { kind: 'bulk', value: 'v2' },
+          ],
+        });
+      });
+
+      it('does not affect non-existent keys in GET', async () => {
+        const sim = new RedisSim({ rng: () => 0.8 });
+        const { dispatcher, state, ctx } = setupDispatcher(sim);
+
+        sim.setCacheMissRate(0.5);
+
+        // Key doesn't exist — should return nil regardless
+        const result = await dispatcher.dispatchAsync(state, ctx, [
+          'GET',
+          'nonexistent',
+        ]);
+        expect(result).toEqual({ kind: 'bulk', value: null });
+      });
+
+      it('does not affect SET or other write commands', async () => {
+        const sim = new RedisSim({ rng: () => 0.1 });
+        const { dispatcher, state, ctx } = setupDispatcher(sim);
+
+        sim.setCacheMissRate(1);
+
+        // SET should still work
+        const result = await dispatcher.dispatchAsync(state, ctx, [
+          'SET',
+          'k',
+          'v',
+        ]);
+        expect(result).toEqual({ kind: 'status', value: 'OK' });
+        expect(ctx.db.get('k')).not.toBeNull();
+      });
+
+      it('returns a disposer that removes the cache miss simulation', async () => {
+        const sim = new RedisSim({ rng: () => 0.1 });
+        const { dispatcher, state, ctx } = setupDispatcher(sim);
+
+        ctx.db.set('k', 'string', 'raw', 'val');
+
+        const dispose = sim.setCacheMissRate(1);
+        dispose();
+
+        const result = await dispatcher.dispatchAsync(state, ctx, ['GET', 'k']);
+        expect(result).toEqual({ kind: 'bulk', value: 'val' });
+      });
+
+      it('does not affect keys of wrong type', async () => {
+        const sim = new RedisSim({ rng: () => 0.1 });
+        const { dispatcher, state, ctx } = setupDispatcher(sim);
+
+        // Set a list key
+        ctx.db.set('mylist', 'list', 'listpack', []);
+        sim.setCacheMissRate(1);
+
+        // GET on a non-string key should return WRONGTYPE error, not nil
+        const result = await dispatcher.dispatchAsync(state, ctx, [
+          'GET',
+          'mylist',
+        ]);
+        expect(result).toEqual({
+          kind: 'error',
+          prefix: 'WRONGTYPE',
+          message: 'Operation against a key holding the wrong kind of value',
+        });
+      });
+    });
+
+    describe('setMessageDropRate', () => {
+      it('drops pub/sub messages at configured rate', () => {
+        let rngValue = 0.3;
+        const sim = new RedisSim({ rng: () => rngValue });
+
+        const received: { clientId: number; reply: Reply }[] = [];
+        sim.engine.pubsub.setSender((clientId, reply) => {
+          received.push({ clientId, reply });
+        });
+
+        sim.engine.pubsub.subscribe(1, 'ch');
+        sim.setMessageDropRate(0.5);
+
+        // rng=0.3 < 0.5 → drop
+        sim.engine.pubsub.publish('ch', 'msg1');
+        expect(received).toHaveLength(0);
+
+        // rng=0.8 >= 0.5 → deliver
+        rngValue = 0.8;
+        sim.engine.pubsub.publish('ch', 'msg2');
+        expect(received).toHaveLength(1);
+      });
+
+      it('rate 0 never drops messages', () => {
+        const sim = new RedisSim({ rng: () => 0.0 });
+
+        const received: Reply[] = [];
+        sim.engine.pubsub.setSender((_clientId, reply) => {
+          received.push(reply);
+        });
+
+        sim.engine.pubsub.subscribe(1, 'ch');
+        sim.setMessageDropRate(0);
+
+        sim.engine.pubsub.publish('ch', 'msg');
+        expect(received).toHaveLength(1);
+      });
+
+      it('rate 1 drops all messages', () => {
+        const sim = new RedisSim({ rng: () => 0.99 });
+
+        const received: Reply[] = [];
+        sim.engine.pubsub.setSender((_clientId, reply) => {
+          received.push(reply);
+        });
+
+        sim.engine.pubsub.subscribe(1, 'ch');
+        sim.setMessageDropRate(1);
+
+        sim.engine.pubsub.publish('ch', 'msg');
+        expect(received).toHaveLength(0);
+      });
+
+      it('drops pattern subscription messages too', () => {
+        const sim = new RedisSim({ rng: () => 0.1 });
+
+        const received: Reply[] = [];
+        sim.engine.pubsub.setSender((_clientId, reply) => {
+          received.push(reply);
+        });
+
+        sim.engine.pubsub.psubscribe(1, 'ch.*');
+        sim.setMessageDropRate(1);
+
+        sim.engine.pubsub.publish('ch.test', 'msg');
+        expect(received).toHaveLength(0);
+      });
+
+      it('publish returns 0 for dropped messages', () => {
+        const sim = new RedisSim({ rng: () => 0.1 });
+        sim.engine.pubsub.setSender(() => {
+          /* noop sender */
+        });
+
+        sim.engine.pubsub.subscribe(1, 'ch');
+        sim.setMessageDropRate(1);
+
+        const count = sim.engine.pubsub.publish('ch', 'msg');
+        expect(count).toBe(0);
+      });
+
+      it('returns a disposer that removes the drop simulation', () => {
+        const sim = new RedisSim({ rng: () => 0.1 });
+
+        const received: Reply[] = [];
+        sim.engine.pubsub.setSender((_clientId, reply) => {
+          received.push(reply);
+        });
+
+        sim.engine.pubsub.subscribe(1, 'ch');
+        const dispose = sim.setMessageDropRate(1);
+        dispose();
+
+        sim.engine.pubsub.publish('ch', 'msg');
+        expect(received).toHaveLength(1);
+      });
+
+      it('drops shard channel messages at configured rate', () => {
+        const sim = new RedisSim({ rng: () => 0.1 });
+
+        const received: Reply[] = [];
+        sim.engine.pubsub.setSender((_clientId, reply) => {
+          received.push(reply);
+        });
+
+        sim.engine.pubsub.ssubscribe(1, 'ch');
+        sim.setMessageDropRate(1);
+
+        sim.engine.pubsub.shardPublish('ch', 'msg');
+        expect(received).toHaveLength(0);
+      });
+
+      it('publish count reflects actual deliveries', () => {
+        let callCount = 0;
+        const sim = new RedisSim({
+          rng: () => {
+            callCount++;
+            // Drop for client 1, deliver for client 2
+            return callCount % 2 === 1 ? 0.1 : 0.9;
+          },
+        });
+        sim.engine.pubsub.setSender(() => {
+          /* noop sender */
+        });
+
+        sim.engine.pubsub.subscribe(1, 'ch');
+        sim.engine.pubsub.subscribe(2, 'ch');
+        sim.setMessageDropRate(0.5);
+
+        const count = sim.engine.pubsub.publish('ch', 'msg');
+        expect(count).toBe(1); // only 1 of 2 delivered
+      });
+    });
+
+    describe('injectEviction', () => {
+      it('deletes specified keys from current database', () => {
+        const sim = new RedisSim();
+        const db = sim.engine.db(0);
+
+        db.set('k1', 'string', 'raw', 'v1');
+        db.set('k2', 'string', 'raw', 'v2');
+        db.set('k3', 'string', 'raw', 'v3');
+
+        sim.injectEviction(['k1', 'k3']);
+
+        expect(db.get('k1')).toBeNull();
+        expect(db.get('k2')).not.toBeNull();
+        expect(db.get('k3')).toBeNull();
+      });
+
+      it('works across all databases', () => {
+        const sim = new RedisSim();
+        const db0 = sim.engine.db(0);
+        const db1 = sim.engine.db(1);
+
+        db0.set('k', 'string', 'raw', 'v0');
+        db1.set('k', 'string', 'raw', 'v1');
+
+        sim.injectEviction(['k']);
+
+        expect(db0.get('k')).toBeNull();
+        expect(db1.get('k')).toBeNull();
+      });
+
+      it('silently ignores non-existent keys', () => {
+        const sim = new RedisSim();
+        const db = sim.engine.db(0);
+
+        db.set('k1', 'string', 'raw', 'v1');
+
+        // Should not throw
+        sim.injectEviction(['k1', 'nonexistent']);
+
+        expect(db.get('k1')).toBeNull();
+      });
+
+      it('removes keys of any type', () => {
+        const sim = new RedisSim();
+        const db = sim.engine.db(0);
+
+        db.set('str', 'string', 'raw', 'val');
+        db.set('lst', 'list', 'listpack', ['a', 'b']);
+        db.set('hsh', 'hash', 'hashtable', new Map([['f', 'v']]));
+
+        sim.injectEviction(['str', 'lst', 'hsh']);
+
+        expect(db.get('str')).toBeNull();
+        expect(db.get('lst')).toBeNull();
+        expect(db.get('hsh')).toBeNull();
+      });
+
+      it('returns 0 for empty keys array', () => {
+        const sim = new RedisSim();
+        sim.engine.db(0).set('k', 'string', 'raw', 'v');
+
+        const count = sim.injectEviction([]);
+        expect(count).toBe(0);
+        expect(sim.engine.db(0).get('k')).not.toBeNull();
+      });
+
+      it('returns count of evicted keys across all databases', () => {
+        const sim = new RedisSim();
+        const db0 = sim.engine.db(0);
+        const db1 = sim.engine.db(1);
+
+        db0.set('k1', 'string', 'raw', 'v1');
+        db0.set('k2', 'string', 'raw', 'v2');
+        db1.set('k1', 'string', 'raw', 'v1b');
+
+        // k1 in db0 and db1, k2 only in db0, missing nowhere → 3 total
+        const count = sim.injectEviction(['k1', 'k2', 'missing']);
+        expect(count).toBe(3);
       });
     });
   });
