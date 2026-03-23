@@ -1,13 +1,21 @@
 /**
- * EVAL/EVALSHA/EVAL_RO/EVALSHA_RO command handlers.
+ * EVAL/EVALSHA/EVAL_RO/EVALSHA_RO and SCRIPT command handlers.
  *
  * Lua scripts run atomically via the ScriptManager.
  * KEYS and ARGV are populated from command arguments.
  * Read-only variants reject write commands inside scripts.
+ * SCRIPT subcommands manage the per-server script cache.
  */
 
 import type { Reply, CommandContext } from '../types.ts';
-import { errorReply } from '../types.ts';
+import {
+  errorReply,
+  statusReply,
+  bulkReply,
+  integerReply,
+  arrayReply,
+  unknownSubcommandError,
+} from '../types.ts';
 import type { CommandSpec } from '../command-table.ts';
 import type { CommandExecutor } from '../scripting/redis-bridge.ts';
 
@@ -162,6 +170,154 @@ function evalshaCommon(
   );
 }
 
+/**
+ * SCRIPT LOAD script
+ */
+function scriptLoad(ctx: CommandContext, args: string[]): Reply {
+  if (args.length !== 1) {
+    return errorReply(
+      'ERR',
+      "wrong number of arguments for 'script|load' command"
+    );
+  }
+
+  const mgr = ctx.scriptManager;
+  if (!mgr || !mgr.ready) {
+    return errorReply('ERR', 'Lua engine not initialized');
+  }
+
+  const script = args[0] ?? '';
+
+  // Redis compiles the script on LOAD and returns an error for syntax errors
+  const syntaxError = mgr.validateScript(script);
+  if (syntaxError) {
+    return errorReply('ERR', syntaxError);
+  }
+
+  const digest = mgr.cacheScript(script);
+  return bulkReply(digest);
+}
+
+/**
+ * SCRIPT EXISTS sha1 [sha1 ...]
+ */
+function scriptExists(ctx: CommandContext, args: string[]): Reply {
+  if (args.length === 0) {
+    return errorReply(
+      'ERR',
+      "wrong number of arguments for 'script|exists' command"
+    );
+  }
+
+  const mgr = ctx.scriptManager;
+  if (!mgr || !mgr.ready) {
+    return errorReply('ERR', 'Lua engine not initialized');
+  }
+
+  const results: Reply[] = args.map((sha) =>
+    integerReply(mgr.hasScript(sha) ? 1 : 0)
+  );
+  return arrayReply(results);
+}
+
+/**
+ * SCRIPT FLUSH [ASYNC|SYNC]
+ */
+function scriptFlush(ctx: CommandContext, args: string[]): Reply {
+  if (args.length > 1) {
+    return errorReply(
+      'ERR',
+      "wrong number of arguments for 'script|flush' command"
+    );
+  }
+
+  if (args.length === 1) {
+    const mode = (args[0] ?? '').toUpperCase();
+    if (mode !== 'ASYNC' && mode !== 'SYNC') {
+      return errorReply('ERR', 'SCRIPT FLUSH only supports ASYNC|SYNC option');
+    }
+  }
+
+  const mgr = ctx.scriptManager;
+  if (!mgr || !mgr.ready) {
+    return errorReply('ERR', 'Lua engine not initialized');
+  }
+
+  mgr.flushScripts();
+  return statusReply('OK');
+}
+
+/**
+ * SCRIPT DEBUG YES|SYNC|NO (stub — debugging is not supported)
+ */
+function scriptDebug(_ctx: CommandContext, args: string[]): Reply {
+  if (args.length !== 1) {
+    return errorReply(
+      'ERR',
+      "wrong number of arguments for 'script|debug' command"
+    );
+  }
+
+  const mode = (args[0] ?? '').toUpperCase();
+  if (mode !== 'YES' && mode !== 'SYNC' && mode !== 'NO') {
+    return errorReply('ERR', 'Use SCRIPT DEBUG YES/SYNC/NO');
+  }
+
+  return statusReply('OK');
+}
+
+/**
+ * SCRIPT HELP — return help text for SCRIPT subcommands.
+ */
+function scriptHelp(): Reply {
+  return arrayReply([
+    bulkReply(
+      'SCRIPT <subcommand> [<arg> [value] [opt] ...]. Subcommands are:'
+    ),
+    bulkReply('DEBUG (YES|SYNC|NO)'),
+    bulkReply('    Set the debug mode for subsequent scripts executed.'),
+    bulkReply('EXISTS <sha1> [<sha1> ...]'),
+    bulkReply(
+      '    Return information about the existence of the scripts in the script cache.'
+    ),
+    bulkReply('FLUSH [ASYNC|SYNC]'),
+    bulkReply(
+      '    Flush the Lua scripts cache. Defaults to ASYNC, but can be SYNC.'
+    ),
+    bulkReply('HELP'),
+    bulkReply('    Prints this help.'),
+    bulkReply('LOAD <script>'),
+    bulkReply('    Load a script into the scripts cache without executing it.'),
+  ]);
+}
+
+/**
+ * SCRIPT <subcommand> [args ...]
+ */
+export function scriptCmd(ctx: CommandContext, args: string[]): Reply {
+  if (args.length === 0) {
+    return unknownSubcommandError('script', '');
+  }
+
+  const sub = (args[0] ?? '').toUpperCase();
+  const rest = args.slice(1);
+
+  switch (sub) {
+    case 'LOAD':
+      return scriptLoad(ctx, rest);
+    case 'EXISTS':
+      return scriptExists(ctx, rest);
+    case 'FLUSH':
+      return scriptFlush(ctx, rest);
+    case 'DEBUG':
+      return scriptDebug(ctx, rest);
+    case 'HELP':
+      return scriptHelp();
+    default:
+      return unknownSubcommandError('script', (args[0] ?? '').toLowerCase());
+  }
+}
+
 export const specs: CommandSpec[] = [
   {
     name: 'eval',
@@ -202,5 +358,67 @@ export const specs: CommandSpec[] = [
     lastKey: 0,
     keyStep: 0,
     categories: ['@slow', '@scripting'],
+  },
+  {
+    name: 'script',
+    handler: (ctx, args) => scriptCmd(ctx, args),
+    arity: -2,
+    flags: ['noscript'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@slow', '@scripting'],
+    subcommands: [
+      {
+        name: 'load',
+        handler: (ctx, args) => scriptLoad(ctx, args),
+        arity: 3,
+        flags: ['noscript'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow', '@scripting'],
+      },
+      {
+        name: 'exists',
+        handler: (ctx, args) => scriptExists(ctx, args),
+        arity: -3,
+        flags: ['noscript'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow', '@scripting'],
+      },
+      {
+        name: 'flush',
+        handler: (ctx, args) => scriptFlush(ctx, args),
+        arity: -2,
+        flags: ['noscript'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow', '@scripting'],
+      },
+      {
+        name: 'debug',
+        handler: (ctx, args) => scriptDebug(ctx, args),
+        arity: 3,
+        flags: ['noscript'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow', '@scripting'],
+      },
+      {
+        name: 'help',
+        handler: () => scriptHelp(),
+        arity: 2,
+        flags: ['loading', 'stale'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow', '@scripting'],
+      },
+    ],
   },
 ];

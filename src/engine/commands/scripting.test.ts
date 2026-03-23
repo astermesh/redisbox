@@ -424,3 +424,273 @@ describe('EVALSHA_RO', () => {
     expect(result).toEqual(expect.objectContaining({ kind: 'error' }));
   });
 });
+
+describe('SCRIPT LOAD', () => {
+  beforeEach(async () => {
+    await setup();
+  });
+
+  afterEach(() => {
+    scriptManager.close();
+  });
+
+  it('caches script and returns SHA1', () => {
+    const script = 'return 1';
+    const result = dispatch(['SCRIPT', 'LOAD', script]);
+    expect(result).toEqual(bulkReply(sha1(script)));
+  });
+
+  it('returns same SHA1 for same script', () => {
+    const script = 'return "hello"';
+    const r1 = dispatch(['SCRIPT', 'LOAD', script]);
+    const r2 = dispatch(['SCRIPT', 'LOAD', script]);
+    expect(r1).toEqual(r2);
+  });
+
+  it('allows EVALSHA after SCRIPT LOAD', () => {
+    const script = 'return 42';
+    const loadResult = dispatch(['SCRIPT', 'LOAD', script]);
+    expect(loadResult).toEqual(bulkReply(sha1(script)));
+    const result = dispatch(['EVALSHA', sha1(script), '0']);
+    expect(result).toEqual(integerReply(42));
+  });
+
+  it('rejects wrong number of arguments (no script)', () => {
+    const result = dispatch(['SCRIPT', 'LOAD']);
+    expect(result).toEqual(
+      errorReply('ERR', "wrong number of arguments for 'script|load' command")
+    );
+  });
+
+  it('rejects extra arguments', () => {
+    const result = dispatch(['SCRIPT', 'LOAD', 'return 1', 'extra']);
+    expect(result).toEqual(
+      errorReply('ERR', "wrong number of arguments for 'script|load' command")
+    );
+  });
+
+  it('rejects script with syntax errors', () => {
+    const result = dispatch(['SCRIPT', 'LOAD', 'invalid lua !!!']);
+    expect(result).toEqual(expect.objectContaining({ kind: 'error' }));
+  });
+
+  it('does not cache script with syntax errors', () => {
+    const script = 'invalid lua !!!';
+    dispatch(['SCRIPT', 'LOAD', script]);
+    const exists = dispatch(['SCRIPT', 'EXISTS', sha1(script)]);
+    expect(exists).toEqual(arrayReply([integerReply(0)]));
+  });
+});
+
+describe('SCRIPT EXISTS', () => {
+  beforeEach(async () => {
+    await setup();
+  });
+
+  afterEach(() => {
+    scriptManager.close();
+  });
+
+  it('returns 0 for unknown SHA', () => {
+    const result = dispatch([
+      'SCRIPT',
+      'EXISTS',
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    ]);
+    expect(result).toEqual(arrayReply([integerReply(0)]));
+  });
+
+  it('returns 1 for cached script', () => {
+    const script = 'return 1';
+    const digest = sha1(script);
+    dispatch(['SCRIPT', 'LOAD', script]);
+    const result = dispatch(['SCRIPT', 'EXISTS', digest]);
+    expect(result).toEqual(arrayReply([integerReply(1)]));
+  });
+
+  it('checks multiple SHAs at once', () => {
+    const script1 = 'return 1';
+    const script2 = 'return 2';
+    dispatch(['SCRIPT', 'LOAD', script1]);
+    const result = dispatch([
+      'SCRIPT',
+      'EXISTS',
+      sha1(script1),
+      sha1(script2),
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    ]);
+    expect(result).toEqual(
+      arrayReply([integerReply(1), integerReply(0), integerReply(0)])
+    );
+  });
+
+  it('is case-insensitive for SHA', () => {
+    const script = 'return 1';
+    dispatch(['SCRIPT', 'LOAD', script]);
+    const result = dispatch(['SCRIPT', 'EXISTS', sha1(script).toUpperCase()]);
+    expect(result).toEqual(arrayReply([integerReply(1)]));
+  });
+
+  it('rejects with no arguments', () => {
+    const result = dispatch(['SCRIPT', 'EXISTS']);
+    expect(result).toEqual(
+      errorReply('ERR', "wrong number of arguments for 'script|exists' command")
+    );
+  });
+});
+
+describe('SCRIPT FLUSH', () => {
+  beforeEach(async () => {
+    await setup();
+  });
+
+  afterEach(() => {
+    scriptManager.close();
+  });
+
+  it('clears all cached scripts', () => {
+    dispatch(['SCRIPT', 'LOAD', 'return 1']);
+    dispatch(['SCRIPT', 'LOAD', 'return 2']);
+    const result = dispatch(['SCRIPT', 'FLUSH']);
+    expect(result).toEqual(statusReply('OK'));
+
+    // Verify scripts are gone
+    const exists = dispatch([
+      'SCRIPT',
+      'EXISTS',
+      sha1('return 1'),
+      sha1('return 2'),
+    ]);
+    expect(exists).toEqual(arrayReply([integerReply(0), integerReply(0)]));
+  });
+
+  it('accepts ASYNC option', () => {
+    dispatch(['SCRIPT', 'LOAD', 'return 1']);
+    const result = dispatch(['SCRIPT', 'FLUSH', 'ASYNC']);
+    expect(result).toEqual(statusReply('OK'));
+  });
+
+  it('accepts SYNC option', () => {
+    dispatch(['SCRIPT', 'LOAD', 'return 1']);
+    const result = dispatch(['SCRIPT', 'FLUSH', 'SYNC']);
+    expect(result).toEqual(statusReply('OK'));
+  });
+
+  it('rejects invalid option', () => {
+    const result = dispatch(['SCRIPT', 'FLUSH', 'INVALID']);
+    expect(result).toEqual(
+      errorReply('ERR', 'SCRIPT FLUSH only supports ASYNC|SYNC option')
+    );
+  });
+
+  it('rejects extra arguments', () => {
+    const result = dispatch(['SCRIPT', 'FLUSH', 'ASYNC', 'extra']);
+    expect(result).toEqual(
+      errorReply('ERR', "wrong number of arguments for 'script|flush' command")
+    );
+  });
+
+  it('works with no cached scripts', () => {
+    const result = dispatch(['SCRIPT', 'FLUSH']);
+    expect(result).toEqual(statusReply('OK'));
+  });
+});
+
+describe('SCRIPT DEBUG', () => {
+  beforeEach(async () => {
+    await setup();
+  });
+
+  afterEach(() => {
+    scriptManager.close();
+  });
+
+  it('accepts YES', () => {
+    const result = dispatch(['SCRIPT', 'DEBUG', 'YES']);
+    expect(result).toEqual(statusReply('OK'));
+  });
+
+  it('accepts SYNC', () => {
+    const result = dispatch(['SCRIPT', 'DEBUG', 'SYNC']);
+    expect(result).toEqual(statusReply('OK'));
+  });
+
+  it('accepts NO', () => {
+    const result = dispatch(['SCRIPT', 'DEBUG', 'NO']);
+    expect(result).toEqual(statusReply('OK'));
+  });
+
+  it('rejects invalid mode', () => {
+    const result = dispatch(['SCRIPT', 'DEBUG', 'INVALID']);
+    expect(result).toEqual(errorReply('ERR', 'Use SCRIPT DEBUG YES/SYNC/NO'));
+  });
+
+  it('rejects missing argument', () => {
+    const result = dispatch(['SCRIPT', 'DEBUG']);
+    expect(result).toEqual(
+      errorReply('ERR', "wrong number of arguments for 'script|debug' command")
+    );
+  });
+
+  it('rejects extra arguments', () => {
+    const result = dispatch(['SCRIPT', 'DEBUG', 'YES', 'extra']);
+    expect(result).toEqual(
+      errorReply('ERR', "wrong number of arguments for 'script|debug' command")
+    );
+  });
+});
+
+describe('SCRIPT HELP', () => {
+  beforeEach(async () => {
+    await setup();
+  });
+
+  afterEach(() => {
+    scriptManager.close();
+  });
+
+  it('returns array of help strings', () => {
+    const result = dispatch(['SCRIPT', 'HELP']);
+    expect(result.kind).toBe('array');
+    if (result.kind === 'array') {
+      expect(result.value.length).toBeGreaterThan(0);
+      expect(result.value[0]).toEqual(
+        bulkReply(
+          'SCRIPT <subcommand> [<arg> [value] [opt] ...]. Subcommands are:'
+        )
+      );
+    }
+  });
+
+  it('is case-insensitive', () => {
+    const result = dispatch(['SCRIPT', 'help']);
+    expect(result.kind).toBe('array');
+  });
+});
+
+describe('SCRIPT unknown subcommand', () => {
+  beforeEach(async () => {
+    await setup();
+  });
+
+  afterEach(() => {
+    scriptManager.close();
+  });
+
+  it('returns error for unknown subcommand', () => {
+    const result = dispatch(['SCRIPT', 'INVALID']);
+    expect(result).toEqual(
+      errorReply(
+        'ERR',
+        "unknown subcommand or wrong number of arguments for 'script|invalid' command"
+      )
+    );
+  });
+
+  it('returns error for no subcommand', () => {
+    const result = dispatch(['SCRIPT']);
+    expect(result).toEqual(
+      errorReply('ERR', "wrong number of arguments for 'script' command")
+    );
+  });
+});
