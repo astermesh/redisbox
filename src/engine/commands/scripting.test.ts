@@ -468,6 +468,18 @@ describe('SCRIPT LOAD', () => {
       errorReply('ERR', "wrong number of arguments for 'script|load' command")
     );
   });
+
+  it('rejects script with syntax errors', () => {
+    const result = dispatch(['SCRIPT', 'LOAD', 'invalid lua !!!']);
+    expect(result).toEqual(expect.objectContaining({ kind: 'error' }));
+  });
+
+  it('does not cache script with syntax errors', () => {
+    const script = 'invalid lua !!!';
+    dispatch(['SCRIPT', 'LOAD', script]);
+    const exists = dispatch(['SCRIPT', 'EXISTS', sha1(script)]);
+    expect(exists).toEqual(arrayReply([integerReply(0)]));
+  });
 });
 
 describe('SCRIPT EXISTS', () => {
@@ -625,6 +637,34 @@ describe('SCRIPT DEBUG', () => {
     expect(result).toEqual(
       errorReply('ERR', "wrong number of arguments for 'script|debug' command")
     );
+  });
+});
+
+describe('SCRIPT HELP', () => {
+  beforeEach(async () => {
+    await setup();
+  });
+
+  afterEach(() => {
+    scriptManager.close();
+  });
+
+  it('returns array of help strings', () => {
+    const result = dispatch(['SCRIPT', 'HELP']);
+    expect(result.kind).toBe('array');
+    if (result.kind === 'array') {
+      expect(result.value.length).toBeGreaterThan(0);
+      expect(result.value[0]).toEqual(
+        bulkReply(
+          'SCRIPT <subcommand> [<arg> [value] [opt] ...]. Subcommands are:'
+        )
+      );
+    }
+  });
+
+  it('is case-insensitive', () => {
+    const result = dispatch(['SCRIPT', 'help']);
+    expect(result.kind).toBe('array');
   });
 });
 

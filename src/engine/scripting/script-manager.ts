@@ -123,6 +123,29 @@ export class ScriptManager {
   }
 
   /**
+   * Validate script syntax by attempting to compile it with loadstring.
+   * Returns null on success, or an error message string on failure.
+   * Used by SCRIPT LOAD to match Redis behavior (compile check on load).
+   */
+  validateScript(script: string): string | null {
+    if (!this.engine || this.engine.closed) {
+      return 'Lua engine not initialized';
+    }
+    try {
+      const result = this.engine.executeSync(
+        `local f, err = loadstring(${luaStringLiteral(script)}); if err then return err else return nil end`
+      );
+      const val = result.values.length > 0 ? result.values[0] : null;
+      if (val !== null && val !== undefined) {
+        return String(val);
+      }
+      return null;
+    } catch {
+      return 'Failed to validate script';
+    }
+  }
+
+  /**
    * Check if a script SHA exists in the cache.
    */
   hasScript(digest: string): boolean {

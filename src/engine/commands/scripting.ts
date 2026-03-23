@@ -186,7 +186,15 @@ function scriptLoad(ctx: CommandContext, args: string[]): Reply {
     return errorReply('ERR', 'Lua engine not initialized');
   }
 
-  const digest = mgr.cacheScript(args[0] ?? '');
+  const script = args[0] ?? '';
+
+  // Redis compiles the script on LOAD and returns an error for syntax errors
+  const syntaxError = mgr.validateScript(script);
+  if (syntaxError) {
+    return errorReply('ERR', syntaxError);
+  }
+
+  const digest = mgr.cacheScript(script);
   return bulkReply(digest);
 }
 
@@ -259,6 +267,31 @@ function scriptDebug(_ctx: CommandContext, args: string[]): Reply {
 }
 
 /**
+ * SCRIPT HELP — return help text for SCRIPT subcommands.
+ */
+function scriptHelp(): Reply {
+  return arrayReply([
+    bulkReply(
+      'SCRIPT <subcommand> [<arg> [value] [opt] ...]. Subcommands are:'
+    ),
+    bulkReply('DEBUG (YES|SYNC|NO)'),
+    bulkReply('    Set the debug mode for subsequent scripts executed.'),
+    bulkReply('EXISTS <sha1> [<sha1> ...]'),
+    bulkReply(
+      '    Return information about the existence of the scripts in the script cache.'
+    ),
+    bulkReply('FLUSH [ASYNC|SYNC]'),
+    bulkReply(
+      '    Flush the Lua scripts cache. Defaults to ASYNC, but can be SYNC.'
+    ),
+    bulkReply('HELP'),
+    bulkReply('    Prints this help.'),
+    bulkReply('LOAD <script>'),
+    bulkReply('    Load a script into the scripts cache without executing it.'),
+  ]);
+}
+
+/**
  * SCRIPT <subcommand> [args ...]
  */
 export function scriptCmd(ctx: CommandContext, args: string[]): Reply {
@@ -278,6 +311,8 @@ export function scriptCmd(ctx: CommandContext, args: string[]): Reply {
       return scriptFlush(ctx, rest);
     case 'DEBUG':
       return scriptDebug(ctx, rest);
+    case 'HELP':
+      return scriptHelp();
     default:
       return unknownSubcommandError('script', (args[0] ?? '').toLowerCase());
   }
@@ -369,6 +404,16 @@ export const specs: CommandSpec[] = [
         handler: (ctx, args) => scriptDebug(ctx, args),
         arity: 3,
         flags: ['noscript'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
+        categories: ['@slow', '@scripting'],
+      },
+      {
+        name: 'help',
+        handler: () => scriptHelp(),
+        arity: 2,
+        flags: ['loading', 'stale'],
         firstKey: 0,
         lastKey: 0,
         keyStep: 0,
