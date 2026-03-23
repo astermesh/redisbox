@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Database } from './database.ts';
+import { ConfigStore } from '../config-store.ts';
 
 function createDb(time = 1000): {
   db: Database;
@@ -659,6 +660,124 @@ describe('Database', () => {
       const sample = db.sampleFieldsWithExpiry('h', 20, () => Math.random());
       const unique = new Set(sample);
       expect(unique.size).toBe(sample.length);
+    });
+  });
+
+  describe('LFU tracking', () => {
+    function createLfuDb(opts?: {
+      time?: number;
+      rng?: number;
+      policy?: string;
+      decayTime?: string;
+      logFactor?: string;
+    }) {
+      let now = opts?.time ?? 1000;
+      const config = new ConfigStore();
+      config.set('maxmemory-policy', opts?.policy ?? 'allkeys-lfu');
+      if (opts?.decayTime !== undefined) {
+        config.set('lfu-decay-time', opts.decayTime);
+      }
+      if (opts?.logFactor !== undefined) {
+        config.set('lfu-log-factor', opts.logFactor);
+      }
+      const db = new Database(() => now);
+      db.setRng(() => opts?.rng ?? 0.001);
+      db.setConfig(config);
+      return {
+        db,
+        config,
+        setTime: (t: number) => {
+          now = t;
+        },
+      };
+    }
+
+    it('initializes new keys with LFU_INIT_VAL (5)', () => {
+      const { db } = createDb();
+      db.set('k', 'string', 'raw', 'v');
+      const entry = db.getWithoutTouch('k');
+      expect(entry?.lruFreq).toBe(5);
+    });
+
+    it('increments frequency counter on get() when LFU policy active', () => {
+      const { db } = createLfuDb({ time: 1000 });
+
+      db.set('k', 'string', 'raw', 'v');
+      expect(db.getWithoutTouch('k')?.lruFreq).toBe(5);
+
+      db.get('k');
+      expect(db.getWithoutTouch('k')?.lruFreq).toBe(6);
+    });
+
+    it('does not increment frequency when non-LFU policy', () => {
+      const { db } = createLfuDb({ time: 1000, policy: 'allkeys-lru' });
+
+      db.set('k', 'string', 'raw', 'v');
+      db.get('k');
+      db.get('k');
+      db.get('k');
+      expect(db.getWithoutTouch('k')?.lruFreq).toBe(5); // stays at init val
+    });
+
+    it('decays counter based on elapsed time', () => {
+      const { db, setTime } = createLfuDb({ time: 0, decayTime: '1' });
+
+      db.set('k', 'string', 'raw', 'v');
+
+      // Increment counter several times
+      for (let i = 0; i < 10; i++) {
+        db.get('k');
+      }
+      expect(db.getWithoutTouch('k')?.lruFreq).toBe(15); // 5 init + 10 accesses
+
+      // Advance time by 10 minutes → should decay by 10
+      setTime(10 * 60 * 1000);
+      db.get('k'); // triggers decay then increment
+      // 15 - 10 (decay) + 1 (increment) = 6
+      expect(db.getWithoutTouch('k')?.lruFreq).toBe(6);
+    });
+
+    it('decay does not go below 0', () => {
+      const { db, setTime } = createLfuDb({ time: 0, decayTime: '1' });
+
+      db.set('k', 'string', 'raw', 'v'); // freq = 5
+
+      // Advance 100 minutes → decay by 100, but floor at 0
+      setTime(100 * 60 * 1000);
+      db.get('k'); // 0 + 1 = 1
+      expect(db.getWithoutTouch('k')?.lruFreq).toBe(1);
+    });
+
+    it('no decay when lfu-decay-time is 0', () => {
+      const { db, setTime } = createLfuDb({ time: 0, decayTime: '0' });
+
+      db.set('k', 'string', 'raw', 'v'); // freq = 5
+
+      // Advance a long time — no decay
+      setTime(1000 * 60 * 1000);
+      db.get('k'); // 5 + 1 = 6
+      expect(db.getWithoutTouch('k')?.lruFreq).toBe(6);
+    });
+
+    it('touch() also updates LFU when LFU policy active', () => {
+      const { db } = createLfuDb({ time: 1000 });
+
+      db.set('k', 'string', 'raw', 'v');
+      db.touch('k');
+      expect(db.getWithoutTouch('k')?.lruFreq).toBe(6); // 5 init + 1 touch
+    });
+
+    it('probabilistic increment: high counter increments less often', () => {
+      const { db } = createLfuDb({ time: 0, rng: 0.5, logFactor: '10' });
+
+      db.set('k', 'string', 'raw', 'v'); // freq = 5
+      // For counter=5, baseval=0, p=1.0 → 0.5 < 1.0 → increment
+      db.get('k'); // 5 → 6
+
+      // For counter=6, baseval=1, p=1/11≈0.09 → 0.5 > 0.09 → no increment
+      db.get('k'); // stays 6
+
+      expect(db.getWithoutTouch('k')?.lruFreq).toBe(6);
     });
   });
 });

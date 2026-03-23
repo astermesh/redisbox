@@ -25,7 +25,10 @@ export interface RedisEntry {
   encoding: RedisEncoding;
   value: unknown;
   lruClock: number;
+  /** LFU logarithmic frequency counter (0-255). */
   lruFreq: number;
+  /** LFU last-decrement-time in minutes (16-bit, wraps at 65536). */
+  lfuLastDecrTime: number;
 }
 
 export interface EngineDeps {

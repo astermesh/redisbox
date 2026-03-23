@@ -1,5 +1,7 @@
 # S18: Memory Eviction Manager
 
+**Status:** done
+
 Implement memory eviction when maxmemory limit is reached. Supports all 8 Redis eviction policies including approximated LRU and LFU. Eviction check runs before executing write commands.
 
 ## Tasks
