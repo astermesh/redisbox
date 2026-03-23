@@ -662,7 +662,9 @@ function parseGeoSearchArgs(
 ): GeoSearchParams | Reply {
   let fromLon: number | null = null;
   let fromLat: number | null = null;
+  let hasFrom = false;
   let shape: GeoSearchParams['shape'] | null = null;
+  let hasShape = false;
   let unitFactor = UNIT_M;
   let sort: 'asc' | 'desc' | 'none' = 'none';
   let count = -1;
@@ -676,6 +678,13 @@ function parseGeoSearchArgs(
     const opt = (args[i] as string).toUpperCase();
 
     if (opt === 'FROMMEMBER') {
+      if (hasFrom) {
+        return errorReply(
+          'ERR',
+          'exactly one of FROMMEMBER or FROMLONLAT can be specified for GEOSEARCH/GEOSEARCHSTORE'
+        );
+      }
+      hasFrom = true;
       i++;
       if (i >= args.length) return errorReply('ERR', 'syntax error');
       const member = args[i] as string;
@@ -693,6 +702,13 @@ function parseGeoSearchArgs(
       }
       i++;
     } else if (opt === 'FROMLONLAT') {
+      if (hasFrom) {
+        return errorReply(
+          'ERR',
+          'exactly one of FROMMEMBER or FROMLONLAT can be specified for GEOSEARCH/GEOSEARCHSTORE'
+        );
+      }
+      hasFrom = true;
       i++;
       if (i + 1 >= args.length) return errorReply('ERR', 'syntax error');
       const lonP = parseFloat64(args[i] as string);
@@ -705,6 +721,13 @@ function parseGeoSearchArgs(
       if (coordErr) return coordErr;
       i += 2;
     } else if (opt === 'BYRADIUS') {
+      if (hasShape) {
+        return errorReply(
+          'ERR',
+          'exactly one of BYRADIUS and BYBOX can be specified for GEOSEARCH/GEOSEARCHSTORE'
+        );
+      }
+      hasShape = true;
       i++;
       if (i + 1 >= args.length) return errorReply('ERR', 'syntax error');
       const radiusP = parseFloat64(args[i] as string);
@@ -723,6 +746,13 @@ function parseGeoSearchArgs(
       sort = 'desc';
       i++;
     } else if (opt === 'BYBOX') {
+      if (hasShape) {
+        return errorReply(
+          'ERR',
+          'exactly one of BYRADIUS and BYBOX can be specified for GEOSEARCH/GEOSEARCHSTORE'
+        );
+      }
+      hasShape = true;
       i++;
       if (i + 2 >= args.length) return errorReply('ERR', 'syntax error');
       const widthP = parseFloat64(args[i] as string);
@@ -860,12 +890,19 @@ export function geosearchstore(
   const { zset: srcZset, error: srcError } = getExistingZset(db, src);
   if (srcError) return srcError;
 
-  // Check for STOREDIST option (can be at end)
+  // Check for STOREDIST option and reject WITH* options
   let storeDist = false;
   const searchArgs: string[] = [];
   for (let i = 2; i < args.length; i++) {
-    if ((args[i] as string).toUpperCase() === 'STOREDIST') {
+    const upper = (args[i] as string).toUpperCase();
+    if (upper === 'STOREDIST') {
       storeDist = true;
+    } else if (
+      upper === 'WITHCOORD' ||
+      upper === 'WITHDIST' ||
+      upper === 'WITHHASH'
+    ) {
+      return errorReply('ERR', 'syntax error');
     } else {
       searchArgs.push(args[i] as string);
     }

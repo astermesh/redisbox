@@ -3,6 +3,7 @@ import { RedisEngine } from '../engine.ts';
 import type { Database } from '../database.ts';
 import type { Reply } from '../types.ts';
 import * as geo from './geo.ts';
+import * as zset from './sorted-set.ts';
 
 let rngValue = 0.5;
 function createDb(): { db: Database; engine: RedisEngine; rng: () => number } {
@@ -1230,5 +1231,625 @@ describe('GEO edge cases', () => {
     // 52-bit geohash gives sub-meter precision
     expect(Math.abs(lon)).toBeLessThan(0.0001);
     expect(Math.abs(lat)).toBeLessThan(0.0001);
+  });
+});
+
+// --- STOREDIST score verification ---
+
+describe('GEOSEARCHSTORE STOREDIST scores', () => {
+  it('stores distances in the requested unit as scores', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    geo.geosearchstore(
+      db,
+      [
+        'dst',
+        'k',
+        'FROMLONLAT',
+        '13.361389',
+        '38.115556',
+        'BYRADIUS',
+        '200',
+        'km',
+        'ASC',
+        'STOREDIST',
+      ],
+      rng
+    );
+    // Palermo is at the center, so distance should be ~0
+    const palScore = zset.zscore(db, ['dst', 'Palermo']);
+    expect(palScore.kind).toBe('bulk');
+    if (palScore.kind === 'bulk' && palScore.value !== null) {
+      expect(parseFloat(palScore.value)).toBeCloseTo(0, 0);
+    }
+    // Catania is ~166 km away
+    const catScore = zset.zscore(db, ['dst', 'Catania']);
+    expect(catScore.kind).toBe('bulk');
+    if (catScore.kind === 'bulk' && catScore.value !== null) {
+      const dist = parseFloat(catScore.value);
+      expect(dist).toBeGreaterThan(160);
+      expect(dist).toBeLessThan(170);
+    }
+  });
+
+  it('GEORADIUS STOREDIST stores distances in requested unit', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    geo.georadius(
+      db,
+      ['k', '13.361389', '38.115556', '200', 'km', 'STOREDIST', 'dst'],
+      rng
+    );
+    const palScore = zset.zscore(db, ['dst', 'Palermo']);
+    expect(palScore.kind).toBe('bulk');
+    if (palScore.kind === 'bulk' && palScore.value !== null) {
+      expect(parseFloat(palScore.value)).toBeCloseTo(0, 0);
+    }
+  });
+});
+
+// --- WRONGTYPE errors for search commands ---
+
+describe('GEO search WRONGTYPE errors', () => {
+  function setupStringKey(db: Database): void {
+    db.set('str', 'string', 'raw', Buffer.from('hello'));
+  }
+
+  it('GEOSEARCH returns WRONGTYPE for non-zset key', () => {
+    const { db } = createDb();
+    setupStringKey(db);
+    expect(
+      geo.geosearch(db, [
+        'str',
+        'FROMLONLAT',
+        '0',
+        '0',
+        'BYRADIUS',
+        '100',
+        'km',
+        'ASC',
+      ])
+    ).toEqual(WRONGTYPE);
+  });
+
+  it('GEOSEARCHSTORE returns WRONGTYPE for non-zset source', () => {
+    const { db, rng } = createDb();
+    setupStringKey(db);
+    expect(
+      geo.geosearchstore(
+        db,
+        ['dst', 'str', 'FROMLONLAT', '0', '0', 'BYRADIUS', '100', 'km', 'ASC'],
+        rng
+      )
+    ).toEqual(WRONGTYPE);
+  });
+
+  it('GEORADIUS returns WRONGTYPE for non-zset key', () => {
+    const { db, rng } = createDb();
+    setupStringKey(db);
+    expect(geo.georadius(db, ['str', '0', '0', '100', 'km'], rng)).toEqual(
+      WRONGTYPE
+    );
+  });
+
+  it('GEORADIUSBYMEMBER returns WRONGTYPE for non-zset key', () => {
+    const { db, rng } = createDb();
+    setupStringKey(db);
+    expect(geo.georadiusbymember(db, ['str', 'a', '100', 'km'], rng)).toEqual(
+      WRONGTYPE
+    );
+  });
+
+  it('GEORADIUS_RO returns WRONGTYPE for non-zset key', () => {
+    const { db } = createDb();
+    setupStringKey(db);
+    expect(geo.georadius_ro(db, ['str', '0', '0', '100', 'km'])).toEqual(
+      WRONGTYPE
+    );
+  });
+
+  it('GEORADIUSBYMEMBER_RO returns WRONGTYPE for non-zset key', () => {
+    const { db } = createDb();
+    setupStringKey(db);
+    expect(geo.georadiusbymember_ro(db, ['str', 'a', '100', 'km'])).toEqual(
+      WRONGTYPE
+    );
+  });
+});
+
+// --- GEOSEARCHSTORE destination overwrite ---
+
+describe('GEOSEARCHSTORE destination overwrite', () => {
+  it('overwrites existing destination key', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    // Create destination with some old data
+    geo.geoadd(db, ['dst', '0', '0', 'old_member'], rng);
+
+    geo.geosearchstore(
+      db,
+      [
+        'dst',
+        'k',
+        'FROMLONLAT',
+        '14.0',
+        '38.0',
+        'BYRADIUS',
+        '200',
+        'km',
+        'ASC',
+      ],
+      rng
+    );
+
+    // old_member should not exist in destination
+    const pos = geo.geopos(db, ['dst', 'old_member']);
+    const items = arrayItems(pos);
+    expect(items[0]).toEqual(bulk(null));
+
+    // New members should be there
+    const pos2 = geo.geopos(db, ['dst', 'Palermo']);
+    const items2 = arrayItems(pos2);
+    expect(items2[0]?.kind).toBe('array');
+  });
+
+  it('deletes destination when no results match', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    // Create destination
+    geo.geoadd(db, ['dst', '0', '0', 'old'], rng);
+
+    geo.geosearchstore(
+      db,
+      ['dst', 'k', 'FROMLONLAT', '100.0', '0.0', 'BYRADIUS', '1', 'km', 'ASC'],
+      rng
+    );
+
+    // Destination should be deleted
+    expect(db.get('dst')).toBeNull();
+  });
+});
+
+// --- GEOSEARCHSTORE rejects WITH* flags ---
+
+describe('GEOSEARCHSTORE rejects WITH* flags', () => {
+  it('rejects WITHCOORD', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    const result = geo.geosearchstore(
+      db,
+      [
+        'dst',
+        'k',
+        'FROMLONLAT',
+        '14.0',
+        '38.0',
+        'BYRADIUS',
+        '200',
+        'km',
+        'ASC',
+        'WITHCOORD',
+      ],
+      rng
+    );
+    expect(result).toEqual(err('ERR', 'syntax error'));
+  });
+
+  it('rejects WITHDIST', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    const result = geo.geosearchstore(
+      db,
+      [
+        'dst',
+        'k',
+        'FROMLONLAT',
+        '14.0',
+        '38.0',
+        'BYRADIUS',
+        '200',
+        'km',
+        'ASC',
+        'WITHDIST',
+      ],
+      rng
+    );
+    expect(result).toEqual(err('ERR', 'syntax error'));
+  });
+
+  it('rejects WITHHASH', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    const result = geo.geosearchstore(
+      db,
+      [
+        'dst',
+        'k',
+        'FROMLONLAT',
+        '14.0',
+        '38.0',
+        'BYRADIUS',
+        '200',
+        'km',
+        'ASC',
+        'WITHHASH',
+      ],
+      rng
+    );
+    expect(result).toEqual(err('ERR', 'syntax error'));
+  });
+});
+
+// --- Duplicate FROM/BY options ---
+
+describe('GEOSEARCH duplicate option validation', () => {
+  it('errors on duplicate FROMMEMBER', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    const result = geo.geosearch(db, [
+      'k',
+      'FROMMEMBER',
+      'Palermo',
+      'FROMMEMBER',
+      'Catania',
+      'BYRADIUS',
+      '200',
+      'km',
+    ]);
+    expect(result).toEqual(
+      err(
+        'ERR',
+        'exactly one of FROMMEMBER or FROMLONLAT can be specified for GEOSEARCH/GEOSEARCHSTORE'
+      )
+    );
+  });
+
+  it('errors on FROMMEMBER + FROMLONLAT', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    const result = geo.geosearch(db, [
+      'k',
+      'FROMMEMBER',
+      'Palermo',
+      'FROMLONLAT',
+      '14.0',
+      '38.0',
+      'BYRADIUS',
+      '200',
+      'km',
+    ]);
+    expect(result).toEqual(
+      err(
+        'ERR',
+        'exactly one of FROMMEMBER or FROMLONLAT can be specified for GEOSEARCH/GEOSEARCHSTORE'
+      )
+    );
+  });
+
+  it('errors on duplicate BYRADIUS', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    const result = geo.geosearch(db, [
+      'k',
+      'FROMLONLAT',
+      '14.0',
+      '38.0',
+      'BYRADIUS',
+      '200',
+      'km',
+      'BYRADIUS',
+      '100',
+      'km',
+    ]);
+    expect(result).toEqual(
+      err(
+        'ERR',
+        'exactly one of BYRADIUS and BYBOX can be specified for GEOSEARCH/GEOSEARCHSTORE'
+      )
+    );
+  });
+
+  it('errors on BYRADIUS + BYBOX', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    const result = geo.geosearch(db, [
+      'k',
+      'FROMLONLAT',
+      '14.0',
+      '38.0',
+      'BYRADIUS',
+      '200',
+      'km',
+      'BYBOX',
+      '400',
+      '200',
+      'km',
+    ]);
+    expect(result).toEqual(
+      err(
+        'ERR',
+        'exactly one of BYRADIUS and BYBOX can be specified for GEOSEARCH/GEOSEARCHSTORE'
+      )
+    );
+  });
+});
+
+// --- GEORADIUS / GEOSEARCH equivalence ---
+
+describe('GEORADIUS / GEOSEARCH equivalence', () => {
+  it('GEORADIUS produces same results as equivalent GEOSEARCH', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    // Add more cities for richer test
+    geo.geoadd(
+      db,
+      ['k', '2.349014', '48.864716', 'Paris', '12.496366', '41.902782', 'Rome'],
+      rng
+    );
+
+    const radiusResult = geo.georadius(
+      db,
+      ['k', '14.0', '38.0', '500', 'km', 'ASC', 'WITHDIST'],
+      rng
+    );
+    const searchResult = geo.geosearch(db, [
+      'k',
+      'FROMLONLAT',
+      '14.0',
+      '38.0',
+      'BYRADIUS',
+      '500',
+      'km',
+      'ASC',
+      'WITHDIST',
+    ]);
+    expect(radiusResult).toEqual(searchResult);
+  });
+
+  it('GEORADIUSBYMEMBER produces same results as equivalent GEOSEARCH FROMMEMBER', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+
+    const byMemberResult = geo.georadiusbymember(
+      db,
+      ['k', 'Palermo', '200', 'km', 'ASC', 'WITHDIST', 'WITHCOORD'],
+      rng
+    );
+    const searchResult = geo.geosearch(db, [
+      'k',
+      'FROMMEMBER',
+      'Palermo',
+      'BYRADIUS',
+      '200',
+      'km',
+      'ASC',
+      'WITHDIST',
+      'WITHCOORD',
+    ]);
+    expect(byMemberResult).toEqual(searchResult);
+  });
+});
+
+// --- GEOSEARCH BYBOX additional tests ---
+
+describe('GEOSEARCH BYBOX additional', () => {
+  it('BYBOX excludes members outside the box', () => {
+    const { db, rng } = createDb();
+    geo.geoadd(
+      db,
+      [
+        'k',
+        '13.361389',
+        '38.115556',
+        'Palermo',
+        '15.087269',
+        '37.502669',
+        'Catania',
+        '2.349014',
+        '48.864716',
+        'Paris',
+      ],
+      rng
+    );
+    // Small box around Palermo, should not include Catania or Paris
+    const result = geo.geosearch(db, [
+      'k',
+      'FROMLONLAT',
+      '13.361389',
+      '38.115556',
+      'BYBOX',
+      '50',
+      '50',
+      'km',
+      'ASC',
+    ]);
+    const items = arrayItems(result);
+    expect(items.length).toBe(1);
+    expect(items[0]).toEqual(bulk('Palermo'));
+  });
+
+  it('BYBOX with WITHDIST returns correct distances', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    const result = geo.geosearch(db, [
+      'k',
+      'FROMLONLAT',
+      '14.0',
+      '38.0',
+      'BYBOX',
+      '400',
+      '200',
+      'km',
+      'ASC',
+      'WITHDIST',
+    ]);
+    const items = arrayItems(result);
+    expect(items.length).toBe(2);
+    // Each item is [name, dist]
+    const item0 = arrayItems(items[0] as Reply);
+    const dist0 = bulkNum(item0[1] as Reply);
+    expect(dist0).toBeGreaterThan(0);
+  });
+
+  it('GEOSEARCHSTORE with BYBOX stores results', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    const result = geo.geosearchstore(
+      db,
+      [
+        'dst',
+        'k',
+        'FROMLONLAT',
+        '14.0',
+        '38.0',
+        'BYBOX',
+        '400',
+        '200',
+        'km',
+        'ASC',
+      ],
+      rng
+    );
+    expect(result).toEqual(integer(2));
+    // Verify stored members can be retrieved
+    const pos = geo.geopos(db, ['dst', 'Palermo', 'Catania']);
+    const items = arrayItems(pos);
+    expect(items[0]?.kind).toBe('array');
+    expect(items[1]?.kind).toBe('array');
+  });
+});
+
+// --- GEORADIUS_RO / GEORADIUSBYMEMBER_RO additional ---
+
+describe('GEORADIUS_RO additional', () => {
+  it('supports WITHCOORD WITHDIST WITHHASH', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    const result = geo.georadius_ro(db, [
+      'k',
+      '15',
+      '37',
+      '200',
+      'km',
+      'ASC',
+      'WITHCOORD',
+      'WITHDIST',
+      'WITHHASH',
+    ]);
+    const items = arrayItems(result);
+    expect(items.length).toBe(2);
+    // Each item: [name, dist, hash, [lon, lat]]
+    const item = arrayItems(items[0] as Reply);
+    expect(item.length).toBe(4);
+    expect(item[0]?.kind).toBe('bulk');
+    expect(item[1]?.kind).toBe('bulk');
+    expect(item[2]?.kind).toBe('integer');
+    expect(item[3]?.kind).toBe('array');
+  });
+
+  it('returns empty array for non-existing key', () => {
+    const { db } = createDb();
+    expect(
+      geo.georadius_ro(db, ['nonexistent', '0', '0', '100', 'km'])
+    ).toEqual(EMPTY_ARRAY);
+  });
+});
+
+describe('GEORADIUSBYMEMBER_RO additional', () => {
+  it('supports WITHCOORD WITHDIST', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    const result = geo.georadiusbymember_ro(db, [
+      'k',
+      'Palermo',
+      '200',
+      'km',
+      'ASC',
+      'WITHCOORD',
+      'WITHDIST',
+    ]);
+    const items = arrayItems(result);
+    expect(items.length).toBe(2);
+    const item = arrayItems(items[0] as Reply);
+    expect(item[0]).toEqual(bulk('Palermo'));
+    expect(item[1]?.kind).toBe('bulk'); // distance
+    expect(item[2]?.kind).toBe('array'); // coords
+  });
+
+  it('rejects STOREDIST option', () => {
+    const { db, rng } = createDb();
+    addSicily(db, rng);
+    const result = geo.georadiusbymember_ro(db, [
+      'k',
+      'Palermo',
+      '200',
+      'km',
+      'STOREDIST',
+      'dst',
+    ]);
+    expect(result.kind).toBe('error');
+  });
+
+  it('returns empty array for non-existing key', () => {
+    const { db } = createDb();
+    expect(
+      geo.georadiusbymember_ro(db, ['nonexistent', 'a', '100', 'km'])
+    ).toEqual(EMPTY_ARRAY);
+  });
+});
+
+// --- COUNT with ANY and DESC ---
+
+describe('COUNT ANY with sorting', () => {
+  it('COUNT ANY with DESC returns count items without sorting', () => {
+    const { db, rng } = createDb();
+    geo.geoadd(
+      db,
+      [
+        'k',
+        '13.361389',
+        '38.115556',
+        'Palermo',
+        '15.087269',
+        '37.502669',
+        'Catania',
+        '2.349014',
+        '48.864716',
+        'Paris',
+      ],
+      rng
+    );
+    const result = geo.geosearch(db, [
+      'k',
+      'FROMLONLAT',
+      '14.0',
+      '38.0',
+      'BYRADIUS',
+      '2000',
+      'km',
+      'DESC',
+      'COUNT',
+      '2',
+      'ANY',
+    ]);
+    const items = arrayItems(result);
+    // ANY returns first 2 found, then sorts DESC
+    expect(items.length).toBe(2);
+  });
+
+  it('ANY without COUNT is an error', () => {
+    const { db, rng } = createDb();
+    geo.geoadd(db, ['k', '0', '0', 'a'], rng);
+    const result = geo.geosearch(db, [
+      'k',
+      'FROMLONLAT',
+      '0',
+      '0',
+      'BYRADIUS',
+      '100',
+      'km',
+      'ANY',
+    ]);
+    expect(result.kind).toBe('error');
   });
 });
