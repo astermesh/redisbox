@@ -6,6 +6,7 @@ import { estimateKeyMemory } from './memory.ts';
 import { AclStore } from './acl-store.ts';
 import { SlowlogManager } from './slowlog.ts';
 import { IbiHookManager } from './hooks/ibi.ts';
+import { ObiHookManager } from './hooks/obi.ts';
 
 const NUM_DATABASES = 16;
 
@@ -23,12 +24,17 @@ export class RedisEngine {
   readonly acl = new AclStore();
   readonly slowlog = new SlowlogManager();
   readonly ibi = new IbiHookManager();
+  readonly obi: ObiHookManager;
   readonly startTime: number;
 
   constructor(deps?: Partial<EngineDeps>) {
     const resolved = { ...defaultDeps, ...deps };
-    this.clock = resolved.clock;
-    this.rng = resolved.rng;
+    this.obi = new ObiHookManager({
+      clock: resolved.clock,
+      rng: resolved.rng,
+    });
+    this.clock = () => this.obi.clock();
+    this.rng = () => this.obi.rng();
     this.startTime = this.clock();
 
     this.databases = [];

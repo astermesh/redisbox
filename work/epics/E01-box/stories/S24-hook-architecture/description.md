@@ -1,5 +1,7 @@
 # S24: Hook Architecture (IBI/OBI)
 
+**Status:** done
+
 Implement the SimBox hook architecture for RedisBox. IBI (Inbound Box Interface) hooks intercept incoming commands. OBI (Outbound Box Interface) hooks control external dependencies (time, randomness). Hooks enable Sim attachment for behavior modification.
 
 ## Tasks

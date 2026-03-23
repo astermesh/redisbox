@@ -1,9 +1,10 @@
 /**
  * RedisSim — Sim-side API for controlling RedisBox behavior.
  *
- * Provides time control and failure injection methods.
- * Time control affects all time-dependent subsystems: expiration,
- * OBJECT IDLETIME, stream IDs, blocking timeouts.
+ * Provides time control, deterministic randomness, and failure injection.
+ * Time control (via OBI redis:time hook) affects all time-dependent subsystems:
+ * expiration, OBJECT IDLETIME, stream IDs, blocking timeouts.
+ * Randomness control (via OBI redis:random hook) enables deterministic behavior.
  * Failure injection uses IBI hooks to inject latency and errors.
  */
 
@@ -11,6 +12,7 @@ import { RedisEngine } from '../engine/engine.ts';
 import type { EngineDeps } from '../engine/types.ts';
 import { errorReply } from '../engine/types.ts';
 import type { CommandHookCtx } from '../engine/hooks/ibi.ts';
+import type { ObiHookManager } from '../engine/hooks/obi.ts';
 import type { Reply } from '../engine/types.ts';
 import { PreDecision } from '../engine/hooks/hook.ts';
 import { VirtualClock } from './virtual-clock.ts';
@@ -34,6 +36,11 @@ export class RedisSim {
       clock: () => this.clock.now(),
       ...deps,
     });
+  }
+
+  /** Access OBI hooks for direct Sim attachment. */
+  get obi(): ObiHookManager {
+    return this.engine.obi;
   }
 
   // --- Time Control ---

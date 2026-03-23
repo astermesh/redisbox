@@ -32,10 +32,15 @@ describe('index exports', () => {
     expect(clock).toBeInstanceOf(VirtualClock);
   });
 
+  it('exports ObiHookManager class', () => {
+    expect(indexExports.ObiHookManager).toBeDefined();
+    expect(typeof indexExports.ObiHookManager).toBe('function');
+  });
+
   it('has exactly the expected exports', () => {
     const exportedKeys = Object.keys(indexExports).sort();
     expect(exportedKeys).toEqual(
-      ['RedisSim', 'VirtualClock', 'createRedisBox'].sort()
+      ['ObiHookManager', 'RedisSim', 'VirtualClock', 'createRedisBox'].sort()
     );
   });
 });
