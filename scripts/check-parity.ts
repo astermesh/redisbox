@@ -16,6 +16,7 @@
  *   --timeout <ms>       TCL test timeout in ms (default: 300000)
  */
 
+import { appendFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import {
@@ -57,9 +58,15 @@ function parseArgs(argv: string[]): CliOptions {
       case '--skip-tcl':
         opts.skipTcl = true;
         break;
-      case '--timeout':
-        opts.timeout = parseInt(argv[++i] ?? '300000', 10);
+      case '--timeout': {
+        const parsed = parseInt(argv[++i] ?? '', 10);
+        if (isNaN(parsed) || parsed <= 0) {
+          console.error('--timeout must be a positive integer');
+          process.exit(1);
+        }
+        opts.timeout = parsed;
         break;
+      }
       default:
         console.error(`Unknown option: ${arg}`);
         process.exit(1);
@@ -86,7 +93,6 @@ async function loadBaseline(path: string): Promise<ParityBaseline> {
 function setOutput(name: string, value: string): void {
   const outputFile = process.env.GITHUB_OUTPUT;
   if (outputFile) {
-    const { appendFileSync } = require('node:fs') as typeof import('node:fs');
     appendFileSync(outputFile, `${name}=${value}\n`);
   }
 }
@@ -97,7 +103,6 @@ function setOutput(name: string, value: string): void {
 function writeSummary(markdown: string): void {
   const summaryFile = process.env.GITHUB_STEP_SUMMARY;
   if (summaryFile) {
-    const { appendFileSync } = require('node:fs') as typeof import('node:fs');
     appendFileSync(summaryFile, markdown + '\n');
   }
 }
