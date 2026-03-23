@@ -51,7 +51,7 @@ export function fitsListpackBySize(
   items: string[],
   maxListpackSize: number
 ): boolean {
-  if (maxListpackSize >= 1) {
+  if (maxListpackSize >= 0) {
     return items.length <= maxListpackSize;
   }
   const limit = FILL_TO_BYTES[maxListpackSize];
