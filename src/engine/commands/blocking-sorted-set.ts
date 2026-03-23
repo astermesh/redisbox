@@ -22,6 +22,7 @@ import {
 } from '../types.ts';
 import type { CommandSpec } from '../command-table.ts';
 import { formatScore } from './sorted-set.ts';
+import { notify, EVENT_FLAGS } from '../notify.ts';
 import type { SortedSetData } from './sorted-set.ts';
 
 /**
@@ -238,7 +239,21 @@ export function bzmpop(ctx: CommandContext, args: string[]): Reply {
 export const specs: CommandSpec[] = [
   {
     name: 'bzpopmin',
-    handler: (ctx, args) => bzpopmin(ctx, args),
+    handler: (ctx, args) => {
+      const reply = bzpopmin(ctx, args);
+      if (reply.kind === 'array' && reply !== NIL_ARRAY) {
+        const parts = reply.value as Reply[];
+        if (parts[0] && parts[0].kind === 'bulk') {
+          notify(
+            ctx,
+            EVENT_FLAGS.SORTEDSET,
+            'zpopmin',
+            parts[0].value as string
+          );
+        }
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'blocking', 'fast'],
     firstKey: 1,
@@ -248,7 +263,21 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'bzpopmax',
-    handler: (ctx, args) => bzpopmax(ctx, args),
+    handler: (ctx, args) => {
+      const reply = bzpopmax(ctx, args);
+      if (reply.kind === 'array' && reply !== NIL_ARRAY) {
+        const parts = reply.value as Reply[];
+        if (parts[0] && parts[0].kind === 'bulk') {
+          notify(
+            ctx,
+            EVENT_FLAGS.SORTEDSET,
+            'zpopmax',
+            parts[0].value as string
+          );
+        }
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'blocking', 'fast'],
     firstKey: 1,
@@ -258,7 +287,24 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'bzmpop',
-    handler: (ctx, args) => bzmpop(ctx, args),
+    handler: (ctx, args) => {
+      const reply = bzmpop(ctx, args);
+      if (reply.kind === 'array' && reply !== NIL_ARRAY) {
+        const parts = reply.value as Reply[];
+        if (parts[0] && parts[0].kind === 'bulk') {
+          const key = parts[0].value as string;
+          const numkeys = parseInt(args[1] ?? '0', 10);
+          const dirArg = (args[2 + numkeys] ?? '').toUpperCase();
+          notify(
+            ctx,
+            EVENT_FLAGS.SORTEDSET,
+            dirArg === 'MIN' ? 'zpopmin' : 'zpopmax',
+            key
+          );
+        }
+      }
+      return reply;
+    },
     arity: -5,
     flags: ['write', 'blocking', 'movablekeys'],
     firstKey: 0,

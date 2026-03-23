@@ -20,6 +20,7 @@ import { errorReply } from './types.ts';
 import { parseMemorySize } from './memory.ts';
 import { getLruClock, estimateIdleTime } from './lru.ts';
 import { lfuGetTimeInMinutes, lfuDecrAndReturn } from './lfu.ts';
+import { notifyKeyspaceEvent, EVENT_FLAGS } from './keyspace-events.ts';
 
 export type EvictionPolicy =
   | 'noeviction'
@@ -71,6 +72,17 @@ export class EvictionManager {
     for (const db of engine.databases) {
       db.setConfig(config);
     }
+  }
+
+  private notifyEvicted(key: string, dbIndex: number): void {
+    notifyKeyspaceEvent(
+      this.config,
+      this.engine.pubsub,
+      EVENT_FLAGS.EVICTED,
+      'evicted',
+      key,
+      dbIndex
+    );
   }
 
   /**
@@ -171,14 +183,16 @@ export class EvictionManager {
    * of not biasing toward lower-indexed databases.
    */
   private evictRandom(volatileOnly: boolean): boolean {
-    const candidates: { db: Database; key: string }[] = [];
-    for (const db of this.engine.databases) {
+    const candidates: { db: Database; key: string; dbIdx: number }[] = [];
+    for (let dbIdx = 0; dbIdx < this.engine.databases.length; dbIdx++) {
+      const db = this.engine.databases[dbIdx];
+      if (!db) continue;
       const keys = volatileOnly
         ? db.sampleVolatileKeys(1, this.engine.rng)
         : db.sampleKeys(1, this.engine.rng);
       const key = keys[0];
       if (key !== undefined) {
-        candidates.push({ db, key });
+        candidates.push({ db, key, dbIdx });
       }
     }
     if (candidates.length === 0) return false;
@@ -186,6 +200,7 @@ export class EvictionManager {
     const picked = candidates[idx];
     if (!picked) return false;
     picked.db.delete(picked.key);
+    this.notifyEvicted(picked.key, picked.dbIdx);
     return true;
   }
 
@@ -278,6 +293,7 @@ export class EvictionManager {
       // Verify the key still exists (it may have been deleted since pool population)
       if (db.getRaw(candidate.key)) {
         db.delete(candidate.key);
+        this.notifyEvicted(candidate.key, candidate.dbIndex);
         return true;
       }
     }
@@ -331,9 +347,12 @@ export class EvictionManager {
   private evictByTtl(samples: number): boolean {
     let bestKey: string | null = null;
     let bestDb: Database | null = null;
+    let bestDbIdx = 0;
     let bestExpiry = Infinity;
 
-    for (const db of this.engine.databases) {
+    for (let dbIdx = 0; dbIdx < this.engine.databases.length; dbIdx++) {
+      const db = this.engine.databases[dbIdx];
+      if (!db) continue;
       const keys = db.sampleVolatileKeys(samples, this.engine.rng);
 
       for (const key of keys) {
@@ -343,12 +362,14 @@ export class EvictionManager {
           bestExpiry = expiry;
           bestKey = key;
           bestDb = db;
+          bestDbIdx = dbIdx;
         }
       }
     }
 
     if (bestKey && bestDb) {
       bestDb.delete(bestKey);
+      this.notifyEvicted(bestKey, bestDbIdx);
       return true;
     }
     return false;

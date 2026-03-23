@@ -17,6 +17,7 @@ import {
 
 import { strByteLength } from '../utils.ts';
 import type { CommandSpec } from '../command-table.ts';
+import { notify, EVENT_FLAGS } from '../notify.ts';
 
 // Default thresholds — match Redis defaults.
 // TODO: read from ConfigStore when config is wired into CommandContext.
@@ -669,7 +670,13 @@ export function rpoplpush(db: Database, args: string[]): Reply {
 export const specs: CommandSpec[] = [
   {
     name: 'lpush',
-    handler: (ctx, args) => lpush(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = lpush(ctx.db, args);
+      if (reply.kind === 'integer') {
+        notify(ctx, EVENT_FLAGS.LIST, 'lpush', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'denyoom', 'fast'],
     firstKey: 1,
@@ -679,7 +686,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'rpush',
-    handler: (ctx, args) => rpush(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = rpush(ctx.db, args);
+      if (reply.kind === 'integer') {
+        notify(ctx, EVENT_FLAGS.LIST, 'rpush', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'denyoom', 'fast'],
     firstKey: 1,
@@ -689,7 +702,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'lpushx',
-    handler: (ctx, args) => lpushx(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = lpushx(ctx.db, args);
+      if (reply.kind === 'integer' && reply !== ZERO) {
+        notify(ctx, EVENT_FLAGS.LIST, 'lpush', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'denyoom', 'fast'],
     firstKey: 1,
@@ -699,7 +718,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'rpushx',
-    handler: (ctx, args) => rpushx(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = rpushx(ctx.db, args);
+      if (reply.kind === 'integer' && reply !== ZERO) {
+        notify(ctx, EVENT_FLAGS.LIST, 'rpush', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'denyoom', 'fast'],
     firstKey: 1,
@@ -709,7 +734,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'lpop',
-    handler: (ctx, args) => lpop(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = lpop(ctx.db, args);
+      if (reply !== NIL && reply.kind !== 'error') {
+        notify(ctx, EVENT_FLAGS.LIST, 'lpop', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -2,
     flags: ['write', 'fast'],
     firstKey: 1,
@@ -719,7 +750,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'rpop',
-    handler: (ctx, args) => rpop(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = rpop(ctx.db, args);
+      if (reply !== NIL && reply.kind !== 'error') {
+        notify(ctx, EVENT_FLAGS.LIST, 'rpop', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -2,
     flags: ['write', 'fast'],
     firstKey: 1,
@@ -759,7 +796,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'lset',
-    handler: (ctx, args) => lset(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = lset(ctx.db, args);
+      if (reply === OK) {
+        notify(ctx, EVENT_FLAGS.LIST, 'lset', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: 4,
     flags: ['write', 'denyoom'],
     firstKey: 1,
@@ -769,7 +812,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'linsert',
-    handler: (ctx, args) => linsert(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = linsert(ctx.db, args);
+      if (reply.kind === 'integer' && (reply.value as number) > 0) {
+        notify(ctx, EVENT_FLAGS.LIST, 'linsert', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: 5,
     flags: ['write', 'denyoom'],
     firstKey: 1,
@@ -779,7 +828,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'lrem',
-    handler: (ctx, args) => lrem(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = lrem(ctx.db, args);
+      if (reply.kind === 'integer' && (reply.value as number) > 0) {
+        notify(ctx, EVENT_FLAGS.LIST, 'lrem', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: 4,
     flags: ['write'],
     firstKey: 1,
@@ -789,7 +844,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'ltrim',
-    handler: (ctx, args) => ltrim(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = ltrim(ctx.db, args);
+      if (reply === OK) {
+        notify(ctx, EVENT_FLAGS.LIST, 'ltrim', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: 4,
     flags: ['write'],
     firstKey: 1,
@@ -809,7 +870,28 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'lmove',
-    handler: (ctx, args) => lmove(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = lmove(ctx.db, args);
+      if (reply.kind === 'bulk' && reply.value !== null) {
+        const source = args[0] ?? '';
+        const destination = args[1] ?? '';
+        const wherefrom = (args[2] ?? '').toUpperCase();
+        const whereto = (args[3] ?? '').toUpperCase();
+        notify(
+          ctx,
+          EVENT_FLAGS.LIST,
+          wherefrom === 'LEFT' ? 'lpop' : 'rpop',
+          source
+        );
+        notify(
+          ctx,
+          EVENT_FLAGS.LIST,
+          whereto === 'LEFT' ? 'lpush' : 'rpush',
+          destination
+        );
+      }
+      return reply;
+    },
     arity: 5,
     flags: ['write', 'denyoom'],
     firstKey: 1,
@@ -819,7 +901,25 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'lmpop',
-    handler: (ctx, args) => lmpop(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = lmpop(ctx.db, args);
+      if (reply.kind === 'array' && reply.value !== null) {
+        // LMPOP returns [key, [elements]] — extract key from response
+        const parts = reply.value as Reply[];
+        if (parts[0] && parts[0].kind === 'bulk') {
+          const key = parts[0].value as string;
+          const numkeys = parseInt(args[0] ?? '0', 10);
+          const dirArg = (args[1 + numkeys] ?? '').toUpperCase();
+          notify(
+            ctx,
+            EVENT_FLAGS.LIST,
+            dirArg === 'LEFT' ? 'lpop' : 'rpop',
+            key
+          );
+        }
+      }
+      return reply;
+    },
     arity: -4,
     flags: ['write', 'movablekeys'],
     firstKey: 0,
@@ -829,7 +929,14 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'rpoplpush',
-    handler: (ctx, args) => rpoplpush(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = rpoplpush(ctx.db, args);
+      if (reply.kind === 'bulk' && reply.value !== null) {
+        notify(ctx, EVENT_FLAGS.LIST, 'rpop', args[0] ?? '');
+        notify(ctx, EVENT_FLAGS.LIST, 'lpush', args[1] ?? '');
+      }
+      return reply;
+    },
     arity: 3,
     flags: ['write', 'denyoom'],
     firstKey: 1,

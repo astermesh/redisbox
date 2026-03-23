@@ -18,6 +18,7 @@ import {
 } from '../types.ts';
 import type { CommandSpec } from '../command-table.ts';
 import { getLruClock, estimateIdleTime } from '../lru.ts';
+import { notify, EVENT_FLAGS } from '../notify.ts';
 
 export function del(db: Database, args: string[]): Reply {
   let count = 0;
@@ -238,7 +239,16 @@ export function object(
 export const specs: CommandSpec[] = [
   {
     name: 'del',
-    handler: (ctx, args) => del(ctx.db, args),
+    handler: (ctx, args) => {
+      let count = 0;
+      for (const key of args) {
+        if (ctx.db.delete(key)) {
+          notify(ctx, EVENT_FLAGS.GENERIC, 'del', key);
+          count++;
+        }
+      }
+      return integerReply(count);
+    },
     arity: -2,
     flags: ['write'],
     firstKey: 1,
@@ -248,7 +258,16 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'unlink',
-    handler: (ctx, args) => unlink(ctx.db, args),
+    handler: (ctx, args) => {
+      let count = 0;
+      for (const key of args) {
+        if (ctx.db.delete(key)) {
+          notify(ctx, EVENT_FLAGS.GENERIC, 'del', key);
+          count++;
+        }
+      }
+      return integerReply(count);
+    },
     arity: -2,
     flags: ['write', 'fast'],
     firstKey: 1,
@@ -278,7 +297,14 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'rename',
-    handler: (ctx, args) => rename(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = rename(ctx.db, args);
+      if (reply === OK) {
+        notify(ctx, EVENT_FLAGS.GENERIC, 'rename_from', args[0] ?? '');
+        notify(ctx, EVENT_FLAGS.GENERIC, 'rename_to', args[1] ?? '');
+      }
+      return reply;
+    },
     arity: 3,
     flags: ['write'],
     firstKey: 1,
@@ -288,7 +314,14 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'renamenx',
-    handler: (ctx, args) => renamenx(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = renamenx(ctx.db, args);
+      if (reply === ONE) {
+        notify(ctx, EVENT_FLAGS.GENERIC, 'rename_from', args[0] ?? '');
+        notify(ctx, EVENT_FLAGS.GENERIC, 'rename_to', args[1] ?? '');
+      }
+      return reply;
+    },
     arity: 3,
     flags: ['write', 'fast'],
     firstKey: 1,
@@ -298,7 +331,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'persist',
-    handler: (ctx, args) => persist(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = persist(ctx.db, args);
+      if (reply === ONE) {
+        notify(ctx, EVENT_FLAGS.GENERIC, 'persist', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: 2,
     flags: ['write', 'fast'],
     firstKey: 1,
@@ -328,7 +367,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'copy',
-    handler: (ctx, args) => copy(ctx.engine, ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = copy(ctx.engine, ctx.db, args);
+      if (reply === ONE) {
+        notify(ctx, EVENT_FLAGS.GENERIC, 'copy_to', args[1] ?? '');
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'denyoom'],
     firstKey: 1,

@@ -20,6 +20,7 @@ import {
 } from '../types.ts';
 import type { CommandSpec } from '../command-table.ts';
 import { parseInteger, parseFloat64, formatFloat } from './incr.ts';
+import { notify, EVENT_FLAGS } from '../notify.ts';
 import { matchGlob } from '../glob-pattern.ts';
 import { strByteLength, partialShuffle } from '../utils.ts';
 
@@ -534,7 +535,13 @@ export function hscan(db: Database, args: string[]): Reply {
 export const specs: CommandSpec[] = [
   {
     name: 'hset',
-    handler: (ctx, args) => hset(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = hset(ctx.db, args);
+      if (reply.kind === 'integer') {
+        notify(ctx, EVENT_FLAGS.HASH, 'hset', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -4,
     flags: ['write', 'denyoom', 'fast'],
     firstKey: 1,
@@ -554,7 +561,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'hmset',
-    handler: (ctx, args) => hmset(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = hmset(ctx.db, args);
+      if (reply === OK) {
+        notify(ctx, EVENT_FLAGS.HASH, 'hset', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -4,
     flags: ['write', 'denyoom', 'fast'],
     firstKey: 1,
@@ -584,7 +597,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'hdel',
-    handler: (ctx, args) => hdel(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = hdel(ctx.db, args);
+      if (reply.kind === 'integer' && (reply.value as number) > 0) {
+        notify(ctx, EVENT_FLAGS.HASH, 'hdel', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'fast'],
     firstKey: 1,
@@ -634,7 +653,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'hsetnx',
-    handler: (ctx, args) => hsetnx(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = hsetnx(ctx.db, args);
+      if (reply === ONE) {
+        notify(ctx, EVENT_FLAGS.HASH, 'hset', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: 4,
     flags: ['write', 'denyoom', 'fast'],
     firstKey: 1,
@@ -644,7 +669,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'hincrby',
-    handler: (ctx, args) => hincrby(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = hincrby(ctx.db, args);
+      if (reply.kind === 'integer') {
+        notify(ctx, EVENT_FLAGS.HASH, 'hincrby', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: 4,
     flags: ['write', 'denyoom', 'fast'],
     firstKey: 1,
@@ -654,7 +685,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'hincrbyfloat',
-    handler: (ctx, args) => hincrbyfloat(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = hincrbyfloat(ctx.db, args);
+      if (reply.kind === 'bulk' && reply.value !== null) {
+        notify(ctx, EVENT_FLAGS.HASH, 'hincrbyfloat', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: 4,
     flags: ['write', 'denyoom', 'fast'],
     firstKey: 1,

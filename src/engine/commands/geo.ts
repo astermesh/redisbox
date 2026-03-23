@@ -18,6 +18,7 @@ import {
   chooseEncoding,
   updateEncoding,
 } from './sorted-set.ts';
+import { notify, EVENT_FLAGS } from '../notify.ts';
 
 // --- Constants ---
 
@@ -1177,7 +1178,13 @@ export function georadiusbymember_ro(db: Database, args: string[]): Reply {
 export const specs: CommandSpec[] = [
   {
     name: 'geoadd',
-    handler: (ctx, args) => geoadd(ctx.db, args, ctx.engine.rng),
+    handler: (ctx, args) => {
+      const reply = geoadd(ctx.db, args, ctx.engine.rng);
+      if (reply.kind === 'integer' && (reply.value as number) >= 0) {
+        notify(ctx, EVENT_FLAGS.SORTEDSET, 'zadd', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -5,
     flags: ['write', 'denyoom'],
     firstKey: 1,
@@ -1227,7 +1234,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'geosearchstore',
-    handler: (ctx, args) => geosearchstore(ctx.db, args, ctx.engine.rng),
+    handler: (ctx, args) => {
+      const reply = geosearchstore(ctx.db, args, ctx.engine.rng);
+      if (reply.kind === 'integer') {
+        notify(ctx, EVENT_FLAGS.SORTEDSET, 'geosearchstore', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -8,
     flags: ['write', 'denyoom'],
     firstKey: 1,

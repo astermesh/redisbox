@@ -18,6 +18,7 @@ import {
   invalidExpireTimeError,
 } from '../types.ts';
 import type { CommandSpec } from '../command-table.ts';
+import { notify, EVENT_FLAGS } from '../notify.ts';
 
 import { INT64_MAX, INT64_MIN, strByteLength } from '../utils.ts';
 
@@ -712,7 +713,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'set',
-    handler: (ctx, args) => set(ctx.db, ctx.engine.clock, args),
+    handler: (ctx, args) => {
+      const reply = set(ctx.db, ctx.engine.clock, args);
+      if (reply === OK || (reply.kind === 'bulk' && reply !== NIL)) {
+        notify(ctx, EVENT_FLAGS.STRING, 'set', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'denyoom'],
     firstKey: 1,
@@ -732,7 +739,15 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'mset',
-    handler: (ctx, args) => mset(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = mset(ctx.db, args);
+      if (reply === OK) {
+        for (let i = 0; i < args.length; i += 2) {
+          notify(ctx, EVENT_FLAGS.STRING, 'set', args[i] ?? '');
+        }
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'denyoom'],
     firstKey: 1,
@@ -742,7 +757,15 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'msetnx',
-    handler: (ctx, args) => msetnx(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = msetnx(ctx.db, args);
+      if (reply === ONE) {
+        for (let i = 0; i < args.length; i += 2) {
+          notify(ctx, EVENT_FLAGS.STRING, 'set', args[i] ?? '');
+        }
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'denyoom'],
     firstKey: 1,
@@ -752,7 +775,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'append',
-    handler: (ctx, args) => append(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = append(ctx.db, args);
+      if (reply.kind === 'integer') {
+        notify(ctx, EVENT_FLAGS.STRING, 'append', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: 3,
     flags: ['write', 'denyoom', 'fast'],
     firstKey: 1,
@@ -772,7 +801,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'setrange',
-    handler: (ctx, args) => setrange(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = setrange(ctx.db, args);
+      if (reply.kind === 'integer') {
+        notify(ctx, EVENT_FLAGS.STRING, 'setrange', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: 4,
     flags: ['write', 'denyoom'],
     firstKey: 1,
@@ -802,7 +837,23 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'getex',
-    handler: (ctx, args) => getex(ctx.db, ctx.engine.clock, args),
+    handler: (ctx, args) => {
+      const reply = getex(ctx.db, ctx.engine.clock, args);
+      if (reply !== NIL && reply.kind === 'bulk') {
+        // Determine event name based on options
+        const opt = args.length > 1 ? (args[1] ?? '').toUpperCase() : '';
+        if (opt === 'EX' || opt === 'EXAT') {
+          notify(ctx, EVENT_FLAGS.STRING, 'expire', args[0] ?? '');
+        } else if (opt === 'PX' || opt === 'PXAT') {
+          notify(ctx, EVENT_FLAGS.STRING, 'pexpire', args[0] ?? '');
+        } else if (opt === 'PERSIST') {
+          notify(ctx, EVENT_FLAGS.STRING, 'persist', args[0] ?? '');
+        } else {
+          notify(ctx, EVENT_FLAGS.STRING, 'getex', args[0] ?? '');
+        }
+      }
+      return reply;
+    },
     arity: -2,
     flags: ['write', 'fast'],
     firstKey: 1,
@@ -812,7 +863,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'getdel',
-    handler: (ctx, args) => getdel(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = getdel(ctx.db, args);
+      if (reply !== NIL && reply.kind === 'bulk') {
+        notify(ctx, EVENT_FLAGS.STRING, 'getdel', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: 2,
     flags: ['write', 'fast'],
     firstKey: 1,
@@ -822,7 +879,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'getset',
-    handler: (ctx, args) => getset(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = getset(ctx.db, args);
+      if (reply.kind === 'bulk') {
+        notify(ctx, EVENT_FLAGS.STRING, 'set', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: 3,
     flags: ['write', 'denyoom', 'fast'],
     firstKey: 1,
@@ -832,7 +895,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'setnx',
-    handler: (ctx, args) => setnx(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = setnx(ctx.db, args);
+      if (reply === ONE) {
+        notify(ctx, EVENT_FLAGS.STRING, 'set', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: 3,
     flags: ['write', 'denyoom', 'fast'],
     firstKey: 1,
@@ -842,7 +911,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'setex',
-    handler: (ctx, args) => setex(ctx.db, ctx.engine.clock, args),
+    handler: (ctx, args) => {
+      const reply = setex(ctx.db, ctx.engine.clock, args);
+      if (reply === OK) {
+        notify(ctx, EVENT_FLAGS.STRING, 'set', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: 4,
     flags: ['write', 'denyoom'],
     firstKey: 1,
@@ -852,7 +927,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'psetex',
-    handler: (ctx, args) => psetex(ctx.db, ctx.engine.clock, args),
+    handler: (ctx, args) => {
+      const reply = psetex(ctx.db, ctx.engine.clock, args);
+      if (reply === OK) {
+        notify(ctx, EVENT_FLAGS.STRING, 'set', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: 4,
     flags: ['write', 'denyoom'],
     firstKey: 1,
