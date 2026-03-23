@@ -9,3 +9,4 @@ __screenshots__/
 .env.test
 .env.local
 .env.*.local
+.redis-tests/

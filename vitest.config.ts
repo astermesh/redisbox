@@ -54,7 +54,11 @@ const patterns = {
   ],
   e2e: ['src/**/*.e2e.test.ts'],
   // Tests that rely on Node.js-only APIs (not provided by browser or NodeBox test env)
-  serverOnly: ['src/**/*.io.test.ts', 'src/build.test.ts'],
+  serverOnly: [
+    'src/**/*.io.test.ts',
+    'src/build.test.ts',
+    'src/tcl-runner/tcl-runner.test.ts',
+  ],
 };
 
 const include = (p: string[]): SearchConfig => ({ include: p });

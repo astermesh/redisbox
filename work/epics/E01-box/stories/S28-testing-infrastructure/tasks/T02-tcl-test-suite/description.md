@@ -1,5 +1,7 @@
 # T02: Redis TCL Test Suite Integration
 
+**Status:** done
+
 Adapt the Redis TCL test suite to run against RedisBox in external server mode.
 
 ## Details
