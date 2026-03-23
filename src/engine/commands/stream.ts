@@ -12,8 +12,21 @@ import {
   OK,
   SYNTAX_ERR,
 } from '../types.ts';
-import { RedisStream, parseStreamId } from '../stream.ts';
-import type { StreamEntry, StreamId } from '../stream.ts';
+import {
+  RedisStream,
+  parseStreamId,
+  compareStreamIds,
+  streamIdToString,
+} from '../stream.ts';
+import type { StreamEntry, StreamId, PendingEntry } from '../stream.ts';
+
+/**
+ * Parse an entry ID that is known to be valid (was validated on insert).
+ * Falls back to 0-0 if somehow invalid (should never happen).
+ */
+function safeParseId(id: string): StreamId {
+  return parseStreamId(id) ?? { ms: 0, seq: 0 };
+}
 import type { CommandSpec } from '../command-table.ts';
 import type { CommandContext } from '../types.ts';
 
@@ -766,6 +779,441 @@ function xgroup(ctx: CommandContext, args: string[]): Reply {
   }
 }
 
+function ensureConsumer(
+  group: import('../stream.ts').ConsumerGroup,
+  name: string,
+  clockMs: number
+): import('../stream.ts').StreamConsumer {
+  let consumer = group.consumers.get(name);
+  if (!consumer) {
+    consumer = { name, seenTime: clockMs, pending: new Map() };
+    group.consumers.set(name, consumer);
+  }
+  consumer.seenTime = clockMs;
+  return consumer;
+}
+
+// ─── XREADGROUP ──────────────────────────────────────────────────────
+
+/**
+ * XREADGROUP GROUP group consumer [COUNT count] [BLOCK milliseconds] [NOACK] STREAMS key [key ...] id [id ...]
+ */
+export function xreadgroup(
+  db: Database,
+  clockMs: number,
+  args: string[]
+): Reply {
+  let i = 0;
+
+  // Must start with GROUP keyword
+  if (args.length < 4 || (args[i] as string).toUpperCase() !== 'GROUP') {
+    return errorReply(
+      'ERR',
+      "wrong number of arguments for 'xreadgroup' command"
+    );
+  }
+  i++;
+
+  const groupName = args[i++] as string;
+  const consumerName = args[i++] as string;
+
+  let count: number | undefined;
+  let noack = false;
+  let streamsIdx = -1;
+
+  while (i < args.length) {
+    const upper = (args[i] as string).toUpperCase();
+
+    if (upper === 'COUNT') {
+      const result = parseCount(args, i);
+      if ('error' in result) return result.error;
+      count = result.count;
+      i = result.nextIdx;
+      continue;
+    }
+
+    if (upper === 'BLOCK') {
+      // Accept BLOCK syntax but don't actually block
+      i++;
+      const blockMs = args[i];
+      if (blockMs === undefined) return SYNTAX_ERR;
+      const n = Number(blockMs);
+      if (!Number.isInteger(n) || n < 0) {
+        return errorReply('ERR', 'value is not an integer or out of range');
+      }
+      i++;
+      continue;
+    }
+
+    if (upper === 'NOACK') {
+      noack = true;
+      i++;
+      continue;
+    }
+
+    if (upper === 'STREAMS') {
+      streamsIdx = i + 1;
+      break;
+    }
+
+    return SYNTAX_ERR;
+  }
+
+  if (streamsIdx === -1) {
+    return errorReply(
+      'ERR',
+      "Unbalanced 'xreadgroup' list of streams: for each stream key an ID or '>' must be specified."
+    );
+  }
+
+  const remaining = args.slice(streamsIdx);
+  if (remaining.length === 0 || remaining.length % 2 !== 0) {
+    return errorReply(
+      'ERR',
+      "Unbalanced 'xreadgroup' list of streams: for each stream key an ID or '>' must be specified."
+    );
+  }
+
+  const numStreams = remaining.length / 2;
+  const keys = remaining.slice(0, numStreams);
+  const ids = remaining.slice(numStreams);
+
+  const resultStreams: Reply[] = [];
+
+  for (let j = 0; j < numStreams; j++) {
+    const key = keys[j] as string;
+    const idArg = ids[j] as string;
+
+    const lookup = getStream(db, key);
+    if (lookup.error) return lookup.error;
+    if (!lookup.stream) {
+      return errorReply(
+        'NOGROUP',
+        "No such key '" +
+          key +
+          "' or consumer group '" +
+          groupName +
+          "' in XREADGROUP with GROUP option"
+      );
+    }
+
+    const stream = lookup.stream;
+    const group = stream.getGroup(groupName);
+    if (!group) {
+      return errorReply(
+        'NOGROUP',
+        "No such key '" +
+          key +
+          "' or consumer group '" +
+          groupName +
+          "' in XREADGROUP with GROUP option"
+      );
+    }
+
+    // Ensure consumer exists
+    const consumer = ensureConsumer(group, consumerName, clockMs);
+
+    if (idArg === '$') {
+      return errorReply(
+        'ERR',
+        'The $ ID is meaningless in the context of XREADGROUP: you want to read the history of this consumer by specifying a proper ID, or use the > ID to get new messages. The $ ID would just return an empty result set.'
+      );
+    }
+
+    if (idArg === '>') {
+      // Read new (undelivered) messages
+      const entries = stream.entriesAfter(group.lastDeliveredId, count);
+      if (entries.length === 0) continue;
+
+      // Update lastDeliveredId to the last entry we're delivering
+      const lastEntry = entries[entries.length - 1] as StreamEntry;
+      group.lastDeliveredId = { ...safeParseId(lastEntry.id) };
+      group.entriesRead += entries.length;
+
+      if (!noack) {
+        // Add to PEL
+        for (const entry of entries) {
+          const pe: PendingEntry = {
+            entryId: entry.id,
+            consumer: consumerName,
+            deliveryTime: clockMs,
+            deliveryCount: 1,
+          };
+          group.pel.set(entry.id, pe);
+          consumer.pending.set(entry.id, pe);
+        }
+      }
+
+      resultStreams.push(
+        arrayReply([bulkReply(key), arrayReply(entries.map(entryToReply))])
+      );
+    } else {
+      // Read pending entries for this consumer (entries in consumer's PEL with ID > idArg)
+      const afterId = parseStreamId(idArg);
+      if (!afterId) return INVALID_STREAM_ID_ERR;
+
+      // Collect pending replies with ID > afterId
+      const pendingReplies: Reply[] = [];
+      // We need to iterate in order, so sort by entry ID
+      const sortedPending = [...consumer.pending.keys()].sort((a, b) =>
+        compareStreamIds(safeParseId(a), safeParseId(b))
+      );
+
+      for (const entryId of sortedPending) {
+        const eid = safeParseId(entryId);
+        if (compareStreamIds(eid, afterId) <= 0) continue;
+
+        // Update delivery time and count (matches real Redis behavior)
+        const pe = consumer.pending.get(entryId);
+        if (pe) {
+          pe.deliveryTime = clockMs;
+          pe.deliveryCount++;
+        }
+
+        // Find the actual entry in the stream
+        const entryData = stream.range(eid, eid, 1);
+        if (entryData.length > 0) {
+          pendingReplies.push(entryToReply(entryData[0] as StreamEntry));
+        } else {
+          // Entry was deleted (XDEL/XTRIM) — return [id, null]
+          pendingReplies.push(
+            arrayReply([bulkReply(entryId), bulkReply(null)])
+          );
+        }
+        if (count !== undefined && pendingReplies.length >= count) break;
+      }
+
+      resultStreams.push(
+        arrayReply([bulkReply(key), arrayReply(pendingReplies)])
+      );
+    }
+  }
+
+  if (resultStreams.length === 0) return NIL_ARRAY;
+  return arrayReply(resultStreams);
+}
+
+// ─── XACK ────────────────────────────────────────────────────────────
+
+/**
+ * XACK key group id [id ...]
+ */
+export function xack(db: Database, args: string[]): Reply {
+  if (args.length < 3) {
+    return errorReply('ERR', "wrong number of arguments for 'xack' command");
+  }
+
+  const key = args[0] as string;
+  const groupName = args[1] as string;
+
+  const lookup = getStream(db, key);
+  if (lookup.error) return lookup.error;
+  if (!lookup.stream) return ZERO;
+
+  const group = lookup.stream.getGroup(groupName);
+  if (!group) return ZERO;
+
+  let acked = 0;
+  for (let i = 2; i < args.length; i++) {
+    const idStr = args[i] as string;
+    const parsed = parseStreamId(idStr);
+    if (!parsed) return INVALID_STREAM_ID_ERR;
+
+    const entryId = `${parsed.ms}-${parsed.seq}`;
+    const pe = group.pel.get(entryId);
+    if (pe) {
+      // Remove from group PEL
+      group.pel.delete(entryId);
+      // Remove from consumer's pending
+      const consumer = group.consumers.get(pe.consumer);
+      if (consumer) {
+        consumer.pending.delete(entryId);
+      }
+      acked++;
+    }
+  }
+
+  return integerReply(acked);
+}
+
+// ─── XPENDING ────────────────────────────────────────────────────────
+
+/**
+ * XPENDING key group [[IDLE min-idle-time] start end count [consumer]]
+ */
+export function xpending(db: Database, clockMs: number, args: string[]): Reply {
+  if (args.length < 2) {
+    return errorReply(
+      'ERR',
+      "wrong number of arguments for 'xpending' command"
+    );
+  }
+
+  const key = args[0] as string;
+  const groupName = args[1] as string;
+
+  const lookup = getStream(db, key);
+  if (lookup.error) return lookup.error;
+  if (!lookup.stream) {
+    return errorReply(
+      'NOGROUP',
+      "No such key '" + key + "' or consumer group '" + groupName + "'"
+    );
+  }
+
+  const group = lookup.stream.getGroup(groupName);
+  if (!group) {
+    return errorReply(
+      'NOGROUP',
+      "No such key '" + key + "' or consumer group '" + groupName + "'"
+    );
+  }
+
+  // Summary form: XPENDING key group
+  if (args.length === 2) {
+    return xpendingSummary(group);
+  }
+
+  // Detail form: XPENDING key group [[IDLE min-idle-time] start end count [consumer]]
+  let i = 2;
+  let minIdle = 0;
+
+  if ((args[i] as string).toUpperCase() === 'IDLE') {
+    i++;
+    const idleStr = args[i];
+    if (idleStr === undefined) return SYNTAX_ERR;
+    const n = Number(idleStr);
+    if (!Number.isInteger(n) || n < 0) {
+      return errorReply('ERR', 'value is not an integer or out of range');
+    }
+    minIdle = n;
+    i++;
+  }
+
+  const startArg = args[i++];
+  const endArg = args[i++];
+  const countArg = args[i++];
+
+  if (
+    startArg === undefined ||
+    endArg === undefined ||
+    countArg === undefined
+  ) {
+    return SYNTAX_ERR;
+  }
+
+  const start = parseRangeId(startArg, 'start');
+  if (!start) return INVALID_STREAM_ID_ERR;
+  if ('error' in start) return start.error;
+
+  const end = parseRangeId(endArg, 'end');
+  if (!end) return INVALID_STREAM_ID_ERR;
+  if ('error' in end) return end.error;
+
+  const countN = Number(countArg);
+  if (!Number.isInteger(countN) || countN < 0) {
+    return errorReply('ERR', 'value is not an integer or out of range');
+  }
+
+  const consumerFilter = args[i] as string | undefined;
+
+  return xpendingDetail(
+    group,
+    start,
+    end,
+    countN,
+    consumerFilter,
+    minIdle,
+    clockMs
+  );
+}
+
+function xpendingSummary(group: import('../stream.ts').ConsumerGroup): Reply {
+  if (group.pel.size === 0) {
+    return arrayReply([
+      integerReply(0),
+      bulkReply(null),
+      bulkReply(null),
+      NIL_ARRAY,
+    ]);
+  }
+
+  // Find min and max IDs, and count per consumer
+  let minId: StreamId | null = null;
+  let maxId: StreamId | null = null;
+  const consumerCounts = new Map<string, number>();
+
+  for (const [entryId, pe] of group.pel) {
+    const eid = safeParseId(entryId);
+    if (minId === null || compareStreamIds(eid, minId) < 0) minId = eid;
+    if (maxId === null || compareStreamIds(eid, maxId) > 0) maxId = eid;
+    consumerCounts.set(pe.consumer, (consumerCounts.get(pe.consumer) ?? 0) + 1);
+  }
+
+  // Build consumer list sorted by name
+  const consumerList: Reply[] = [...consumerCounts.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([name, cnt]) =>
+      arrayReply([bulkReply(name), bulkReply(String(cnt))])
+    );
+
+  return arrayReply([
+    integerReply(group.pel.size),
+    bulkReply(minId ? streamIdToString(minId) : null),
+    bulkReply(maxId ? streamIdToString(maxId) : null),
+    arrayReply(consumerList),
+  ]);
+}
+
+function xpendingDetail(
+  group: import('../stream.ts').ConsumerGroup,
+  start: StreamId,
+  end: StreamId,
+  count: number,
+  consumerFilter: string | undefined,
+  minIdle: number,
+  clockMs: number
+): Reply {
+  // Collect and sort all PEL entries
+  const entries: PendingEntry[] = [];
+
+  for (const [entryId, pe] of group.pel) {
+    if (consumerFilter && pe.consumer !== consumerFilter) continue;
+
+    const eid = safeParseId(entryId);
+    if (compareStreamIds(eid, start) < 0) continue;
+    if (compareStreamIds(eid, end) > 0) continue;
+
+    if (minIdle > 0) {
+      const idle = clockMs - pe.deliveryTime;
+      if (idle < minIdle) continue;
+    }
+
+    entries.push(pe);
+  }
+
+  // Sort by entry ID
+  entries.sort((a, b) =>
+    compareStreamIds(safeParseId(a.entryId), safeParseId(b.entryId))
+  );
+
+  // Apply count limit
+  const limited = entries.slice(0, count);
+
+  // Format: [id, consumer, idle-time-ms, delivery-count]
+  const result: Reply[] = limited.map((pe) => {
+    const idle = clockMs - pe.deliveryTime;
+    return arrayReply([
+      bulkReply(pe.entryId),
+      bulkReply(pe.consumer),
+      integerReply(idle),
+      integerReply(pe.deliveryCount),
+    ]);
+  });
+
+  return arrayReply(result);
+}
+
 export const specs: CommandSpec[] = [
   {
     name: 'xadd',
@@ -878,5 +1326,35 @@ export const specs: CommandSpec[] = [
         categories: ['@write', '@stream', '@slow'],
       },
     ],
+  },
+  {
+    name: 'xreadgroup',
+    handler: (ctx, args) => xreadgroup(ctx.db, ctx.engine.clock(), args),
+    arity: -7,
+    flags: ['write', 'blocking', 'movablekeys'],
+    firstKey: 0,
+    lastKey: 0,
+    keyStep: 0,
+    categories: ['@write', '@stream', '@slow', '@blocking'],
+  },
+  {
+    name: 'xack',
+    handler: (ctx, args) => xack(ctx.db, args),
+    arity: -4,
+    flags: ['write', 'fast'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@write', '@stream', '@fast'],
+  },
+  {
+    name: 'xpending',
+    handler: (ctx, args) => xpending(ctx.db, ctx.engine.clock(), args),
+    arity: -3,
+    flags: ['readonly'],
+    firstKey: 1,
+    lastKey: 1,
+    keyStep: 1,
+    categories: ['@read', '@stream', '@slow'],
   },
 ];
