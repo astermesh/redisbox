@@ -43,6 +43,18 @@ export class WasmoonEngine implements LuaEngine {
     }
   }
 
+  executeSync(script: string): LuaExecResult {
+    this.assertOpen();
+    try {
+      const result = this.vm.doStringSync(script);
+      const values = result === undefined ? [] : [result];
+      return { values };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new LuaScriptError(message);
+    }
+  }
+
   setGlobal(name: string, value: unknown): void {
     this.assertOpen();
     this.vm.global.set(name, value);
