@@ -191,7 +191,10 @@ function scriptLoad(ctx: CommandContext, args: string[]): Reply {
   // Redis compiles the script on LOAD and returns an error for syntax errors
   const syntaxError = mgr.validateScript(script);
   if (syntaxError) {
-    return errorReply('ERR', syntaxError);
+    return errorReply(
+      'ERR',
+      `Error compiling script (new function): ${syntaxError}`
+    );
   }
 
   const digest = mgr.cacheScript(script);
@@ -234,7 +237,7 @@ function scriptFlush(ctx: CommandContext, args: string[]): Reply {
   if (args.length === 1) {
     const mode = (args[0] ?? '').toUpperCase();
     if (mode !== 'ASYNC' && mode !== 'SYNC') {
-      return errorReply('ERR', 'SCRIPT FLUSH only supports ASYNC|SYNC option');
+      return errorReply('ERR', 'SCRIPT FLUSH only support SYNC|ASYNC option');
     }
   }
 
@@ -295,10 +298,8 @@ function scriptHelp(): Reply {
  * SCRIPT <subcommand> [args ...]
  */
 export function scriptCmd(ctx: CommandContext, args: string[]): Reply {
-  if (args.length === 0) {
-    return unknownSubcommandError('script', '');
-  }
-
+  // args.length === 0 is unreachable: arity -2 ensures the dispatcher
+  // rejects bare SCRIPT before the handler is called.
   const sub = (args[0] ?? '').toUpperCase();
   const rest = args.slice(1);
 

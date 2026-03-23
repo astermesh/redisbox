@@ -24,6 +24,7 @@ import {
   arrayReply,
   errorReply,
 } from '../types.ts';
+import { sha1 } from '../sha1.ts';
 
 /**
  * Function that executes a Redis command and returns the reply.
@@ -217,6 +218,7 @@ export async function registerRedisBridge(
 
   engine.setGlobal('__rb_call', callRaw);
   engine.setGlobal('__rb_pcall', pcallRaw);
+  engine.setGlobal('__rb_sha1hex', (s: unknown) => sha1(String(s ?? '')));
 
   // The Lua decode function converts tagged objects to proper Lua values.
   // Array elements are stored as string-keyed properties on the JS object,
@@ -227,8 +229,10 @@ export async function registerRedisBridge(
 
     local raw_call = __rb_call
     local raw_pcall = __rb_pcall
+    local raw_sha1hex = __rb_sha1hex
     __rb_call = nil
     __rb_pcall = nil
+    __rb_sha1hex = nil
 
     local function decode(raw)
       local tag = raw.t
@@ -275,6 +279,10 @@ export async function registerRedisBridge(
 
     redis.status_reply = function(msg)
       return {ok = tostring(msg)}
+    end
+
+    redis.sha1hex = function(s)
+      return raw_sha1hex(tostring(s))
     end
 
     redis.log = function() end
