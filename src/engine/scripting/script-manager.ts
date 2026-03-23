@@ -18,6 +18,7 @@ import { LuaScriptError } from './lua-engine.ts';
 import type { CommandExecutor } from './redis-bridge.ts';
 import { registerRedisBridge } from './redis-bridge.ts';
 import { WasmoonEngine } from './wasmoon-engine.ts';
+import { applySandbox } from './sandbox.ts';
 import { sha1 } from '../sha1.ts';
 import type { Reply } from '../types.ts';
 import {
@@ -81,6 +82,7 @@ export class ScriptManager {
     // Register a Lua-side encode function for converting script return values
     // to tagged JS objects. Uses the same tag format as the redis bridge.
     // The encode function is stored as a global for use in the wrapper script.
+    // Must be registered before sandbox locks _G.
     await this.engine.execute(`
       local T_STATUS, T_ERROR, T_INTEGER, T_NIL, T_BULK, T_ARRAY = 1, 2, 3, 4, 5, 6
 
@@ -111,6 +113,10 @@ export class ScriptManager {
         return {t = T_NIL}
       end
     `);
+
+    // Apply sandbox: library shims, PRNG override, global restrictions.
+    // Must be after bridge and __rb_encode are registered (sandbox locks _G).
+    await applySandbox(this.engine);
   }
 
   /**
