@@ -17,8 +17,8 @@ import {
   unknownSubcommandError,
 } from '../types.ts';
 import type { CommandSpec } from '../command-table.ts';
-import { getLruClock, estimateIdleTime } from '../lru.ts';
-import { notify, EVENT_FLAGS } from '../notify.ts';
+import { getLruClock, estimateIdleTime } from '../memory/lru.ts';
+import { notify, EVENT_FLAGS } from '../pubsub/notify.ts';
 
 export function del(db: Database, args: string[]): Reply {
   let count = 0;

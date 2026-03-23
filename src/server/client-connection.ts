@@ -17,7 +17,7 @@ import * as serializer from '../resp/resp-serializer.ts';
 import type { ClientState, ClientStateStore } from './client-state.ts';
 import type { RedisEngine } from '../engine/engine.ts';
 import type { ConfigStore } from '../config-store.ts';
-import type { EvictionManager } from '../engine/eviction-manager.ts';
+import type { EvictionManager } from '../engine/memory/eviction-manager.ts';
 
 /** Convert an engine Reply to a RESP wire-format RespValue. */
 function replyToRespValue(reply: Reply): RespValue {

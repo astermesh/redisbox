@@ -1,12 +1,12 @@
 import type { RedisEntry, RedisEncoding, RedisType } from './types.ts';
 import { partialShuffle } from './utils.ts';
-import { getLruClock } from './lru.ts';
+import { getLruClock } from './memory/lru.ts';
 import {
   LFU_INIT_VAL,
   lfuGetTimeInMinutes,
   lfuDecrAndReturn,
   lfuLogIncr,
-} from './lfu.ts';
+} from './memory/lfu.ts';
 import type { ConfigStore } from '../config-store.ts';
 
 export class Database {

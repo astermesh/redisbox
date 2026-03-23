@@ -14,7 +14,7 @@ import {
   wrongArityError,
 } from '../types.ts';
 import type { CommandSpec } from '../command-table.ts';
-import { getLruClock, estimateIdleTime } from '../lru.ts';
+import { getLruClock, estimateIdleTime } from '../memory/lru.ts';
 import type { RedisStream } from '../stream.ts';
 
 // ---------------------------------------------------------------------------

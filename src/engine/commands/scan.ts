@@ -1,15 +1,9 @@
 import type { Database } from '../database.ts';
 import type { Reply } from '../types.ts';
-import {
-  bulkReply,
-  arrayReply,
-  errorReply,
-  EMPTY_ARRAY,
-  SYNTAX_ERR,
-  NOT_INTEGER_ERR,
-} from '../types.ts';
+import { bulkReply, arrayReply, EMPTY_ARRAY } from '../types.ts';
 import { matchGlob } from '../glob-pattern.ts';
 import type { CommandSpec } from '../command-table.ts';
+import { parseScanCursor, parseScanOptions } from './scan-utils.ts';
 
 export function keys(db: Database, args: string[]): Reply {
   const pattern = args[0] ?? '*';
@@ -25,38 +19,22 @@ export function keys(db: Database, args: string[]): Reply {
 }
 
 export function scan(db: Database, args: string[]): Reply {
-  const cursor = parseInt(args[0] ?? '0', 10);
-  if (isNaN(cursor) || cursor < 0) {
-    return errorReply('ERR', 'invalid cursor');
-  }
+  const { cursor, error: cursorErr } = parseScanCursor(args[0] ?? '0');
+  if (cursorErr) return cursorErr;
 
-  let matchPattern: string | null = null;
-  let count = 10;
   let typeFilter: string | null = null;
 
-  let i = 1;
-  while (i < args.length) {
-    const flag = (args[i] ?? '').toUpperCase();
-    if (flag === 'MATCH') {
+  const { options, error: optErr } = parseScanOptions(args, 1, (flag, a, i) => {
+    if (flag === 'TYPE') {
       i++;
-      matchPattern = args[i] ?? '*';
-    } else if (flag === 'COUNT') {
-      i++;
-      count = parseInt(args[i] ?? '10', 10);
-      if (isNaN(count)) {
-        return NOT_INTEGER_ERR;
-      }
-      if (count < 1) {
-        return SYNTAX_ERR;
-      }
-    } else if (flag === 'TYPE') {
-      i++;
-      typeFilter = (args[i] ?? '').toLowerCase();
-    } else {
-      return SYNTAX_ERR;
+      typeFilter = (a[i] ?? '').toLowerCase();
+      return i;
     }
-    i++;
-  }
+    return null;
+  });
+  if (optErr) return optErr;
+
+  const { matchPattern, count } = options;
 
   const allKeys: string[] = [];
   for (const key of db.keys()) {
