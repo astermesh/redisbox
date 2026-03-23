@@ -186,7 +186,16 @@ describe('EvictionManager', () => {
 
   describe('allkeys-lfu policy', () => {
     it('evicts least frequently used keys', () => {
-      const { eviction, config, db } = createSetup();
+      const { eviction, config, db } = createSetup({
+        rng: (() => {
+          // Use a deterministic rng that always triggers LFU increment
+          // (returns values < p for any counter)
+          return () => 0.001;
+        })(),
+      });
+
+      // Set LFU policy BEFORE creating keys so LFU tracking is active
+      config.set('maxmemory-policy', 'allkeys-lfu');
 
       fillKeys(db, 10);
 
@@ -196,15 +205,27 @@ describe('EvictionManager', () => {
         db.get('key1'); // high frequency
       }
 
-      config.set('maxmemory', '1');
-      config.set('maxmemory-policy', 'allkeys-lfu');
+      const mem = eviction.currentUsedMemory();
+      config.set('maxmemory', String(Math.floor(mem * 0.3)));
       config.set('maxmemory-samples', '10');
 
       eviction.tryEvict();
 
-      // Note: lruFreq is currently always 0 (T04 will implement proper LFU tracking)
-      // For now, all keys have equal frequency, so eviction is effectively random
-      // Just verify that keys were evicted
+      // Frequently accessed keys should survive, rarely accessed keys should be evicted
+      expect(db.has('key0')).toBe(true);
+      expect(db.has('key1')).toBe(true);
+    });
+
+    it('evicts all keys when memory limit is very low', () => {
+      const { eviction, config, db } = createSetup();
+
+      config.set('maxmemory-policy', 'allkeys-lfu');
+      fillKeys(db, 10);
+
+      config.set('maxmemory', '1');
+      config.set('maxmemory-samples', '10');
+
+      eviction.tryEvict();
       expect(db.size).toBe(0);
     });
   });
@@ -213,11 +234,12 @@ describe('EvictionManager', () => {
     it('only evicts volatile keys', () => {
       const { eviction, config, db } = createSetup();
 
+      config.set('maxmemory-policy', 'volatile-lfu');
+
       fillKeys(db, 3, 'persistent');
       fillVolatileKeys(db, 5);
 
       config.set('maxmemory', '1');
-      config.set('maxmemory-policy', 'volatile-lfu');
       config.set('maxmemory-samples', '10');
 
       eviction.tryEvict();

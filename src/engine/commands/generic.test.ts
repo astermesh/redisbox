@@ -357,7 +357,7 @@ describe('OBJECT', () => {
   it('FREQ returns frequency counter', () => {
     const { db } = createDb();
     db.set('k', 'string', 'raw', 'v');
-    expect(cmd.objectFreq(db, ['k'])).toEqual({ kind: 'integer', value: 0 });
+    expect(cmd.objectFreq(db, ['k'])).toEqual({ kind: 'integer', value: 5 });
   });
 
   it('FREQ does not update LRU clock (LOOKUP_NOTOUCH)', () => {

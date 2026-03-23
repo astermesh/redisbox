@@ -1,6 +1,13 @@
 import type { RedisEntry, RedisEncoding, RedisType } from './types.ts';
 import { partialShuffle } from './utils.ts';
 import { getLruClock } from './lru.ts';
+import {
+  LFU_INIT_VAL,
+  lfuGetTimeInMinutes,
+  lfuDecrAndReturn,
+  lfuLogIncr,
+} from './lfu.ts';
+import type { ConfigStore } from '../config-store.ts';
 
 export class Database {
   private readonly store = new Map<string, RedisEntry>();
@@ -10,14 +17,63 @@ export class Database {
   private globalVersion = 0;
   private readonly clock: () => number;
 
+  private config: ConfigStore | null = null;
+
   constructor(clock: () => number) {
     this.clock = clock;
+  }
+
+  setConfig(config: ConfigStore): void {
+    this.config = config;
+  }
+
+  private isLfuPolicy(): boolean {
+    if (!this.config) return false;
+    const result = this.config.get('maxmemory-policy');
+    const policy = result[1] ?? 'noeviction';
+    return policy === 'allkeys-lfu' || policy === 'volatile-lfu';
+  }
+
+  private getLfuLogFactor(): number {
+    if (!this.config) return 10;
+    const result = this.config.get('lfu-log-factor');
+    const n = parseInt(result[1] ?? '10', 10);
+    return isNaN(n) ? 10 : n;
+  }
+
+  private getLfuDecayTime(): number {
+    if (!this.config) return 1;
+    const result = this.config.get('lfu-decay-time');
+    const n = parseInt(result[1] ?? '1', 10);
+    return isNaN(n) ? 1 : n;
+  }
+
+  /**
+   * Update the LFU counter for a key access: decay then increment.
+   * Matches Redis `updateLFU()` called from `lookupKey()`.
+   */
+  private updateLfu(entry: RedisEntry): void {
+    const nowMinutes = lfuGetTimeInMinutes(this.clock());
+    const counter = lfuDecrAndReturn(
+      entry.lruFreq,
+      entry.lfuLastDecrTime,
+      nowMinutes,
+      this.getLfuDecayTime()
+    );
+    const newCounter = lfuLogIncr(counter, this.getLfuLogFactor(), () =>
+      this.getRng()
+    );
+    entry.lruFreq = newCounter;
+    entry.lfuLastDecrTime = nowMinutes;
   }
 
   get(key: string): RedisEntry | null {
     if (this.expireIfNeeded(key)) return null;
     const entry = this.store.get(key);
     if (!entry) return null;
+    if (this.isLfuPolicy()) {
+      this.updateLfu(entry);
+    }
     entry.lruClock = getLruClock(this.clock());
     return entry;
   }
@@ -43,7 +99,8 @@ export class Database {
       encoding,
       value,
       lruClock: getLruClock(this.clock()),
-      lruFreq: 0,
+      lruFreq: LFU_INIT_VAL,
+      lfuLastDecrTime: lfuGetTimeInMinutes(this.clock()),
     });
     this.bumpVersion(key);
   }
@@ -94,6 +151,9 @@ export class Database {
     if (this.expireIfNeeded(key)) return false;
     const entry = this.store.get(key);
     if (!entry) return false;
+    if (this.isLfuPolicy()) {
+      this.updateLfu(entry);
+    }
     entry.lruClock = getLruClock(this.clock());
     return true;
   }
@@ -169,7 +229,8 @@ export class Database {
       encoding: entry.encoding,
       value: deepCopyValue(entry.value),
       lruClock: getLruClock(this.clock()),
-      lruFreq: 0,
+      lruFreq: LFU_INIT_VAL,
+      lfuLastDecrTime: lfuGetTimeInMinutes(this.clock()),
     };
   }
 
