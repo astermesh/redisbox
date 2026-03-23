@@ -4,6 +4,11 @@ export function strByteLength(s: string): number {
   return textEncoder.encode(s).length;
 }
 
+// Default thresholds — match Redis defaults.
+// TODO: read from ConfigStore when config is wired into CommandContext.
+export const DEFAULT_MAX_LISTPACK_ENTRIES = 128;
+export const DEFAULT_MAX_LISTPACK_VALUE = 64;
+
 export const INT64_MAX = BigInt('9223372036854775807');
 export const INT64_MIN = BigInt('-9223372036854775808');
 

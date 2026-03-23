@@ -14,21 +14,21 @@ import type { CommandSpec } from './command-table.ts';
 
 // Import all command specs
 import { specs as genericSpecs } from './commands/generic.ts';
-import { specs as stringSpecs } from './commands/string.ts';
+import { specs as stringSpecs } from './commands/string/index.ts';
 import { specs as incrSpecs } from './commands/incr.ts';
 import { specs as hashSpecs } from './commands/hash.ts';
-import { specs as listSpecs } from './commands/list.ts';
-import { specs as setSpecs } from './commands/set.ts';
-import { specs as sortedSetSpecs } from './commands/sorted-set.ts';
-import { specs as streamSpecs } from './commands/stream.ts';
+import { specs as listSpecs } from './commands/list/index.ts';
+import { specs as setSpecs } from './commands/set/index.ts';
+import { specs as sortedSetSpecs } from './commands/sorted-set/index.ts';
+import { specs as streamSpecs } from './commands/stream/index.ts';
 import { specs as ttlSpecs } from './commands/ttl.ts';
-import { specs as bitmapSpecs } from './commands/bitmap.ts';
-import { specs as hyperloglogSpecs } from './commands/hyperloglog.ts';
-import { specs as geoSpecs } from './commands/geo.ts';
+import { specs as bitmapSpecs } from './commands/bitmap/index.ts';
+import { specs as hyperloglogSpecs } from './commands/hyperloglog/index.ts';
+import { specs as geoSpecs } from './commands/geo/index.ts';
 import { specs as databaseSpecs } from './commands/database.ts';
 import { specs as sortSpecs } from './commands/sort.ts';
-import { specs as blockingListSpecs } from './commands/blocking-list.ts';
-import { specs as blockingSortedSetSpecs } from './commands/blocking-sorted-set.ts';
+import { specs as blockingListSpecs } from './commands/list/blocking.ts';
+import { specs as blockingSortedSetSpecs } from './commands/sorted-set/blocking.ts';
 
 interface CapturedMsg {
   clientId: number;

@@ -22,12 +22,15 @@ import type { CommandSpec } from '../command-table.ts';
 import { parseInteger, parseFloat64, formatFloat } from './incr.ts';
 import { notify, EVENT_FLAGS } from '../notify.ts';
 import { matchGlob } from '../glob-pattern.ts';
-import { strByteLength, partialShuffle } from '../utils.ts';
-
-// Default thresholds — match Redis defaults.
-// TODO: read from ConfigStore when config is wired into CommandContext.
-const DEFAULT_MAX_LISTPACK_ENTRIES = 128;
-const DEFAULT_MAX_LISTPACK_VALUE = 64;
+import {
+  strByteLength,
+  partialShuffle,
+  INT64_MAX,
+  INT64_MIN,
+  DEFAULT_MAX_LISTPACK_ENTRIES,
+  DEFAULT_MAX_LISTPACK_VALUE,
+} from '../utils.ts';
+import { parseScanCursor, parseScanOptions } from './scan-utils.ts';
 
 /**
  * Check if a hash should use listpack encoding based on current state.
@@ -315,9 +318,6 @@ export function hsetnx(db: Database, args: string[]): Reply {
 
 // --- HINCRBY ---
 
-const INT64_MAX = BigInt('9223372036854775807');
-const INT64_MIN = BigInt('-9223372036854775808');
-
 const HASH_NOT_INTEGER_ERR = errorReply('ERR', 'hash value is not an integer');
 const HASH_NOT_FLOAT_ERR = errorReply('ERR', 'hash value is not a valid float');
 
@@ -458,43 +458,29 @@ export function hrandfield(
 
 export function hscan(db: Database, args: string[]): Reply {
   const key = args[0] ?? '';
-  const cursorStr = args[1] ?? '0';
-
-  const cursor = parseInt(cursorStr, 10);
-  if (isNaN(cursor) || cursor < 0) {
-    return errorReply('ERR', 'invalid cursor');
-  }
+  const { cursor, error: cursorErr } = parseScanCursor(args[1] ?? '0');
+  if (cursorErr) return cursorErr;
 
   // Check key type before parsing options
   const entry = db.get(key);
   if (entry && entry.type !== 'hash') return WRONGTYPE_ERR;
 
-  let matchPattern: string | null = null;
-  let count = 10;
   let noValues = false;
 
-  let i = 2;
-  while (i < args.length) {
-    const flag = (args[i] ?? '').toUpperCase();
-    if (flag === 'MATCH') {
-      i++;
-      matchPattern = args[i] ?? '*';
-    } else if (flag === 'COUNT') {
-      i++;
-      count = parseInt(args[i] ?? '10', 10);
-      if (isNaN(count)) {
-        return NOT_INTEGER_ERR;
+  const { options, error: optErr } = parseScanOptions(
+    args,
+    2,
+    (flag, _a, i) => {
+      if (flag === 'NOVALUES') {
+        noValues = true;
+        return i;
       }
-      if (count < 1) {
-        return SYNTAX_ERR;
-      }
-    } else if (flag === 'NOVALUES') {
-      noValues = true;
-    } else {
-      return SYNTAX_ERR;
+      return null;
     }
-    i++;
-  }
+  );
+  if (optErr) return optErr;
+
+  const { matchPattern, count } = options;
 
   if (!entry) {
     return arrayReply([bulkReply('0'), EMPTY_ARRAY]);
