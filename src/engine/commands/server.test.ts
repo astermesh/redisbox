@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { RedisEngine } from '../engine.ts';
 import type { Database } from '../database.ts';
+import { RedisStream } from '../stream.ts';
 import * as cmd from './server.ts';
 import type { Reply } from '../types.ts';
 
@@ -123,6 +124,23 @@ describe('DEBUG OBJECT', () => {
     }
   });
 
+  it('reports correct info for stream type', () => {
+    const { db, clock } = createDb(1000);
+    const stream = new RedisStream();
+    stream.addEntry({ ms: 1, seq: 0 }, [['field', 'value']]);
+    db.set('s', 'stream', 'stream', stream);
+    const reply = cmd.debugObject(db, clock, ['s']);
+    expect(reply.kind).toBe('status');
+    if (reply.kind === 'status') {
+      expect(reply.value).toContain('type:stream');
+      expect(reply.value).toContain('encoding:stream');
+      expect(reply.value).toContain('serializedlength:');
+      // serializedlength should be > 1 (not falling to default)
+      const match = reply.value.match(/serializedlength:(\d+)/);
+      expect(Number(match?.[1])).toBeGreaterThan(1);
+    }
+  });
+
   it('reports idle time in seconds', () => {
     const { db, setTime } = createDb(1000);
     db.set('k', 'string', 'raw', 'v');
@@ -141,24 +159,9 @@ describe('DEBUG OBJECT', () => {
 // ---------------------------------------------------------------------------
 
 describe('DEBUG SLEEP', () => {
-  it('returns OK', () => {
-    const reply = cmd.debugSleep(['0']);
+  it('returns OK (stub — does not actually block)', () => {
+    const reply = cmd.debugSleep();
     expect(reply).toEqual({ kind: 'status', value: 'OK' });
-  });
-
-  it('accepts decimal seconds', () => {
-    const reply = cmd.debugSleep(['0.5']);
-    expect(reply).toEqual({ kind: 'status', value: 'OK' });
-  });
-
-  it('returns error for non-numeric argument', () => {
-    const reply = cmd.debugSleep(['abc']);
-    expect(reply.kind).toBe('error');
-  });
-
-  it('returns error for negative seconds', () => {
-    const reply = cmd.debugSleep(['-1']);
-    expect(reply.kind).toBe('error');
   });
 });
 
@@ -167,24 +170,9 @@ describe('DEBUG SLEEP', () => {
 // ---------------------------------------------------------------------------
 
 describe('DEBUG SET-ACTIVE-EXPIRE', () => {
-  it('returns OK for 0', () => {
-    const reply = cmd.debugSetActiveExpire(['0']);
+  it('returns OK (stub — does not affect active expiration)', () => {
+    const reply = cmd.debugSetActiveExpire();
     expect(reply).toEqual({ kind: 'status', value: 'OK' });
-  });
-
-  it('returns OK for 1', () => {
-    const reply = cmd.debugSetActiveExpire(['1']);
-    expect(reply).toEqual({ kind: 'status', value: 'OK' });
-  });
-
-  it('returns error for invalid value', () => {
-    const reply = cmd.debugSetActiveExpire(['2']);
-    expect(reply.kind).toBe('error');
-  });
-
-  it('returns error for non-numeric value', () => {
-    const reply = cmd.debugSetActiveExpire(['abc']);
-    expect(reply.kind).toBe('error');
   });
 });
 

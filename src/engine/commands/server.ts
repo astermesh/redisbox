@@ -8,7 +8,6 @@ import {
   statusReply,
   arrayReply,
   bulkReply,
-  errorReply,
   OK,
   NO_SUCH_KEY_ERR,
   unknownSubcommandError,
@@ -16,6 +15,7 @@ import {
 } from '../types.ts';
 import type { CommandSpec } from '../command-table.ts';
 import { getLruClock, estimateIdleTime } from '../lru.ts';
+import type { RedisStream } from '../stream.ts';
 
 // ---------------------------------------------------------------------------
 // TIME
@@ -80,6 +80,17 @@ function estimateSerializedLength(entry: {
       }
       return size || 1;
     }
+    case 'stream': {
+      const s = entry.value as RedisStream;
+      let size = 0;
+      for (const e of s.getEntries()) {
+        size += e.id.length + 8;
+        for (const [k, v] of e.fields) {
+          size += k.length + v.length + 11;
+        }
+      }
+      return size || 1;
+    }
     default:
       return 1;
   }
@@ -119,16 +130,9 @@ export function debugObject(
 /**
  * DEBUG SLEEP <seconds> — in real Redis, blocks the server for N seconds.
  * Since RedisBox is an in-memory emulator, we acknowledge but don't actually block.
+ * Real Redis uses strtod() and always returns OK regardless of input.
  */
-export function debugSleep(args: string[]): Reply {
-  const raw = args[0] ?? '';
-  const seconds = parseFloat(raw);
-  if (isNaN(seconds) || seconds < 0) {
-    return errorReply(
-      'ERR',
-      'Invalid argument: sleep requires a non-negative number'
-    );
-  }
+export function debugSleep(): Reply {
   return OK;
 }
 
@@ -139,12 +143,9 @@ export function debugSleep(args: string[]): Reply {
 /**
  * DEBUG SET-ACTIVE-EXPIRE <0|1> — enable or disable active expiration.
  * Stub: acknowledges but doesn't affect active expiration cycle.
+ * Real Redis uses atoi() and always returns OK regardless of input.
  */
-export function debugSetActiveExpire(args: string[]): Reply {
-  const raw = args[0] ?? '';
-  if (raw !== '0' && raw !== '1') {
-    return errorReply('ERR', 'Invalid argument: 0 or 1 expected');
-  }
+export function debugSetActiveExpire(): Reply {
   return OK;
 }
 
@@ -194,12 +195,12 @@ export function debug(
       if (subArgs.length !== 1) {
         return wrongArityError('debug|sleep');
       }
-      return debugSleep(subArgs);
+      return debugSleep();
     case 'SET-ACTIVE-EXPIRE':
       if (subArgs.length !== 1) {
         return wrongArityError('debug|set-active-expire');
       }
-      return debugSetActiveExpire(subArgs);
+      return debugSetActiveExpire();
     case 'HELP':
       return debugHelp();
     default:
@@ -295,7 +296,7 @@ export const specs: CommandSpec[] = [
     name: 'monitor',
     handler: () => monitor(),
     arity: 1,
-    flags: ['admin'],
+    flags: ['admin', 'noscript', 'loading', 'stale'],
     firstKey: 0,
     lastKey: 0,
     keyStep: 0,
