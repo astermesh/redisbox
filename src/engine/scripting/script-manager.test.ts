@@ -183,6 +183,42 @@ describe('ScriptManager', () => {
       );
       expect(result).toEqual(bulkReply('key with "quotes" and [brackets]'));
     });
+
+    it('handles script ending with line comment', () => {
+      const result = manager.evalScript(
+        'return 42 -- this is a comment',
+        [],
+        [],
+        false,
+        undefined,
+        makeExecutor()
+      );
+      expect(result).toEqual(integerReply(42));
+    });
+
+    it('handles multi-byte UTF-8 characters in KEYS', () => {
+      const result = manager.evalScript(
+        'return KEYS[1]',
+        ['\u4e16\u754c'],
+        [],
+        false,
+        undefined,
+        makeExecutor()
+      );
+      expect(result).toEqual(bulkReply('\u4e16\u754c'));
+    });
+
+    it('handles emoji in ARGV', () => {
+      const result = manager.evalScript(
+        'return ARGV[1]',
+        [],
+        ['\ud83d\ude00'],
+        false,
+        undefined,
+        makeExecutor()
+      );
+      expect(result).toEqual(bulkReply('\ud83d\ude00'));
+    });
   });
 
   describe('read-only mode', () => {

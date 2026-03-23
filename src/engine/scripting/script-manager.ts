@@ -176,7 +176,7 @@ export class ScriptManager {
       this.cacheScript(script);
 
       // Wrap the script to encode its return value as a tagged object
-      const wrappedScript = `return __rb_encode((function() ${script} end)())`;
+      const wrappedScript = `return __rb_encode((function()\n${script}\nend)())`;
       const result = this.engine.executeSync(wrappedScript);
       const tagged = result.values.length > 0 ? result.values[0] : null;
 
@@ -295,29 +295,28 @@ function makeReadOnlyExecutor(
 
 /**
  * Escape a string for use in a Lua string literal.
- * Uses byte-escape syntax (\ddd) for all non-printable and special characters,
- * and backslash escaping for quotes and backslashes.
+ * Converts to UTF-8 bytes first, then escapes each byte.
+ * This correctly handles all Unicode characters (including CJK, emoji, etc.)
+ * since Lua's \ddd escape supports byte values 0-255.
  */
 function luaStringLiteral(s: string): string {
+  const bytes = new TextEncoder().encode(s);
   let result = '"';
-  for (let i = 0; i < s.length; i++) {
-    const ch = s.charAt(i);
-    const code = s.charCodeAt(i);
-    if (ch === '"') {
+  for (const byte of bytes) {
+    if (byte === 0x22) {
       result += '\\"';
-    } else if (ch === '\\') {
+    } else if (byte === 0x5c) {
       result += '\\\\';
-    } else if (ch === '\n') {
+    } else if (byte === 0x0a) {
       result += '\\n';
-    } else if (ch === '\r') {
+    } else if (byte === 0x0d) {
       result += '\\r';
-    } else if (ch === '\0') {
+    } else if (byte === 0x00) {
       result += '\\0';
-    } else if (code < 32 || code > 126) {
-      // Use decimal byte escape for non-printable ASCII
-      result += '\\' + code.toString();
+    } else if (byte < 32 || byte > 126) {
+      result += '\\' + byte.toString();
     } else {
-      result += ch;
+      result += String.fromCharCode(byte);
     }
   }
   result += '"';

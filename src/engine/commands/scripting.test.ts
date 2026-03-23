@@ -124,6 +124,11 @@ describe('EVAL', () => {
       const result = dispatch(['EVAL', 'return -3.7', '0']);
       expect(result).toEqual(integerReply(-3));
     });
+
+    it('handles script ending with line comment', () => {
+      const result = dispatch(['EVAL', 'return 1 -- trailing comment', '0']);
+      expect(result).toEqual(integerReply(1));
+    });
   });
 
   describe('KEYS and ARGV', () => {
