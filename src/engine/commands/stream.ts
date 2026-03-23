@@ -862,7 +862,7 @@ export function xreadgroup(
   if (streamsIdx === -1) {
     return errorReply(
       'ERR',
-      "Unbalanced 'xreadgroup' list of streams: for each stream key an ID or '$' must be specified."
+      "Unbalanced 'xreadgroup' list of streams: for each stream key an ID or '>' must be specified."
     );
   }
 
@@ -870,7 +870,7 @@ export function xreadgroup(
   if (remaining.length === 0 || remaining.length % 2 !== 0) {
     return errorReply(
       'ERR',
-      "Unbalanced 'xreadgroup' list of streams: for each stream key an ID or '$' must be specified."
+      "Unbalanced 'xreadgroup' list of streams: for each stream key an ID or '>' must be specified."
     );
   }
 
@@ -888,8 +888,12 @@ export function xreadgroup(
     if (lookup.error) return lookup.error;
     if (!lookup.stream) {
       return errorReply(
-        'ERR',
-        'The XREADGROUP subcommand requires the key to exist. Note that for CREATE you may want to use the MKSTREAM option to create an empty stream automatically.'
+        'NOGROUP',
+        "No such key '" +
+          key +
+          "' or consumer group '" +
+          groupName +
+          "' in XREADGROUP with GROUP option"
       );
     }
 
@@ -898,12 +902,23 @@ export function xreadgroup(
     if (!group) {
       return errorReply(
         'NOGROUP',
-        "No such consumer group '" + groupName + "' for key name '" + key + "'"
+        "No such key '" +
+          key +
+          "' or consumer group '" +
+          groupName +
+          "' in XREADGROUP with GROUP option"
       );
     }
 
     // Ensure consumer exists
     const consumer = ensureConsumer(group, consumerName, clockMs);
+
+    if (idArg === '$') {
+      return errorReply(
+        'ERR',
+        'The $ ID is meaningless in the context of XREADGROUP: you want to read the history of this consumer by specifying a proper ID, or use the > ID to get new messages. The $ ID would just return an empty result set.'
+      );
+    }
 
     if (idArg === '>') {
       // Read new (undelivered) messages
@@ -937,8 +952,8 @@ export function xreadgroup(
       const afterId = parseStreamId(idArg);
       if (!afterId) return INVALID_STREAM_ID_ERR;
 
-      // Collect pending entries with ID > afterId
-      const pendingEntries: StreamEntry[] = [];
+      // Collect pending replies with ID > afterId
+      const pendingReplies: Reply[] = [];
       // We need to iterate in order, so sort by entry ID
       const sortedPending = [...consumer.pending.keys()].sort((a, b) =>
         compareStreamIds(safeParseId(a), safeParseId(b))
@@ -948,19 +963,28 @@ export function xreadgroup(
         const eid = safeParseId(entryId);
         if (compareStreamIds(eid, afterId) <= 0) continue;
 
+        // Update delivery time and count (matches real Redis behavior)
+        const pe = consumer.pending.get(entryId);
+        if (pe) {
+          pe.deliveryTime = clockMs;
+          pe.deliveryCount++;
+        }
+
         // Find the actual entry in the stream
         const entryData = stream.range(eid, eid, 1);
         if (entryData.length > 0) {
-          pendingEntries.push(entryData[0] as StreamEntry);
+          pendingReplies.push(entryToReply(entryData[0] as StreamEntry));
+        } else {
+          // Entry was deleted (XDEL/XTRIM) — return [id, null]
+          pendingReplies.push(
+            arrayReply([bulkReply(entryId), bulkReply(null)])
+          );
         }
-        if (count !== undefined && pendingEntries.length >= count) break;
+        if (count !== undefined && pendingReplies.length >= count) break;
       }
 
       resultStreams.push(
-        arrayReply([
-          bulkReply(key),
-          arrayReply(pendingEntries.map(entryToReply)),
-        ])
+        arrayReply([bulkReply(key), arrayReply(pendingReplies)])
       );
     }
   }
@@ -1033,7 +1057,7 @@ export function xpending(db: Database, clockMs: number, args: string[]): Reply {
   if (!lookup.stream) {
     return errorReply(
       'NOGROUP',
-      "No such consumer group '" + groupName + "' for key name '" + key + "'"
+      "No such key '" + key + "' or consumer group '" + groupName + "'"
     );
   }
 
@@ -1041,7 +1065,7 @@ export function xpending(db: Database, clockMs: number, args: string[]): Reply {
   if (!group) {
     return errorReply(
       'NOGROUP',
-      "No such consumer group '" + groupName + "' for key name '" + key + "'"
+      "No such key '" + key + "' or consumer group '" + groupName + "'"
     );
   }
 
@@ -1110,7 +1134,7 @@ function xpendingSummary(group: import('../stream.ts').ConsumerGroup): Reply {
       integerReply(0),
       bulkReply(null),
       bulkReply(null),
-      arrayReply([]),
+      NIL_ARRAY,
     ]);
   }
 

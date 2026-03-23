@@ -890,6 +890,17 @@ describe('XREAD', () => {
     });
   });
 
+  it('returns error when STREAMS keyword missing and args unbalanced', () => {
+    const { db } = createDb();
+    const reply = stream.xread(db, ['STREAMS']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message:
+        "Unbalanced 'xread' list of streams: for each stream key an ID or '$' must be specified.",
+    });
+  });
+
   it('$ ID returns nil-array (non-blocking)', () => {
     const ctx = createDb(0);
     seedStream(ctx.db, ctx);
@@ -1640,14 +1651,13 @@ describe('XREADGROUP', () => {
       's',
       '>',
     ]);
-    // Read pending — delivery count stays 1
+    // Read pending — delivery count increments (matches real Redis)
     execXreadgroup(ctx, ['GROUP', 'g1', 'alice', 'STREAMS', 's', '0-0']);
     const { stream: s } = getStreamHelper(ctx.db, 's');
     const group = getGroup(s, 'g1');
     const pe = group.pel.get('1000-0');
     expect(pe).toBeDefined();
-    // Reading pending with specific ID does NOT increment delivery count in Redis
-    expect(pe?.deliveryCount).toBe(1);
+    expect(pe?.deliveryCount).toBe(2);
   });
 
   it('returns NOGROUP for non-existent group', () => {
@@ -1663,7 +1673,8 @@ describe('XREADGROUP', () => {
     expect(reply).toEqual({
       kind: 'error',
       prefix: 'NOGROUP',
-      message: "No such consumer group 'nogroup' for key name 's'",
+      message:
+        "No such key 's' or consumer group 'nogroup' in XREADGROUP with GROUP option",
     });
   });
 
@@ -1685,7 +1696,7 @@ describe('XREADGROUP', () => {
     });
   });
 
-  it('returns error for non-existent key', () => {
+  it('returns NOGROUP for non-existent key', () => {
     const ctx = createDb(1000);
     const reply = execXreadgroup(ctx, [
       'GROUP',
@@ -1697,9 +1708,9 @@ describe('XREADGROUP', () => {
     ]);
     expect(reply).toEqual({
       kind: 'error',
-      prefix: 'ERR',
+      prefix: 'NOGROUP',
       message:
-        'The XREADGROUP subcommand requires the key to exist. Note that for CREATE you may want to use the MKSTREAM option to create an empty stream automatically.',
+        "No such key 'nokey' or consumer group 'g1' in XREADGROUP with GROUP option",
     });
   });
 
@@ -1770,6 +1781,96 @@ describe('XREADGROUP', () => {
       '>',
     ]);
     expect(reply.kind).toBe('error');
+  });
+
+  it('returns error for $ as ID', () => {
+    const ctx = setupGroupWithEntries();
+    const reply = execXreadgroup(ctx, [
+      'GROUP',
+      'g1',
+      'alice',
+      'STREAMS',
+      's',
+      '$',
+    ]);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message:
+        'The $ ID is meaningless in the context of XREADGROUP: you want to read the history of this consumer by specifying a proper ID, or use the > ID to get new messages. The $ ID would just return an empty result set.',
+    });
+  });
+
+  it('updates delivery time and count when re-reading pending', () => {
+    const ctx = setupGroupWithEntries();
+    ctx.setTime(10000);
+    execXreadgroup(ctx, [
+      'GROUP',
+      'g1',
+      'alice',
+      'COUNT',
+      '2',
+      'STREAMS',
+      's',
+      '>',
+    ]);
+    // Advance time and re-read pending
+    ctx.setTime(20000);
+    execXreadgroup(ctx, ['GROUP', 'g1', 'alice', 'STREAMS', 's', '0-0']);
+    const { stream: s } = getStreamHelper(ctx.db, 's');
+    const group = getGroup(s, 'g1');
+    const pe = group.pel.get('1000-0');
+    expect(pe).toBeDefined();
+    expect(pe?.deliveryCount).toBe(2);
+    expect(pe?.deliveryTime).toBe(20000);
+  });
+
+  it('returns null fields for pending entries that were trimmed', () => {
+    const ctx = createDb(1000);
+    // Add entries
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '1']);
+    ctx.setTime(2000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '2']);
+    ctx.setTime(3000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '3']);
+    // Create group starting at 0
+    execXgroup(ctx, ['CREATE', 's', 'g1', '0']);
+    // Read all 3 entries
+    execXreadgroup(ctx, [
+      'GROUP',
+      'g1',
+      'alice',
+      'COUNT',
+      '3',
+      'STREAMS',
+      's',
+      '>',
+    ]);
+    // Trim the stream (removes first entry)
+    ctx.setTime(4000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', 'MAXLEN', '2', '*', 'k', '4']);
+    // Re-read pending — trimmed entry 1000-0 should return [id, null]
+    const reply = execXreadgroup(ctx, [
+      'GROUP',
+      'g1',
+      'alice',
+      'STREAMS',
+      's',
+      '0-0',
+    ]);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    const entries = (arr.value[0] as { kind: 'array'; value: Reply[] })
+      .value[1] as { kind: 'array'; value: Reply[] };
+    // First entry was trimmed — should have null fields
+    expect(entries.value[0]).toEqual({
+      kind: 'array',
+      value: [
+        { kind: 'bulk', value: '1000-0' },
+        { kind: 'bulk', value: null },
+      ],
+    });
+    // Remaining entries should be normal
+    expect(entries.value.length).toBe(3);
   });
 
   it('group starting at $ only reads entries added after group creation', () => {
@@ -2008,7 +2109,7 @@ describe('XPENDING', () => {
         { kind: 'integer', value: 0 },
         { kind: 'bulk', value: null },
         { kind: 'bulk', value: null },
-        { kind: 'array', value: [] },
+        { kind: 'nil-array' },
       ],
     });
   });
@@ -2184,7 +2285,17 @@ describe('XPENDING', () => {
     expect(reply).toEqual({
       kind: 'error',
       prefix: 'NOGROUP',
-      message: "No such consumer group 'nogroup' for key name 's'",
+      message: "No such key 's' or consumer group 'nogroup'",
+    });
+  });
+
+  it('returns NOGROUP for non-existent key', () => {
+    const ctx = createDb(1000);
+    const reply = execXpending(ctx, ['nokey', 'g1']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'NOGROUP',
+      message: "No such key 'nokey' or consumer group 'g1'",
     });
   });
 
