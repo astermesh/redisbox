@@ -36,6 +36,11 @@ export class PubSubManager {
   /** callback to deliver push messages to clients */
   private sender: MessageSender | null = null;
 
+  /** optional filter to drop messages (returns true to deliver, false to drop) */
+  private messageFilter:
+    | ((clientId: number, channel: string) => boolean)
+    | null = null;
+
   /**
    * Subscribe a client to a channel.
    * @returns true if the client was newly subscribed, false if already subscribed
@@ -354,6 +359,16 @@ export class PubSubManager {
   }
 
   /**
+   * Set a message filter. When set, each message delivery is checked:
+   * if filter returns false, the message is dropped and not counted.
+   */
+  setMessageFilter(
+    filter: ((clientId: number, channel: string) => boolean) | null
+  ): void {
+    this.messageFilter = filter;
+  }
+
+  /**
    * Publish a message to a channel.
    * Delivers to all channel subscribers and pattern subscribers.
    * @returns the number of clients that received the message
@@ -371,6 +386,9 @@ export class PubSubManager {
       ]);
 
       for (const clientId of subs) {
+        if (this.messageFilter && !this.messageFilter(clientId, channel)) {
+          continue;
+        }
         this.sender?.(clientId, reply);
         count++;
       }
@@ -387,6 +405,9 @@ export class PubSubManager {
         ]);
 
         for (const clientId of patternClients) {
+          if (this.messageFilter && !this.messageFilter(clientId, channel)) {
+            continue;
+          }
           this.sender?.(clientId, reply);
           count++;
         }
@@ -414,6 +435,9 @@ export class PubSubManager {
       ]);
 
       for (const clientId of subs) {
+        if (this.messageFilter && !this.messageFilter(clientId, channel)) {
+          continue;
+        }
         this.sender?.(clientId, reply);
         count++;
       }
