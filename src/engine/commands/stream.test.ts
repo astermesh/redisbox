@@ -2329,3 +2329,922 @@ describe('XPENDING', () => {
     expect(arr.value.length).toBe(0);
   });
 });
+
+// ─── XDEL ─────────────────────────────────────────────────────────────
+
+function execXdel(ctx: ReturnType<typeof createDb>, args: string[]): Reply {
+  return stream.xdel(ctx.db, args);
+}
+
+describe('XDEL', () => {
+  it('deletes existing entry and returns 1', () => {
+    const ctx = createDb(1000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '1']);
+    const reply = execXdel(ctx, ['s', '1000-0']);
+    expect(reply).toEqual({ kind: 'integer', value: 1 });
+    // Verify entry is gone
+    const range = stream.xrange(ctx.db, ['s', '-', '+']);
+    expect(range).toEqual({ kind: 'array', value: [] });
+  });
+
+  it('returns 0 for non-existing entry ID', () => {
+    const ctx = createDb(1000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '1']);
+    const reply = execXdel(ctx, ['s', '9999-0']);
+    expect(reply).toEqual({ kind: 'integer', value: 0 });
+  });
+
+  it('returns 0 for non-existing key', () => {
+    const ctx = createDb(1000);
+    const reply = execXdel(ctx, ['nokey', '1000-0']);
+    expect(reply).toEqual({ kind: 'integer', value: 0 });
+  });
+
+  it('deletes multiple entries', () => {
+    const ctx = createDb(1000);
+    for (let i = 1; i <= 5; i++) {
+      ctx.setTime(i * 1000);
+      stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', String(i)]);
+    }
+    const reply = execXdel(ctx, ['s', '1000-0', '3000-0', '5000-0']);
+    expect(reply).toEqual({ kind: 'integer', value: 3 });
+    // Only entries 2 and 4 remain
+    const range = stream.xrange(ctx.db, ['s', '-', '+']);
+    const arr = range as { kind: 'array'; value: Reply[] };
+    expect(arr.value.length).toBe(2);
+  });
+
+  it('counts only actually deleted entries (mix of existing and non-existing)', () => {
+    const ctx = createDb(1000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '1']);
+    ctx.setTime(2000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '2']);
+    const reply = execXdel(ctx, ['s', '1000-0', '9999-0']);
+    expect(reply).toEqual({ kind: 'integer', value: 1 });
+  });
+
+  it('does not change XLEN after deletion beyond actual entries removed', () => {
+    const ctx = createDb(1000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '1']);
+    ctx.setTime(2000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '2']);
+    execXdel(ctx, ['s', '1000-0']);
+    const lenReply = stream.xlen(ctx.db, ['s']);
+    expect(lenReply).toEqual({ kind: 'integer', value: 1 });
+  });
+
+  it('returns WRONGTYPE for non-stream key', () => {
+    const ctx = createDb(1000);
+    ctx.db.set('str', 'string', 'raw', 'hello');
+    const reply = execXdel(ctx, ['str', '1000-0']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'WRONGTYPE',
+      message: 'Operation against a key holding the wrong kind of value',
+    });
+  });
+
+  it('returns error for invalid stream ID', () => {
+    const ctx = createDb(1000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '1']);
+    const reply = execXdel(ctx, ['s', 'invalid']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'Invalid stream ID specified as stream command argument',
+    });
+  });
+});
+
+// ─── XTRIM ────────────────────────────────────────────────────────────
+
+function execXtrim(ctx: ReturnType<typeof createDb>, args: string[]): Reply {
+  return stream.xtrim(ctx.db, args);
+}
+
+describe('XTRIM', () => {
+  it('trims by MAXLEN', () => {
+    const ctx = createDb(1000);
+    for (let i = 1; i <= 5; i++) {
+      ctx.setTime(i * 1000);
+      stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', String(i)]);
+    }
+    const reply = execXtrim(ctx, ['s', 'MAXLEN', '3']);
+    expect(reply).toEqual({ kind: 'integer', value: 2 });
+    const lenReply = stream.xlen(ctx.db, ['s']);
+    expect(lenReply).toEqual({ kind: 'integer', value: 3 });
+  });
+
+  it('trims by MAXLEN with = operator', () => {
+    const ctx = createDb(1000);
+    for (let i = 1; i <= 5; i++) {
+      ctx.setTime(i * 1000);
+      stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', String(i)]);
+    }
+    const reply = execXtrim(ctx, ['s', 'MAXLEN', '=', '2']);
+    expect(reply).toEqual({ kind: 'integer', value: 3 });
+  });
+
+  it('trims by MAXLEN with ~ (approximate)', () => {
+    const ctx = createDb(1000);
+    for (let i = 1; i <= 5; i++) {
+      ctx.setTime(i * 1000);
+      stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', String(i)]);
+    }
+    const reply = execXtrim(ctx, ['s', 'MAXLEN', '~', '3']);
+    // Our implementation trims to exact target
+    expect(reply).toEqual({ kind: 'integer', value: 2 });
+  });
+
+  it('trims by MINID', () => {
+    const ctx = createDb(1000);
+    for (let i = 1; i <= 5; i++) {
+      ctx.setTime(i * 1000);
+      stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', String(i)]);
+    }
+    // Remove entries with ID < 3000-0
+    const reply = execXtrim(ctx, ['s', 'MINID', '3000']);
+    expect(reply).toEqual({ kind: 'integer', value: 2 });
+    const lenReply = stream.xlen(ctx.db, ['s']);
+    expect(lenReply).toEqual({ kind: 'integer', value: 3 });
+  });
+
+  it('returns 0 for non-existing key', () => {
+    const ctx = createDb(1000);
+    const reply = execXtrim(ctx, ['nokey', 'MAXLEN', '0']);
+    expect(reply).toEqual({ kind: 'integer', value: 0 });
+  });
+
+  it('returns WRONGTYPE for non-stream key', () => {
+    const ctx = createDb(1000);
+    ctx.db.set('str', 'string', 'raw', 'hello');
+    const reply = execXtrim(ctx, ['str', 'MAXLEN', '0']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'WRONGTYPE',
+      message: 'Operation against a key holding the wrong kind of value',
+    });
+  });
+
+  it('trims to 0 entries', () => {
+    const ctx = createDb(1000);
+    for (let i = 1; i <= 3; i++) {
+      ctx.setTime(i * 1000);
+      stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', String(i)]);
+    }
+    const reply = execXtrim(ctx, ['s', 'MAXLEN', '0']);
+    expect(reply).toEqual({ kind: 'integer', value: 3 });
+    const lenReply = stream.xlen(ctx.db, ['s']);
+    expect(lenReply).toEqual({ kind: 'integer', value: 0 });
+  });
+
+  it('returns 0 when stream already at or below MAXLEN', () => {
+    const ctx = createDb(1000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '1']);
+    const reply = execXtrim(ctx, ['s', 'MAXLEN', '5']);
+    expect(reply).toEqual({ kind: 'integer', value: 0 });
+  });
+});
+
+// ─── XSETID ──────────────────────────────────────────────────────────
+
+function execXsetid(ctx: ReturnType<typeof createDb>, args: string[]): Reply {
+  return stream.xsetid(ctx.db, args);
+}
+
+describe('XSETID', () => {
+  it('sets last ID on existing stream', () => {
+    const ctx = createDb(1000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '1']);
+    const reply = execXsetid(ctx, ['s', '5000-0']);
+    expect(reply).toEqual({ kind: 'status', value: 'OK' });
+    // Now XADD with auto ID should be > 5000-0
+    ctx.setTime(3000); // clock is behind, so should use 5000 ms
+    const addReply = stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '2']);
+    expect(addReply).toEqual({ kind: 'bulk', value: '5000-1' });
+  });
+
+  it('creates stream if key does not exist', () => {
+    const ctx = createDb(1000);
+    const reply = execXsetid(ctx, ['s', '1000-0']);
+    expect(reply).toEqual({ kind: 'status', value: 'OK' });
+    const lenReply = stream.xlen(ctx.db, ['s']);
+    expect(lenReply).toEqual({ kind: 'integer', value: 0 });
+  });
+
+  it('rejects ID smaller than current last ID', () => {
+    const ctx = createDb(1000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '5000-0', 'k', '1']);
+    const reply = execXsetid(ctx, ['s', '3000-0']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message:
+        'The ID specified in XSETID is smaller than the target stream top item',
+    });
+  });
+
+  it('accepts ENTRIESADDED option', () => {
+    const ctx = createDb(1000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '1']);
+    const reply = execXsetid(ctx, ['s', '5000-0', 'ENTRIESADDED', '100']);
+    expect(reply).toEqual({ kind: 'status', value: 'OK' });
+  });
+
+  it('accepts MAXDELETEDID option', () => {
+    const ctx = createDb(1000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '1']);
+    const reply = execXsetid(ctx, ['s', '5000-0', 'MAXDELETEDID', '500-0']);
+    expect(reply).toEqual({ kind: 'status', value: 'OK' });
+  });
+
+  it('accepts both ENTRIESADDED and MAXDELETEDID', () => {
+    const ctx = createDb(1000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '1']);
+    const reply = execXsetid(ctx, [
+      's',
+      '5000-0',
+      'ENTRIESADDED',
+      '100',
+      'MAXDELETEDID',
+      '500-0',
+    ]);
+    expect(reply).toEqual({ kind: 'status', value: 'OK' });
+  });
+
+  it('returns error for invalid stream ID', () => {
+    const ctx = createDb(1000);
+    const reply = execXsetid(ctx, ['s', 'invalid']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'Invalid stream ID specified as stream command argument',
+    });
+  });
+
+  it('returns WRONGTYPE for non-stream key', () => {
+    const ctx = createDb(1000);
+    ctx.db.set('str', 'string', 'raw', 'hello');
+    const reply = execXsetid(ctx, ['str', '1000-0']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'WRONGTYPE',
+      message: 'Operation against a key holding the wrong kind of value',
+    });
+  });
+});
+
+// ─── XCLAIM ──────────────────────────────────────────────────────────
+
+function execXclaim(ctx: ReturnType<typeof createDb>, args: string[]): Reply {
+  const spec = stream.specs.find((s) => s.name === 'xclaim');
+  if (!spec) throw new Error('xclaim spec not found');
+  return spec.handler({ db: ctx.db, engine: ctx.engine }, args);
+}
+
+function setupClaimScenario() {
+  const ctx = createDb(1000);
+  // Add 5 entries
+  for (let i = 1; i <= 5; i++) {
+    ctx.setTime(i * 1000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', String(i)]);
+  }
+  // Create group at 0
+  execXgroup(ctx, ['CREATE', 's', 'g1', '0']);
+  // Alice reads all 5 entries
+  ctx.setTime(10000);
+  execXreadgroup(ctx, ['GROUP', 'g1', 'alice', 'STREAMS', 's', '>']);
+  return ctx;
+}
+
+describe('XCLAIM', () => {
+  it('transfers ownership of pending entry', () => {
+    const ctx = setupClaimScenario();
+    ctx.setTime(20000);
+    const reply = execXclaim(ctx, ['s', 'g1', 'bob', '0', '1000-0']);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    expect(arr.value.length).toBe(1);
+    // Should return the claimed entry
+    expect(arr.value[0]).toEqual(entryReply('1000-0', [['k', '1']]));
+  });
+
+  it('transfers multiple entries', () => {
+    const ctx = setupClaimScenario();
+    ctx.setTime(20000);
+    const reply = execXclaim(ctx, [
+      's',
+      'g1',
+      'bob',
+      '0',
+      '1000-0',
+      '2000-0',
+      '3000-0',
+    ]);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    expect(arr.value.length).toBe(3);
+  });
+
+  it('ignores IDs not in PEL (without FORCE)', () => {
+    const ctx = setupClaimScenario();
+    ctx.setTime(20000);
+    const reply = execXclaim(ctx, [
+      's',
+      'g1',
+      'bob',
+      '0',
+      '9999-0', // not in PEL
+    ]);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    expect(arr.value.length).toBe(0);
+  });
+
+  it('returns JUSTID — only IDs, not full entries', () => {
+    const ctx = setupClaimScenario();
+    ctx.setTime(20000);
+    const reply = execXclaim(ctx, [
+      's',
+      'g1',
+      'bob',
+      '0',
+      '1000-0',
+      '2000-0',
+      'JUSTID',
+    ]);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    expect(arr.value.length).toBe(2);
+    expect(arr.value[0]).toEqual({ kind: 'bulk', value: '1000-0' });
+    expect(arr.value[1]).toEqual({ kind: 'bulk', value: '2000-0' });
+  });
+
+  it('updates delivery count on claim', () => {
+    const ctx = setupClaimScenario();
+    ctx.setTime(20000);
+    execXclaim(ctx, ['s', 'g1', 'bob', '0', '1000-0']);
+    // Check via XPENDING detail
+    const pending = execXpending(ctx, ['s', 'g1', '-', '+', '10', 'bob']);
+    const arr = pending as { kind: 'array'; value: Reply[] };
+    expect(arr.value.length).toBe(1);
+    const entry = arr.value[0] as { kind: 'array'; value: Reply[] };
+    // delivery count should be 2 (1 original + 1 claim)
+    expect(entry.value[3]).toEqual({ kind: 'integer', value: 2 });
+  });
+
+  it('respects RETRYCOUNT option', () => {
+    const ctx = setupClaimScenario();
+    ctx.setTime(20000);
+    execXclaim(ctx, ['s', 'g1', 'bob', '0', '1000-0', 'RETRYCOUNT', '5']);
+    const pending = execXpending(ctx, ['s', 'g1', '-', '+', '10', 'bob']);
+    const arr = pending as { kind: 'array'; value: Reply[] };
+    const entry = arr.value[0] as { kind: 'array'; value: Reply[] };
+    expect(entry.value[3]).toEqual({ kind: 'integer', value: 5 });
+  });
+
+  it('respects IDLE option — sets idle time', () => {
+    const ctx = setupClaimScenario();
+    ctx.setTime(20000);
+    execXclaim(ctx, ['s', 'g1', 'bob', '0', '1000-0', 'IDLE', '5000']);
+    // Delivery time should be 20000-5000=15000, idle=20000-15000=5000
+    const pending = execXpending(ctx, ['s', 'g1', '-', '+', '10', 'bob']);
+    const arr = pending as { kind: 'array'; value: Reply[] };
+    const entry = arr.value[0] as { kind: 'array'; value: Reply[] };
+    expect(entry.value[2]).toEqual({ kind: 'integer', value: 5000 });
+  });
+
+  it('FORCE claims entry not in PEL if it exists in stream', () => {
+    const ctx = createDb(1000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '1']);
+    execXgroup(ctx, ['CREATE', 's', 'g1', '0']);
+    // Don't read with XREADGROUP, so nothing in PEL
+    const reply = execXclaim(ctx, ['s', 'g1', 'bob', '0', '1000-0', 'FORCE']);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    expect(arr.value.length).toBe(1);
+  });
+
+  it('returns NOGROUP for non-existing group', () => {
+    const ctx = createDb(1000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '1']);
+    const reply = execXclaim(ctx, ['s', 'nogroup', 'bob', '0', '1000-0']);
+    expect(reply.kind).toBe('error');
+  });
+
+  it('returns error for non-existing key', () => {
+    const ctx = createDb(1000);
+    const reply = execXclaim(ctx, ['nokey', 'g1', 'bob', '0', '1000-0']);
+    expect(reply.kind).toBe('error');
+  });
+
+  it('skips entries whose idle time is below min-idle-time', () => {
+    const ctx = setupClaimScenario();
+    // Only 1ms after delivery (at 10000) — idle time is 1ms
+    ctx.setTime(10001);
+    const reply = execXclaim(ctx, [
+      's',
+      'g1',
+      'bob',
+      '5000', // min-idle-time=5000ms
+      '1000-0',
+      '2000-0',
+      '3000-0',
+    ]);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    // No entries should be claimed — idle time is only 1ms
+    expect(arr.value.length).toBe(0);
+  });
+
+  it('claims only entries that exceed min-idle-time', () => {
+    const ctx = createDb(1000);
+    // Add 2 entries
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '1']);
+    ctx.setTime(2000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '2']);
+    execXgroup(ctx, ['CREATE', 's', 'g1', '0']);
+    // Alice reads at time 5000
+    ctx.setTime(5000);
+    execXreadgroup(ctx, ['GROUP', 'g1', 'alice', 'STREAMS', 's', '>']);
+    // At time 8000 (idle=3000ms), claim with min-idle=2000 — both should be claimed
+    ctx.setTime(8000);
+    const reply = execXclaim(ctx, [
+      's',
+      'g1',
+      'bob',
+      '2000',
+      '1000-0',
+      '2000-0',
+    ]);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    expect(arr.value.length).toBe(2);
+  });
+
+  it('removes deleted entries from PEL instead of returning them', () => {
+    const ctx = setupClaimScenario();
+    // Delete entry 2000-0
+    execXdel(ctx, ['s', '2000-0']);
+    ctx.setTime(20000);
+    const reply = execXclaim(ctx, [
+      's',
+      'g1',
+      'bob',
+      '0',
+      '1000-0',
+      '2000-0',
+      '3000-0',
+    ]);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    // Should return 2 entries (1000-0, 3000-0), not 3
+    // Deleted entry 2000-0 is removed from PEL silently
+    expect(arr.value.length).toBe(2);
+    // Verify 2000-0 was removed from PEL
+    const s = getStreamHelper(ctx.db, 's').stream as RedisStream;
+    const group = getGroup(s, 'g1');
+    expect(group.pel.has('2000-0')).toBe(false);
+  });
+});
+
+// ─── XAUTOCLAIM ──────────────────────────────────────────────────────
+
+function execXautoclaim(
+  ctx: ReturnType<typeof createDb>,
+  args: string[]
+): Reply {
+  const spec = stream.specs.find((s) => s.name === 'xautoclaim');
+  if (!spec) throw new Error('xautoclaim spec not found');
+  return spec.handler({ db: ctx.db, engine: ctx.engine }, args);
+}
+
+describe('XAUTOCLAIM', () => {
+  it('claims idle pending entries', () => {
+    const ctx = setupClaimScenario();
+    // Advance time so entries are idle > 5000ms
+    ctx.setTime(20000);
+    const reply = execXautoclaim(ctx, [
+      's',
+      'g1',
+      'bob',
+      '5000', // min-idle-time
+      '0-0', // start
+    ]);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    // [cursor, claimed-entries, deleted-ids]
+    expect(arr.value.length).toBe(3);
+    const cursor = arr.value[0] as { kind: 'bulk'; value: string };
+    expect(cursor.value).toBe('0-0'); // no more entries
+    const claimed = arr.value[1] as { kind: 'array'; value: Reply[] };
+    expect(claimed.value.length).toBe(5); // all 5 entries
+    const deletedIds = arr.value[2] as { kind: 'array'; value: Reply[] };
+    expect(deletedIds.value.length).toBe(0);
+  });
+
+  it('returns 0-0 cursor when all entries claimed', () => {
+    const ctx = setupClaimScenario();
+    ctx.setTime(20000);
+    const reply = execXautoclaim(ctx, ['s', 'g1', 'bob', '5000', '0-0']);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    const cursor = arr.value[0] as { kind: 'bulk'; value: string };
+    expect(cursor.value).toBe('0-0');
+  });
+
+  it('respects COUNT limit and returns non-zero cursor', () => {
+    const ctx = setupClaimScenario();
+    ctx.setTime(20000);
+    const reply = execXautoclaim(ctx, [
+      's',
+      'g1',
+      'bob',
+      '5000',
+      '0-0',
+      'COUNT',
+      '2',
+    ]);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    const cursor = arr.value[0] as { kind: 'bulk'; value: string };
+    // Cursor should point to next entry after the 2 claimed
+    expect(cursor.value).not.toBe('0-0');
+    const claimed = arr.value[1] as { kind: 'array'; value: Reply[] };
+    expect(claimed.value.length).toBe(2);
+  });
+
+  it('filters by start ID', () => {
+    const ctx = setupClaimScenario();
+    ctx.setTime(20000);
+    const reply = execXautoclaim(ctx, [
+      's',
+      'g1',
+      'bob',
+      '5000',
+      '3000-0', // start from 3000-0
+    ]);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    const claimed = arr.value[1] as { kind: 'array'; value: Reply[] };
+    expect(claimed.value.length).toBe(3); // 3000-0, 4000-0, 5000-0
+  });
+
+  it('skips entries that are not idle enough', () => {
+    const ctx = setupClaimScenario();
+    // Only 1ms later — nothing is idle for > 5000ms
+    ctx.setTime(10001);
+    const reply = execXautoclaim(ctx, ['s', 'g1', 'bob', '5000', '0-0']);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    const claimed = arr.value[1] as { kind: 'array'; value: Reply[] };
+    expect(claimed.value.length).toBe(0);
+  });
+
+  it('reports deleted entries in third array element', () => {
+    const ctx = setupClaimScenario();
+    // Delete an entry that alice has pending
+    execXdel(ctx, ['s', '2000-0']);
+    ctx.setTime(20000);
+    const reply = execXautoclaim(ctx, ['s', 'g1', 'bob', '5000', '0-0']);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    const claimed = arr.value[1] as { kind: 'array'; value: Reply[] };
+    const deletedIds = arr.value[2] as { kind: 'array'; value: Reply[] };
+    // 4 entries claimed (1,3,4,5), 1 deleted (2)
+    expect(claimed.value.length).toBe(4);
+    expect(deletedIds.value.length).toBe(1);
+    expect(deletedIds.value[0]).toEqual({ kind: 'bulk', value: '2000-0' });
+  });
+
+  it('JUSTID returns only IDs', () => {
+    const ctx = setupClaimScenario();
+    ctx.setTime(20000);
+    const reply = execXautoclaim(ctx, [
+      's',
+      'g1',
+      'bob',
+      '5000',
+      '0-0',
+      'JUSTID',
+    ]);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    const claimed = arr.value[1] as { kind: 'array'; value: Reply[] };
+    // Should be bulk strings, not arrays
+    expect(claimed.value[0]).toEqual({ kind: 'bulk', value: '1000-0' });
+  });
+
+  it('returns NOGROUP for non-existing group', () => {
+    const ctx = createDb(1000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '1']);
+    const reply = execXautoclaim(ctx, ['s', 'nogroup', 'bob', '0', '0-0']);
+    expect(reply.kind).toBe('error');
+  });
+
+  it('deleted entries consume COUNT budget and cursor advances correctly', () => {
+    const ctx = setupClaimScenario();
+    // Delete entries 1000-0 and 2000-0
+    execXdel(ctx, ['s', '1000-0']);
+    execXdel(ctx, ['s', '2000-0']);
+    ctx.setTime(20000);
+    // COUNT=2 — should process 2 entries (both deleted), cursor advances past them
+    const reply = execXautoclaim(ctx, [
+      's',
+      'g1',
+      'bob',
+      '5000',
+      '0-0',
+      'COUNT',
+      '2',
+    ]);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    const cursor = arr.value[0] as { kind: 'bulk'; value: string };
+    const claimed = arr.value[1] as { kind: 'array'; value: Reply[] };
+    const deletedIds = arr.value[2] as { kind: 'array'; value: Reply[] };
+    // 0 claimed, 2 deleted
+    expect(claimed.value.length).toBe(0);
+    expect(deletedIds.value.length).toBe(2);
+    // Cursor should point to next entry (3000-0), not 0-0
+    expect(cursor.value).toBe('3000-0');
+  });
+
+  it('cursor points to next entry after last scanned, not last claimed', () => {
+    const ctx = setupClaimScenario();
+    ctx.setTime(20000);
+    // COUNT=3 claims 3 entries (1000-0, 2000-0, 3000-0), cursor -> 4000-0
+    const reply = execXautoclaim(ctx, [
+      's',
+      'g1',
+      'bob',
+      '5000',
+      '0-0',
+      'COUNT',
+      '3',
+    ]);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    const cursor = arr.value[0] as { kind: 'bulk'; value: string };
+    expect(cursor.value).toBe('4000-0');
+  });
+});
+
+// ─── XINFO ───────────────────────────────────────────────────────────
+
+function execXinfo(ctx: ReturnType<typeof createDb>, args: string[]): Reply {
+  const spec = stream.specs.find((s) => s.name === 'xinfo');
+  if (!spec) throw new Error('xinfo spec not found');
+  return spec.handler({ db: ctx.db, engine: ctx.engine }, args);
+}
+
+function findField(arr: Reply[], fieldName: string): Reply | undefined {
+  const values = (arr as unknown as { kind: 'array'; value: Reply[] }).kind
+    ? (arr as unknown as { kind: 'array'; value: Reply[] }).value
+    : arr;
+  for (let i = 0; i < values.length - 1; i++) {
+    const item = values[i] as { kind: string; value: string };
+    if (item.kind === 'bulk' && item.value === fieldName) {
+      return values[i + 1];
+    }
+  }
+  return undefined;
+}
+
+describe('XINFO STREAM', () => {
+  it('returns stream metadata', () => {
+    const ctx = createDb(1000);
+    for (let i = 1; i <= 3; i++) {
+      ctx.setTime(i * 1000);
+      stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', String(i)]);
+    }
+    const reply = execXinfo(ctx, ['STREAM', 's']);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+
+    const length = findField(arr.value, 'length');
+    expect(length).toEqual({ kind: 'integer', value: 3 });
+
+    const lastId = findField(arr.value, 'last-generated-id');
+    expect(lastId).toEqual({ kind: 'bulk', value: '3000-0' });
+
+    const entriesAdded = findField(arr.value, 'entries-added');
+    expect(entriesAdded).toEqual({ kind: 'integer', value: 3 });
+
+    const groups = findField(arr.value, 'groups');
+    expect(groups).toEqual({ kind: 'integer', value: 0 });
+
+    const firstEntry = findField(arr.value, 'first-entry');
+    expect(firstEntry).toEqual(entryReply('1000-0', [['k', '1']]));
+
+    const lastEntry = findField(arr.value, 'last-entry');
+    expect(lastEntry).toEqual(entryReply('3000-0', [['k', '3']]));
+  });
+
+  it('returns error for non-existing key', () => {
+    const ctx = createDb(1000);
+    const reply = execXinfo(ctx, ['STREAM', 'nokey']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'no such key',
+    });
+  });
+
+  it('returns WRONGTYPE for non-stream key', () => {
+    const ctx = createDb(1000);
+    ctx.db.set('str', 'string', 'raw', 'hello');
+    const reply = execXinfo(ctx, ['STREAM', 'str']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'WRONGTYPE',
+      message: 'Operation against a key holding the wrong kind of value',
+    });
+  });
+
+  it('FULL returns entries and group details', () => {
+    const ctx = createDb(1000);
+    for (let i = 1; i <= 3; i++) {
+      ctx.setTime(i * 1000);
+      stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', String(i)]);
+    }
+    execXgroup(ctx, ['CREATE', 's', 'g1', '0']);
+
+    const reply = execXinfo(ctx, ['STREAM', 's', 'FULL']);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+
+    const entries = findField(arr.value, 'entries');
+    const entriesArr = entries as { kind: 'array'; value: Reply[] };
+    expect(entriesArr.value.length).toBe(3);
+
+    const groups = findField(arr.value, 'groups');
+    const groupsArr = groups as { kind: 'array'; value: Reply[] };
+    expect(groupsArr.value.length).toBe(1);
+  });
+
+  it('recorded-first-entry-id tracks first entry and updates after trim', () => {
+    const ctx = createDb(1000);
+    for (let i = 1; i <= 5; i++) {
+      ctx.setTime(i * 1000);
+      stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', String(i)]);
+    }
+    // Before trim, recorded-first-entry-id should be the first entry
+    let reply = execXinfo(ctx, ['STREAM', 's']);
+    let arr = reply as { kind: 'array'; value: Reply[] };
+    let recordedFirst = findField(arr.value, 'recorded-first-entry-id');
+    expect(recordedFirst).toEqual({ kind: 'bulk', value: '1000-0' });
+
+    // Trim by MAXLEN to keep 3 entries (removes 1000-0, 2000-0)
+    const xtrimSpec = stream.specs.find((s) => s.name === 'xtrim');
+    if (xtrimSpec) {
+      xtrimSpec.handler({ db: ctx.db, engine: ctx.engine }, [
+        's',
+        'MAXLEN',
+        '3',
+      ]);
+    }
+
+    // After trim, recorded-first-entry-id should be updated to 3000-0
+    reply = execXinfo(ctx, ['STREAM', 's']);
+    arr = reply as { kind: 'array'; value: Reply[] };
+    recordedFirst = findField(arr.value, 'recorded-first-entry-id');
+    expect(recordedFirst).toEqual({ kind: 'bulk', value: '3000-0' });
+  });
+
+  it('FULL COUNT limits entries', () => {
+    const ctx = createDb(1000);
+    for (let i = 1; i <= 5; i++) {
+      ctx.setTime(i * 1000);
+      stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', String(i)]);
+    }
+
+    const reply = execXinfo(ctx, ['STREAM', 's', 'FULL', 'COUNT', '2']);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    const entries = findField(arr.value, 'entries');
+    const entriesArr = entries as { kind: 'array'; value: Reply[] };
+    expect(entriesArr.value.length).toBe(2);
+  });
+});
+
+describe('XINFO GROUPS', () => {
+  it('returns group list', () => {
+    const ctx = createDb(1000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '1']);
+    execXgroup(ctx, ['CREATE', 's', 'g1', '0']);
+    execXgroup(ctx, ['CREATE', 's', 'g2', '$']);
+
+    const reply = execXinfo(ctx, ['GROUPS', 's']);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    expect(arr.value.length).toBe(2);
+
+    const g1 = arr.value[0] as { kind: 'array'; value: Reply[] };
+    const name = findField(g1.value, 'name');
+    expect(name).toEqual({ kind: 'bulk', value: 'g1' });
+  });
+
+  it('returns empty array for stream with no groups', () => {
+    const ctx = createDb(1000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '1']);
+    const reply = execXinfo(ctx, ['GROUPS', 's']);
+    expect(reply).toEqual({ kind: 'array', value: [] });
+  });
+
+  it('shows pending count and consumer count', () => {
+    const ctx = setupClaimScenario();
+    const reply = execXinfo(ctx, ['GROUPS', 's']);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    const g1 = arr.value[0] as { kind: 'array'; value: Reply[] };
+
+    const consumers = findField(g1.value, 'consumers');
+    expect(consumers).toEqual({ kind: 'integer', value: 1 }); // alice
+
+    const pending = findField(g1.value, 'pending');
+    expect(pending).toEqual({ kind: 'integer', value: 5 });
+  });
+
+  it('returns error for non-existing key', () => {
+    const ctx = createDb(1000);
+    const reply = execXinfo(ctx, ['GROUPS', 'nokey']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'no such key',
+    });
+  });
+});
+
+describe('XINFO CONSUMERS', () => {
+  it('returns consumer list with idle times', () => {
+    const ctx = setupClaimScenario();
+    ctx.setTime(15000);
+    const reply = execXinfo(ctx, ['CONSUMERS', 's', 'g1']);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    expect(arr.value.length).toBe(1); // alice
+
+    const alice = arr.value[0] as { kind: 'array'; value: Reply[] };
+    const name = findField(alice.value, 'name');
+    expect(name).toEqual({ kind: 'bulk', value: 'alice' });
+
+    const pending = findField(alice.value, 'pending');
+    expect(pending).toEqual({ kind: 'integer', value: 5 });
+
+    const idle = findField(alice.value, 'idle');
+    expect(idle).toEqual({ kind: 'integer', value: 5000 });
+  });
+
+  it('returns NOGROUP for non-existing group', () => {
+    const ctx = createDb(1000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '1']);
+    const reply = execXinfo(ctx, ['CONSUMERS', 's', 'nogroup']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'NOGROUP',
+      message: "No such consumer group 'nogroup' for key name 's'",
+    });
+  });
+
+  it('returns error for non-existing key', () => {
+    const ctx = createDb(1000);
+    const reply = execXinfo(ctx, ['CONSUMERS', 'nokey', 'g1']);
+    expect(reply).toEqual({
+      kind: 'error',
+      prefix: 'ERR',
+      message: 'no such key',
+    });
+  });
+
+  it('returns empty array when no consumers exist', () => {
+    const ctx = createDb(1000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '1']);
+    execXgroup(ctx, ['CREATE', 's', 'g1', '0']);
+    const reply = execXinfo(ctx, ['CONSUMERS', 's', 'g1']);
+    expect(reply).toEqual({ kind: 'array', value: [] });
+  });
+
+  it('returns error for unknown subcommand', () => {
+    const ctx = createDb(1000);
+    const reply = execXinfo(ctx, ['UNKNOWN', 's']);
+    expect(reply.kind).toBe('error');
+  });
+
+  it('idle and inactive differ after XREADGROUP with no new entries', () => {
+    const ctx = createDb(1000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '1']);
+    execXgroup(ctx, ['CREATE', 's', 'g1', '0']);
+    // Alice reads at time 2000 — entries delivered, activeTime=2000
+    ctx.setTime(2000);
+    execXreadgroup(ctx, ['GROUP', 'g1', 'alice', 'STREAMS', 's', '>']);
+    // Alice reads again at time 5000 with no new entries — seenTime=5000, activeTime=2000
+    ctx.setTime(5000);
+    execXreadgroup(ctx, ['GROUP', 'g1', 'alice', 'STREAMS', 's', '>']);
+    // Check at time 6000
+    ctx.setTime(6000);
+    const reply = execXinfo(ctx, ['CONSUMERS', 's', 'g1']);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    const alice = arr.value[0] as { kind: 'array'; value: Reply[] };
+    const idle = findField(alice.value, 'idle') as {
+      kind: 'integer';
+      value: number;
+    };
+    const inactive = findField(alice.value, 'inactive') as {
+      kind: 'integer';
+      value: number;
+    };
+    // idle = 6000 - 5000 = 1000 (last interaction)
+    expect(idle.value).toBe(1000);
+    // inactive = 6000 - 2000 = 4000 (last successful delivery)
+    expect(inactive.value).toBe(4000);
+  });
+});
+
+describe('XINFO HELP', () => {
+  it('returns help text', () => {
+    const ctx = createDb(1000);
+    const reply = execXinfo(ctx, ['HELP']);
+    expect(reply.kind).toBe('array');
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    expect(arr.value.length).toBeGreaterThan(0);
+  });
+});

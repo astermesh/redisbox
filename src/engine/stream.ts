@@ -65,6 +65,7 @@ export interface PendingEntry {
 export interface StreamConsumer {
   name: string;
   seenTime: number;
+  activeTime: number;
   pending: Map<string, PendingEntry>;
 }
 
@@ -81,6 +82,9 @@ export class RedisStream {
   private _lastId: StreamId = { ms: 0, seq: 0 };
   private _length = 0;
   private _groups = new Map<string, ConsumerGroup>();
+  private _entriesAdded = 0;
+  private _maxDeletedEntryId: StreamId = { ms: 0, seq: 0 };
+  private _recordedFirstEntryId: StreamId = { ms: 0, seq: 0 };
 
   get length(): number {
     return this._length;
@@ -92,6 +96,18 @@ export class RedisStream {
 
   get lastIdString(): string {
     return streamIdToString(this._lastId);
+  }
+
+  get entriesAdded(): number {
+    return this._entriesAdded;
+  }
+
+  get maxDeletedEntryId(): StreamId {
+    return { ...this._maxDeletedEntryId };
+  }
+
+  get recordedFirstEntryId(): StreamId {
+    return { ...this._recordedFirstEntryId };
   }
 
   /**
@@ -185,6 +201,11 @@ export class RedisStream {
     this.entries.push({ id: idStr, fields });
     this._lastId = { ...id };
     this._length++;
+    this._entriesAdded++;
+    // Track recorded-first-entry-id: set on first-ever entry
+    if (this._entriesAdded === 1) {
+      this._recordedFirstEntryId = { ...id };
+    }
     return idStr;
   }
 
@@ -207,6 +228,7 @@ export class RedisStream {
     }
     this.entries.splice(0, toRemove);
     this._length = this.entries.length;
+    this.updateRecordedFirstEntryId();
     return toRemove;
   }
 
@@ -227,7 +249,20 @@ export class RedisStream {
     if (removeCount === 0) return 0;
     this.entries.splice(0, removeCount);
     this._length = this.entries.length;
+    this.updateRecordedFirstEntryId();
     return removeCount;
+  }
+
+  /**
+   * Update recorded-first-entry-id after trimming.
+   * In Redis, this reflects the current first entry after a trim operation.
+   */
+  private updateRecordedFirstEntryId(): void {
+    if (this.entries.length > 0) {
+      const first = this.entries[0] as StreamEntry;
+      this._recordedFirstEntryId = parseStreamId(first.id) ?? { ms: 0, seq: 0 };
+    }
+    // When empty after trim, keep the last recorded value (Redis behavior)
   }
 
   /**
@@ -304,6 +339,57 @@ export class RedisStream {
     return this.entries[this.entries.length - 1] ?? null;
   }
 
+  /**
+   * Delete entries by ID (logical delete — removes from entries array).
+   * Returns number of entries actually deleted.
+   */
+  deleteEntries(ids: StreamId[]): number {
+    let deleted = 0;
+    const idSet = new Set(ids.map(streamIdToString));
+
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      const entry = this.entries[i] as StreamEntry;
+      if (idSet.has(entry.id)) {
+        const eid = parseEntryId(entry.id);
+        if (compareStreamIds(eid, this._maxDeletedEntryId) > 0) {
+          this._maxDeletedEntryId = { ...eid };
+        }
+        this.entries.splice(i, 1);
+        this._length--;
+        deleted++;
+      }
+    }
+    return deleted;
+  }
+
+  /**
+   * Check if an entry with the given ID exists in the stream.
+   */
+  hasEntry(id: string): boolean {
+    return this.entries.some((e) => e.id === id);
+  }
+
+  /**
+   * Set the last generated ID (used by XSETID).
+   */
+  setLastId(id: StreamId): void {
+    this._lastId = { ...id };
+  }
+
+  /**
+   * Set the entries-added counter (used by XSETID).
+   */
+  setEntriesAdded(n: number): void {
+    this._entriesAdded = n;
+  }
+
+  /**
+   * Set the max deleted entry ID (used by XSETID).
+   */
+  setMaxDeletedEntryId(id: StreamId): void {
+    this._maxDeletedEntryId = { ...id };
+  }
+
   // ─── Consumer Group Operations ──────────────────────────────────────
 
   getGroup(name: string): ConsumerGroup | undefined {
@@ -349,6 +435,7 @@ export class RedisStream {
     group.consumers.set(consumerName, {
       name: consumerName,
       seenTime: 0,
+      activeTime: 0,
       pending: new Map(),
     });
     return 1;

@@ -1,5 +1,7 @@
 # S16: Streams and Consumer Groups
 
+**Status:** done
+
 Implement the stream data type — append-only logs with consumer group support. Streams are the most complex type after sorted sets, requiring ID generation, consumer group state management, pending entry lists, and blocking reads.
 
 ## Tasks
