@@ -442,6 +442,9 @@ describe('createCommandTable (registry)', () => {
       'evalsha',
       'eval_ro',
       'evalsha_ro',
+      'time',
+      'debug',
+      'monitor',
     ];
 
     for (const name of expectedCommands) {
