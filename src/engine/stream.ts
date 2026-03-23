@@ -81,6 +81,8 @@ export class RedisStream {
   private _lastId: StreamId = { ms: 0, seq: 0 };
   private _length = 0;
   private _groups = new Map<string, ConsumerGroup>();
+  private _entriesAdded = 0;
+  private _maxDeletedEntryId: StreamId = { ms: 0, seq: 0 };
 
   get length(): number {
     return this._length;
@@ -92,6 +94,14 @@ export class RedisStream {
 
   get lastIdString(): string {
     return streamIdToString(this._lastId);
+  }
+
+  get entriesAdded(): number {
+    return this._entriesAdded;
+  }
+
+  get maxDeletedEntryId(): StreamId {
+    return { ...this._maxDeletedEntryId };
   }
 
   /**
@@ -185,6 +195,7 @@ export class RedisStream {
     this.entries.push({ id: idStr, fields });
     this._lastId = { ...id };
     this._length++;
+    this._entriesAdded++;
     return idStr;
   }
 
@@ -302,6 +313,57 @@ export class RedisStream {
    */
   lastEntry(): StreamEntry | null {
     return this.entries[this.entries.length - 1] ?? null;
+  }
+
+  /**
+   * Delete entries by ID (logical delete — removes from entries array).
+   * Returns number of entries actually deleted.
+   */
+  deleteEntries(ids: StreamId[]): number {
+    let deleted = 0;
+    const idSet = new Set(ids.map(streamIdToString));
+
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      const entry = this.entries[i] as StreamEntry;
+      if (idSet.has(entry.id)) {
+        const eid = parseEntryId(entry.id);
+        if (compareStreamIds(eid, this._maxDeletedEntryId) > 0) {
+          this._maxDeletedEntryId = { ...eid };
+        }
+        this.entries.splice(i, 1);
+        this._length--;
+        deleted++;
+      }
+    }
+    return deleted;
+  }
+
+  /**
+   * Check if an entry with the given ID exists in the stream.
+   */
+  hasEntry(id: string): boolean {
+    return this.entries.some((e) => e.id === id);
+  }
+
+  /**
+   * Set the last generated ID (used by XSETID).
+   */
+  setLastId(id: StreamId): void {
+    this._lastId = { ...id };
+  }
+
+  /**
+   * Set the entries-added counter (used by XSETID).
+   */
+  setEntriesAdded(n: number): void {
+    this._entriesAdded = n;
+  }
+
+  /**
+   * Set the max deleted entry ID (used by XSETID).
+   */
+  setMaxDeletedEntryId(id: StreamId): void {
+    this._maxDeletedEntryId = { ...id };
   }
 
   // ─── Consumer Group Operations ──────────────────────────────────────
