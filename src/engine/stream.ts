@@ -65,6 +65,7 @@ export interface PendingEntry {
 export interface StreamConsumer {
   name: string;
   seenTime: number;
+  activeTime: number;
   pending: Map<string, PendingEntry>;
 }
 
@@ -83,6 +84,7 @@ export class RedisStream {
   private _groups = new Map<string, ConsumerGroup>();
   private _entriesAdded = 0;
   private _maxDeletedEntryId: StreamId = { ms: 0, seq: 0 };
+  private _recordedFirstEntryId: StreamId = { ms: 0, seq: 0 };
 
   get length(): number {
     return this._length;
@@ -102,6 +104,10 @@ export class RedisStream {
 
   get maxDeletedEntryId(): StreamId {
     return { ...this._maxDeletedEntryId };
+  }
+
+  get recordedFirstEntryId(): StreamId {
+    return { ...this._recordedFirstEntryId };
   }
 
   /**
@@ -196,6 +202,10 @@ export class RedisStream {
     this._lastId = { ...id };
     this._length++;
     this._entriesAdded++;
+    // Track recorded-first-entry-id: set on first-ever entry
+    if (this._entriesAdded === 1) {
+      this._recordedFirstEntryId = { ...id };
+    }
     return idStr;
   }
 
@@ -218,6 +228,7 @@ export class RedisStream {
     }
     this.entries.splice(0, toRemove);
     this._length = this.entries.length;
+    this.updateRecordedFirstEntryId();
     return toRemove;
   }
 
@@ -238,7 +249,20 @@ export class RedisStream {
     if (removeCount === 0) return 0;
     this.entries.splice(0, removeCount);
     this._length = this.entries.length;
+    this.updateRecordedFirstEntryId();
     return removeCount;
+  }
+
+  /**
+   * Update recorded-first-entry-id after trimming.
+   * In Redis, this reflects the current first entry after a trim operation.
+   */
+  private updateRecordedFirstEntryId(): void {
+    if (this.entries.length > 0) {
+      const first = this.entries[0] as StreamEntry;
+      this._recordedFirstEntryId = parseStreamId(first.id) ?? { ms: 0, seq: 0 };
+    }
+    // When empty after trim, keep the last recorded value (Redis behavior)
   }
 
   /**
@@ -411,6 +435,7 @@ export class RedisStream {
     group.consumers.set(consumerName, {
       name: consumerName,
       seenTime: 0,
+      activeTime: 0,
       pending: new Map(),
     });
     return 1;

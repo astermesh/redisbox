@@ -792,7 +792,7 @@ function ensureConsumer(
 ): StreamConsumer {
   let consumer = group.consumers.get(name);
   if (!consumer) {
-    consumer = { name, seenTime: clockMs, pending: new Map() };
+    consumer = { name, seenTime: clockMs, activeTime: 0, pending: new Map() };
     group.consumers.set(name, consumer);
   }
   consumer.seenTime = clockMs;
@@ -949,6 +949,9 @@ export function xreadgroup(
           consumer.pending.set(entry.id, pe);
         }
       }
+
+      // Entries were actually delivered — update activeTime
+      consumer.activeTime = clockMs;
 
       resultStreams.push(
         arrayReply([bulkReply(key), arrayReply(entries.map(entryToReply))])
@@ -1505,6 +1508,7 @@ export function xclaim(db: Database, clockMs: number, args: string[]): Reply {
 
     if (!pe) {
       // Not in PEL — only claim if FORCE and entry exists in stream
+      // (min-idle-time does not apply to FORCE-created entries)
       if (force && stream.hasEntry(entryIdStr)) {
         const newPe: PendingEntry = {
           entryId: entryIdStr,
@@ -1528,6 +1532,20 @@ export function xclaim(db: Database, clockMs: number, args: string[]): Reply {
       continue;
     }
 
+    // Check min-idle-time: skip entries that haven't been idle long enough
+    const idleTime = clockMs - pe.deliveryTime;
+    if (idleTime < minIdleTime) continue;
+
+    // Check if entry was deleted from stream — remove from PEL (Redis 7.0+)
+    if (!stream.hasEntry(entryIdStr)) {
+      const oldConsumer = group.consumers.get(pe.consumer);
+      if (oldConsumer) {
+        oldConsumer.pending.delete(entryIdStr);
+      }
+      group.pel.delete(entryIdStr);
+      continue;
+    }
+
     // Transfer ownership: remove from old consumer
     const oldConsumer = group.consumers.get(pe.consumer);
     if (oldConsumer) {
@@ -1541,17 +1559,14 @@ export function xclaim(db: Database, clockMs: number, args: string[]): Reply {
 
     // Add to new consumer's pending
     consumer.pending.set(entryIdStr, pe);
+    consumer.activeTime = clockMs;
 
     if (justid) {
       result.push(bulkReply(entryIdStr));
     } else {
-      // Try to find actual entry data
       const entries = stream.range(claimId, claimId, 1);
       if (entries.length > 0) {
         result.push(entryToReply(entries[0] as StreamEntry));
-      } else {
-        // Entry was deleted — return [id, null]
-        result.push(arrayReply([bulkReply(entryIdStr), bulkReply(null)]));
       }
     }
   }
@@ -1643,54 +1658,53 @@ export function xautoclaim(
   // Ensure consumer exists
   const consumer = ensureConsumer(group, consumerName, clockMs);
 
-  // Collect eligible PEL entries: ID >= startId and idle >= minIdleTime
-  const eligible: PendingEntry[] = [];
+  // Collect all PEL entries with ID >= startId, sorted by ID
+  const candidates: PendingEntry[] = [];
   for (const [entryId, pe] of group.pel) {
     const eid = safeParseId(entryId);
     if (compareStreamIds(eid, startId) < 0) continue;
-    const idleTime = clockMs - pe.deliveryTime;
-    if (idleTime < minIdleTime) continue;
-    eligible.push(pe);
+    candidates.push(pe);
   }
-
-  // Sort by entry ID
-  eligible.sort((a, b) =>
+  candidates.sort((a, b) =>
     compareStreamIds(safeParseId(a.entryId), safeParseId(b.entryId))
   );
 
-  // Apply count limit — take count entries, compute next cursor
-  const claimed = eligible.slice(0, count);
-  let nextCursor = '0-0';
-  if (eligible.length > count && claimed.length > 0) {
-    // Next cursor is the ID after the last claimed entry
-    const lastClaimed = claimed[claimed.length - 1] as PendingEntry;
-    const lastId = safeParseId(lastClaimed.entryId);
-    // Increment to get next cursor
-    if (lastId.seq < Number.MAX_SAFE_INTEGER) {
-      nextCursor = streamIdToString({ ms: lastId.ms, seq: lastId.seq + 1 });
-    } else {
-      nextCursor = streamIdToString({ ms: lastId.ms + 1, seq: 0 });
-    }
-  }
-
+  // Iterate PEL entries matching Redis behavior:
+  // - Deleted entries decrement count
+  // - Entries with insufficient idle time do NOT decrement count
+  // - Successfully claimed entries decrement count
+  // - attempts cap: count * 10
   const claimedEntries: Reply[] = [];
   const deletedIds: Reply[] = [];
+  let remaining = count;
+  let attempts = count * 10;
+  let lastScannedIdx = -1;
 
-  for (const pe of claimed) {
+  for (
+    let ci = 0;
+    ci < candidates.length && remaining > 0 && attempts > 0;
+    ci++
+  ) {
+    attempts--;
+    const pe = candidates[ci] as PendingEntry;
     const entryIdStr = pe.entryId;
-    const entryExists = stream.hasEntry(entryIdStr);
+    lastScannedIdx = ci;
 
-    if (!entryExists) {
-      // Entry was deleted — add to deleted IDs list and remove from PEL
+    // Check if entry was deleted from stream
+    if (!stream.hasEntry(entryIdStr)) {
       deletedIds.push(bulkReply(entryIdStr));
-      // Remove from old consumer
       const oldConsumer = group.consumers.get(pe.consumer);
       if (oldConsumer) {
         oldConsumer.pending.delete(entryIdStr);
       }
       group.pel.delete(entryIdStr);
+      remaining--;
       continue;
     }
+
+    // Check idle time — skip without consuming count
+    const idleTime = clockMs - pe.deliveryTime;
+    if (idleTime < minIdleTime) continue;
 
     // Transfer ownership
     const oldConsumer = group.consumers.get(pe.consumer);
@@ -1703,6 +1717,7 @@ export function xautoclaim(
     pe.deliveryCount++;
 
     consumer.pending.set(entryIdStr, pe);
+    consumer.activeTime = clockMs;
 
     if (justid) {
       claimedEntries.push(bulkReply(entryIdStr));
@@ -1713,6 +1728,13 @@ export function xautoclaim(
         claimedEntries.push(entryToReply(entries[0] as StreamEntry));
       }
     }
+    remaining--;
+  }
+
+  // Compute next cursor: points to the entry after the last scanned one
+  let nextCursor = '0-0';
+  if (lastScannedIdx >= 0 && lastScannedIdx + 1 < candidates.length) {
+    nextCursor = (candidates[lastScannedIdx + 1] as PendingEntry).entryId;
   }
 
   return arrayReply([
@@ -1787,7 +1809,7 @@ function xinfoStream(db: Database, args: string[]): Reply {
     bulkReply('entries-added'),
     integerReply(stream.entriesAdded),
     bulkReply('recorded-first-entry-id'),
-    bulkReply(firstEntry ? firstEntry.id : '0-0'),
+    bulkReply(streamIdToString(stream.recordedFirstEntryId)),
     bulkReply('groups'),
     integerReply(stream.groups.size),
     bulkReply('first-entry'),
@@ -1843,7 +1865,7 @@ function xinfoStreamFull(stream: RedisStream, count: number): Reply {
           bulkReply('seen-time'),
           integerReply(consumer.seenTime),
           bulkReply('active-time'),
-          integerReply(consumer.seenTime),
+          integerReply(consumer.activeTime),
           bulkReply('pel-count'),
           integerReply(consumer.pending.size),
           bulkReply('pel'),
@@ -1962,6 +1984,8 @@ function xinfoConsumers(db: Database, clockMs: number, args: string[]): Reply {
   const result: Reply[] = [];
   for (const [, consumer] of group.consumers) {
     const idle = clockMs - consumer.seenTime;
+    const inactive =
+      consumer.activeTime > 0 ? clockMs - consumer.activeTime : -1;
     result.push(
       arrayReply([
         bulkReply('name'),
@@ -1971,7 +1995,7 @@ function xinfoConsumers(db: Database, clockMs: number, args: string[]): Reply {
         bulkReply('idle'),
         integerReply(Math.max(0, idle)),
         bulkReply('inactive'),
-        integerReply(Math.max(0, idle)),
+        integerReply(inactive >= 0 ? inactive : -1),
       ])
     );
   }
@@ -1994,6 +2018,20 @@ function xinfo(ctx: CommandContext, args: string[]): Reply {
       return xinfoGroups(ctx.db, subArgs);
     case 'CONSUMERS':
       return xinfoConsumers(ctx.db, ctx.engine.clock(), subArgs);
+    case 'HELP':
+      return arrayReply([
+        bulkReply(
+          'XINFO <subcommand> [<arg> [value] [opt] ...]. Subcommands are:'
+        ),
+        bulkReply('CONSUMERS <key> <groupname>'),
+        bulkReply('    Return list of consumers for a consumer group.'),
+        bulkReply('GROUPS <key>'),
+        bulkReply('    Return list of consumer groups for a stream.'),
+        bulkReply('STREAM <key> [FULL [COUNT <count>]]'),
+        bulkReply('    Return information about the stream stored at <key>.'),
+        bulkReply('HELP'),
+        bulkReply('    Return this help message.'),
+      ]);
     default:
       return errorReply(
         'ERR',
@@ -2234,6 +2272,16 @@ export const specs: CommandSpec[] = [
         firstKey: 2,
         lastKey: 2,
         keyStep: 1,
+        categories: ['@read', '@stream', '@slow'],
+      },
+      {
+        name: 'xinfo|help',
+        handler: (ctx, args) => xinfo(ctx, ['HELP', ...args]),
+        arity: 2,
+        flags: ['readonly'],
+        firstKey: 0,
+        lastKey: 0,
+        keyStep: 0,
         categories: ['@read', '@stream', '@slow'],
       },
     ],

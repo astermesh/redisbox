@@ -2732,6 +2732,72 @@ describe('XCLAIM', () => {
     const reply = execXclaim(ctx, ['nokey', 'g1', 'bob', '0', '1000-0']);
     expect(reply.kind).toBe('error');
   });
+
+  it('skips entries whose idle time is below min-idle-time', () => {
+    const ctx = setupClaimScenario();
+    // Only 1ms after delivery (at 10000) — idle time is 1ms
+    ctx.setTime(10001);
+    const reply = execXclaim(ctx, [
+      's',
+      'g1',
+      'bob',
+      '5000', // min-idle-time=5000ms
+      '1000-0',
+      '2000-0',
+      '3000-0',
+    ]);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    // No entries should be claimed — idle time is only 1ms
+    expect(arr.value.length).toBe(0);
+  });
+
+  it('claims only entries that exceed min-idle-time', () => {
+    const ctx = createDb(1000);
+    // Add 2 entries
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '1']);
+    ctx.setTime(2000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '2']);
+    execXgroup(ctx, ['CREATE', 's', 'g1', '0']);
+    // Alice reads at time 5000
+    ctx.setTime(5000);
+    execXreadgroup(ctx, ['GROUP', 'g1', 'alice', 'STREAMS', 's', '>']);
+    // At time 8000 (idle=3000ms), claim with min-idle=2000 — both should be claimed
+    ctx.setTime(8000);
+    const reply = execXclaim(ctx, [
+      's',
+      'g1',
+      'bob',
+      '2000',
+      '1000-0',
+      '2000-0',
+    ]);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    expect(arr.value.length).toBe(2);
+  });
+
+  it('removes deleted entries from PEL instead of returning them', () => {
+    const ctx = setupClaimScenario();
+    // Delete entry 2000-0
+    execXdel(ctx, ['s', '2000-0']);
+    ctx.setTime(20000);
+    const reply = execXclaim(ctx, [
+      's',
+      'g1',
+      'bob',
+      '0',
+      '1000-0',
+      '2000-0',
+      '3000-0',
+    ]);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    // Should return 2 entries (1000-0, 3000-0), not 3
+    // Deleted entry 2000-0 is removed from PEL silently
+    expect(arr.value.length).toBe(2);
+    // Verify 2000-0 was removed from PEL
+    const s = getStreamHelper(ctx.db, 's').stream as RedisStream;
+    const group = getGroup(s, 'g1');
+    expect(group.pel.has('2000-0')).toBe(false);
+  });
 });
 
 // ─── XAUTOCLAIM ──────────────────────────────────────────────────────
@@ -2860,6 +2926,51 @@ describe('XAUTOCLAIM', () => {
     const reply = execXautoclaim(ctx, ['s', 'nogroup', 'bob', '0', '0-0']);
     expect(reply.kind).toBe('error');
   });
+
+  it('deleted entries consume COUNT budget and cursor advances correctly', () => {
+    const ctx = setupClaimScenario();
+    // Delete entries 1000-0 and 2000-0
+    execXdel(ctx, ['s', '1000-0']);
+    execXdel(ctx, ['s', '2000-0']);
+    ctx.setTime(20000);
+    // COUNT=2 — should process 2 entries (both deleted), cursor advances past them
+    const reply = execXautoclaim(ctx, [
+      's',
+      'g1',
+      'bob',
+      '5000',
+      '0-0',
+      'COUNT',
+      '2',
+    ]);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    const cursor = arr.value[0] as { kind: 'bulk'; value: string };
+    const claimed = arr.value[1] as { kind: 'array'; value: Reply[] };
+    const deletedIds = arr.value[2] as { kind: 'array'; value: Reply[] };
+    // 0 claimed, 2 deleted
+    expect(claimed.value.length).toBe(0);
+    expect(deletedIds.value.length).toBe(2);
+    // Cursor should point to next entry (3000-0), not 0-0
+    expect(cursor.value).toBe('3000-0');
+  });
+
+  it('cursor points to next entry after last scanned, not last claimed', () => {
+    const ctx = setupClaimScenario();
+    ctx.setTime(20000);
+    // COUNT=3 claims 3 entries (1000-0, 2000-0, 3000-0), cursor -> 4000-0
+    const reply = execXautoclaim(ctx, [
+      's',
+      'g1',
+      'bob',
+      '5000',
+      '0-0',
+      'COUNT',
+      '3',
+    ]);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    const cursor = arr.value[0] as { kind: 'bulk'; value: string };
+    expect(cursor.value).toBe('4000-0');
+  });
 });
 
 // ─── XINFO ───────────────────────────────────────────────────────────
@@ -2951,6 +3062,35 @@ describe('XINFO STREAM', () => {
     const groups = findField(arr.value, 'groups');
     const groupsArr = groups as { kind: 'array'; value: Reply[] };
     expect(groupsArr.value.length).toBe(1);
+  });
+
+  it('recorded-first-entry-id tracks first entry and updates after trim', () => {
+    const ctx = createDb(1000);
+    for (let i = 1; i <= 5; i++) {
+      ctx.setTime(i * 1000);
+      stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', String(i)]);
+    }
+    // Before trim, recorded-first-entry-id should be the first entry
+    let reply = execXinfo(ctx, ['STREAM', 's']);
+    let arr = reply as { kind: 'array'; value: Reply[] };
+    let recordedFirst = findField(arr.value, 'recorded-first-entry-id');
+    expect(recordedFirst).toEqual({ kind: 'bulk', value: '1000-0' });
+
+    // Trim by MAXLEN to keep 3 entries (removes 1000-0, 2000-0)
+    const xtrimSpec = stream.specs.find((s) => s.name === 'xtrim');
+    if (xtrimSpec) {
+      xtrimSpec.handler({ db: ctx.db, engine: ctx.engine }, [
+        's',
+        'MAXLEN',
+        '3',
+      ]);
+    }
+
+    // After trim, recorded-first-entry-id should be updated to 3000-0
+    reply = execXinfo(ctx, ['STREAM', 's']);
+    arr = reply as { kind: 'array'; value: Reply[] };
+    recordedFirst = findField(arr.value, 'recorded-first-entry-id');
+    expect(recordedFirst).toEqual({ kind: 'bulk', value: '3000-0' });
   });
 
   it('FULL COUNT limits entries', () => {
@@ -3067,5 +3207,44 @@ describe('XINFO CONSUMERS', () => {
     const ctx = createDb(1000);
     const reply = execXinfo(ctx, ['UNKNOWN', 's']);
     expect(reply.kind).toBe('error');
+  });
+
+  it('idle and inactive differ after XREADGROUP with no new entries', () => {
+    const ctx = createDb(1000);
+    stream.xadd(ctx.db, ctx.getTime(), ['s', '*', 'k', '1']);
+    execXgroup(ctx, ['CREATE', 's', 'g1', '0']);
+    // Alice reads at time 2000 — entries delivered, activeTime=2000
+    ctx.setTime(2000);
+    execXreadgroup(ctx, ['GROUP', 'g1', 'alice', 'STREAMS', 's', '>']);
+    // Alice reads again at time 5000 with no new entries — seenTime=5000, activeTime=2000
+    ctx.setTime(5000);
+    execXreadgroup(ctx, ['GROUP', 'g1', 'alice', 'STREAMS', 's', '>']);
+    // Check at time 6000
+    ctx.setTime(6000);
+    const reply = execXinfo(ctx, ['CONSUMERS', 's', 'g1']);
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    const alice = arr.value[0] as { kind: 'array'; value: Reply[] };
+    const idle = findField(alice.value, 'idle') as {
+      kind: 'integer';
+      value: number;
+    };
+    const inactive = findField(alice.value, 'inactive') as {
+      kind: 'integer';
+      value: number;
+    };
+    // idle = 6000 - 5000 = 1000 (last interaction)
+    expect(idle.value).toBe(1000);
+    // inactive = 6000 - 2000 = 4000 (last successful delivery)
+    expect(inactive.value).toBe(4000);
+  });
+});
+
+describe('XINFO HELP', () => {
+  it('returns help text', () => {
+    const ctx = createDb(1000);
+    const reply = execXinfo(ctx, ['HELP']);
+    expect(reply.kind).toBe('array');
+    const arr = reply as { kind: 'array'; value: Reply[] };
+    expect(arr.value.length).toBeGreaterThan(0);
   });
 });
