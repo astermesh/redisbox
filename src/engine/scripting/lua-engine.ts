@@ -33,6 +33,13 @@ export interface LuaEngine {
   execute(script: string): Promise<LuaExecResult>;
 
   /**
+   * Execute a Lua script string synchronously and return its results.
+   * Throws LuaScriptError on Lua runtime or syntax errors.
+   * Only available after the engine has been fully initialized.
+   */
+  executeSync(script: string): LuaExecResult;
+
+  /**
    * Set a global variable in the Lua VM.
    */
   setGlobal(name: string, value: unknown): void;

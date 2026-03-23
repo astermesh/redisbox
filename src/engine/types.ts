@@ -168,4 +168,5 @@ export interface CommandContext {
   acl?: import('./acl-store.ts').AclStore;
   eviction?: import('./eviction-manager.ts').EvictionManager;
   ibi?: import('./hooks/ibi.ts').IbiHookManager;
+  scriptManager?: import('./scripting/script-manager.ts').ScriptManager;
 }
