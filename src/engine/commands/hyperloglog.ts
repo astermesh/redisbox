@@ -11,6 +11,7 @@ import {
   WRONGTYPE_ERR,
 } from '../types.ts';
 import type { CommandSpec } from '../command-table.ts';
+import { notify, EVENT_FLAGS } from '../notify.ts';
 
 // --- Constants ---
 
@@ -923,7 +924,13 @@ export function pfselftest(ctx: CommandContext): Reply {
 export const specs: CommandSpec[] = [
   {
     name: 'pfadd',
-    handler: (ctx, args) => pfadd(ctx, args),
+    handler: (ctx, args) => {
+      const reply = pfadd(ctx, args);
+      if (reply.kind === 'integer') {
+        notify(ctx, EVENT_FLAGS.STRING, 'pfadd', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -2,
     flags: ['write', 'denyoom', 'fast'],
     firstKey: 1,
@@ -943,7 +950,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'pfmerge',
-    handler: (ctx, args) => pfmerge(ctx, args),
+    handler: (ctx, args) => {
+      const reply = pfmerge(ctx, args);
+      if (reply === OK) {
+        notify(ctx, EVENT_FLAGS.STRING, 'pfmerge', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -2,
     flags: ['write', 'denyoom'],
     firstKey: 1,

@@ -1,5 +1,7 @@
 # S19: Keyspace Notifications
 
+**Status:** done
+
 Implement keyspace event notifications — pub/sub events emitted on key mutations. Controlled by notify-keyspace-events configuration. Piggybacks on the Pub/Sub system.
 
 ## Tasks

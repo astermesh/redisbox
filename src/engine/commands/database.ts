@@ -139,7 +139,7 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'swapdb',
-    handler: (ctx, args) => swapdb(ctx.engine, args),
+    handler: (_ctx, args) => swapdb(_ctx.engine, args),
     arity: 3,
     flags: ['write', 'fast'],
     firstKey: 0,

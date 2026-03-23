@@ -9,6 +9,7 @@ import {
   NIL_ARRAY,
   WRONGTYPE_ERR,
   ZERO,
+  ONE,
   OK,
   SYNTAX_ERR,
 } from '../types.ts';
@@ -35,6 +36,7 @@ function safeParseId(id: string): StreamId {
 }
 import type { CommandSpec } from '../command-table.ts';
 import type { CommandContext } from '../types.ts';
+import { notify, EVENT_FLAGS } from '../notify.ts';
 
 const INVALID_STREAM_ID_ERR = errorReply(
   'ERR',
@@ -767,16 +769,46 @@ function xgroup(ctx: CommandContext, args: string[]): Reply {
   const subArgs = args.slice(1);
 
   switch (subcommand) {
-    case 'CREATE':
-      return xgroupCreate(ctx.db, subArgs);
-    case 'SETID':
-      return xgroupSetid(ctx.db, subArgs);
-    case 'DESTROY':
-      return xgroupDestroy(ctx.db, subArgs);
-    case 'DELCONSUMER':
-      return xgroupDelconsumer(ctx.db, subArgs);
-    case 'CREATECONSUMER':
-      return xgroupCreateconsumer(ctx.db, subArgs);
+    case 'CREATE': {
+      const reply = xgroupCreate(ctx.db, subArgs);
+      if (reply === OK) {
+        notify(ctx, EVENT_FLAGS.STREAM, 'xgroup-create', subArgs[0] ?? '');
+      }
+      return reply;
+    }
+    case 'SETID': {
+      const reply = xgroupSetid(ctx.db, subArgs);
+      if (reply === OK) {
+        notify(ctx, EVENT_FLAGS.STREAM, 'xgroup-setid', subArgs[0] ?? '');
+      }
+      return reply;
+    }
+    case 'DESTROY': {
+      const reply = xgroupDestroy(ctx.db, subArgs);
+      if (reply.kind === 'integer' && (reply.value as number) === 1) {
+        notify(ctx, EVENT_FLAGS.STREAM, 'xgroup-destroy', subArgs[0] ?? '');
+      }
+      return reply;
+    }
+    case 'DELCONSUMER': {
+      const reply = xgroupDelconsumer(ctx.db, subArgs);
+      if (reply.kind === 'integer') {
+        notify(ctx, EVENT_FLAGS.STREAM, 'xgroup-delconsumer', subArgs[0] ?? '');
+      }
+      return reply;
+    }
+    case 'CREATECONSUMER': {
+      const reply = xgroupCreateconsumer(ctx.db, subArgs);
+      if (reply.kind === 'integer') {
+        notify(
+          ctx,
+          EVENT_FLAGS.STREAM,
+          'xgroup-createconsumer',
+          subArgs[0] ?? ''
+        );
+      }
+      return reply;
+    }
     default:
       return errorReply(
         'ERR',
@@ -2043,7 +2075,30 @@ function xinfo(ctx: CommandContext, args: string[]): Reply {
 export const specs: CommandSpec[] = [
   {
     name: 'xadd',
-    handler: (ctx, args) => xadd(ctx.db, ctx.engine.clock(), args),
+    handler: (ctx, args) => {
+      const key = args[0] ?? '';
+      // Capture entry count before to detect trimming
+      const hasTrim = args.some((a) => {
+        const u = a.toUpperCase();
+        return u === 'MAXLEN' || u === 'MINID';
+      });
+      const pre = getStream(ctx.db, key);
+      const lengthBefore = pre.stream ? pre.stream.length : 0;
+      const reply = xadd(ctx.db, ctx.engine.clock(), args);
+      if (reply.kind === 'bulk' && reply.value !== null) {
+        notify(ctx, EVENT_FLAGS.STREAM, 'xadd', key);
+        // Emit secondary xtrim if trimming actually removed entries
+        if (hasTrim) {
+          const post = getStream(ctx.db, key);
+          const lengthAfter = post.stream ? post.stream.length : 0;
+          // After adding 1 entry, if length didn't increase by 1, trimming removed entries
+          if (lengthAfter < lengthBefore + 1) {
+            notify(ctx, EVENT_FLAGS.STREAM, 'xtrim', key);
+          }
+        }
+      }
+      return reply;
+    },
     arity: -5,
     flags: ['write', 'denyoom', 'fast'],
     firstKey: 1,
@@ -2103,7 +2158,13 @@ export const specs: CommandSpec[] = [
     subcommands: [
       {
         name: 'xgroup|create',
-        handler: (ctx, args) => xgroupCreate(ctx.db, args),
+        handler: (ctx, args) => {
+          const reply = xgroupCreate(ctx.db, args);
+          if (reply === OK) {
+            notify(ctx, EVENT_FLAGS.STREAM, 'xgroup-create', args[0] ?? '');
+          }
+          return reply;
+        },
         arity: -5,
         flags: ['write'],
         firstKey: 2,
@@ -2113,7 +2174,13 @@ export const specs: CommandSpec[] = [
       },
       {
         name: 'xgroup|setid',
-        handler: (ctx, args) => xgroupSetid(ctx.db, args),
+        handler: (ctx, args) => {
+          const reply = xgroupSetid(ctx.db, args);
+          if (reply === OK) {
+            notify(ctx, EVENT_FLAGS.STREAM, 'xgroup-setid', args[0] ?? '');
+          }
+          return reply;
+        },
         arity: -5,
         flags: ['write'],
         firstKey: 2,
@@ -2123,7 +2190,13 @@ export const specs: CommandSpec[] = [
       },
       {
         name: 'xgroup|destroy',
-        handler: (ctx, args) => xgroupDestroy(ctx.db, args),
+        handler: (ctx, args) => {
+          const reply = xgroupDestroy(ctx.db, args);
+          if (reply === ONE) {
+            notify(ctx, EVENT_FLAGS.STREAM, 'xgroup-destroy', args[0] ?? '');
+          }
+          return reply;
+        },
         arity: 4,
         flags: ['write'],
         firstKey: 2,
@@ -2133,7 +2206,18 @@ export const specs: CommandSpec[] = [
       },
       {
         name: 'xgroup|delconsumer',
-        handler: (ctx, args) => xgroupDelconsumer(ctx.db, args),
+        handler: (ctx, args) => {
+          const reply = xgroupDelconsumer(ctx.db, args);
+          if (reply.kind === 'integer') {
+            notify(
+              ctx,
+              EVENT_FLAGS.STREAM,
+              'xgroup-delconsumer',
+              args[0] ?? ''
+            );
+          }
+          return reply;
+        },
         arity: 5,
         flags: ['write'],
         firstKey: 2,
@@ -2143,7 +2227,18 @@ export const specs: CommandSpec[] = [
       },
       {
         name: 'xgroup|createconsumer',
-        handler: (ctx, args) => xgroupCreateconsumer(ctx.db, args),
+        handler: (ctx, args) => {
+          const reply = xgroupCreateconsumer(ctx.db, args);
+          if (reply.kind === 'integer') {
+            notify(
+              ctx,
+              EVENT_FLAGS.STREAM,
+              'xgroup-createconsumer',
+              args[0] ?? ''
+            );
+          }
+          return reply;
+        },
         arity: 5,
         flags: ['write'],
         firstKey: 2,
@@ -2185,7 +2280,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'xdel',
-    handler: (ctx, args) => xdel(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = xdel(ctx.db, args);
+      if (reply.kind === 'integer' && (reply.value as number) > 0) {
+        notify(ctx, EVENT_FLAGS.STREAM, 'xdel', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'fast'],
     firstKey: 1,
@@ -2195,7 +2296,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'xtrim',
-    handler: (ctx, args) => xtrim(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = xtrim(ctx.db, args);
+      if (reply.kind === 'integer' && (reply.value as number) > 0) {
+        notify(ctx, EVENT_FLAGS.STREAM, 'xtrim', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -4,
     flags: ['write'],
     firstKey: 1,
@@ -2205,7 +2312,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'xsetid',
-    handler: (ctx, args) => xsetid(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = xsetid(ctx.db, args);
+      if (reply === OK) {
+        notify(ctx, EVENT_FLAGS.STREAM, 'xsetid', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write'],
     firstKey: 1,

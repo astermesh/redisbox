@@ -1,5 +1,7 @@
 # T03: Event Integration
 
+**Status:** done
+
 Wire notification calls into all type engines and the expiration/eviction managers. Event names must match Redis: set, del, expire, rename_from, rename_to, lpush, rpush, hset, sadd, zadd, xadd, expired, evicted, etc.
 
 ## Acceptance Criteria

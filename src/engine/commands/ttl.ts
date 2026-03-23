@@ -8,6 +8,7 @@ import {
   NOT_INTEGER_ERR,
 } from '../types.ts';
 import type { CommandSpec } from '../command-table.ts';
+import { notify, EVENT_FLAGS } from '../notify.ts';
 
 const NO_TTL = integerReply(-1);
 const NO_KEY = integerReply(-2);
@@ -239,7 +240,13 @@ export function pexpiretime(db: Database, args: string[]): Reply {
 export const specs: CommandSpec[] = [
   {
     name: 'expire',
-    handler: (ctx, args) => expire(ctx.db, ctx.engine.clock, args),
+    handler: (ctx, args) => {
+      const reply = expire(ctx.db, ctx.engine.clock, args);
+      if (reply === ONE) {
+        notify(ctx, EVENT_FLAGS.GENERIC, 'expire', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'fast'],
     firstKey: 1,
@@ -249,7 +256,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'pexpire',
-    handler: (ctx, args) => pexpire(ctx.db, ctx.engine.clock, args),
+    handler: (ctx, args) => {
+      const reply = pexpire(ctx.db, ctx.engine.clock, args);
+      if (reply === ONE) {
+        notify(ctx, EVENT_FLAGS.GENERIC, 'pexpire', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'fast'],
     firstKey: 1,
@@ -259,7 +272,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'expireat',
-    handler: (ctx, args) => expireat(ctx.db, ctx.engine.clock, args),
+    handler: (ctx, args) => {
+      const reply = expireat(ctx.db, ctx.engine.clock, args);
+      if (reply === ONE) {
+        notify(ctx, EVENT_FLAGS.GENERIC, 'expire', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'fast'],
     firstKey: 1,
@@ -269,7 +288,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'pexpireat',
-    handler: (ctx, args) => pexpireat(ctx.db, ctx.engine.clock, args),
+    handler: (ctx, args) => {
+      const reply = pexpireat(ctx.db, ctx.engine.clock, args);
+      if (reply === ONE) {
+        notify(ctx, EVENT_FLAGS.GENERIC, 'pexpire', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'fast'],
     firstKey: 1,

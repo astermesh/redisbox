@@ -20,6 +20,7 @@ import { parseFloat64, parseInteger, formatFloat } from './incr.ts';
 import { matchGlob } from '../glob-pattern.ts';
 import { partialShuffle, strByteLength } from '../utils.ts';
 import type { CommandSpec } from '../command-table.ts';
+import { notify, EVENT_FLAGS } from '../notify.ts';
 
 // Default thresholds — match Redis defaults.
 // TODO: read from ConfigStore when config is wired into CommandContext.
@@ -2067,7 +2068,16 @@ export function zscan(db: Database, args: string[]): Reply {
 export const specs: CommandSpec[] = [
   {
     name: 'zadd',
-    handler: (ctx, args) => zadd(ctx.db, args, ctx.engine.rng),
+    handler: (ctx, args) => {
+      const reply = zadd(ctx.db, args, ctx.engine.rng);
+      if (
+        reply.kind === 'integer' ||
+        (reply.kind === 'bulk' && reply.value !== null)
+      ) {
+        notify(ctx, EVENT_FLAGS.SORTEDSET, 'zadd', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -4,
     flags: ['write', 'denyoom', 'fast'],
     firstKey: 1,
@@ -2077,7 +2087,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'zrem',
-    handler: (ctx, args) => zrem(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = zrem(ctx.db, args);
+      if (reply.kind === 'integer' && (reply.value as number) > 0) {
+        notify(ctx, EVENT_FLAGS.SORTEDSET, 'zrem', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'fast'],
     firstKey: 1,
@@ -2087,7 +2103,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'zincrby',
-    handler: (ctx, args) => zincrby(ctx.db, args, ctx.engine.rng),
+    handler: (ctx, args) => {
+      const reply = zincrby(ctx.db, args, ctx.engine.rng);
+      if (reply.kind === 'bulk' && reply.value !== null) {
+        notify(ctx, EVENT_FLAGS.SORTEDSET, 'zincrby', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: 4,
     flags: ['write', 'denyoom', 'fast'],
     firstKey: 1,
@@ -2217,7 +2239,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'zrangestore',
-    handler: (ctx, args) => zrangestore(ctx.db, args, ctx.engine.rng),
+    handler: (ctx, args) => {
+      const reply = zrangestore(ctx.db, args, ctx.engine.rng);
+      if (reply.kind === 'integer') {
+        notify(ctx, EVENT_FLAGS.SORTEDSET, 'zrangestore', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -5,
     flags: ['write', 'denyoom'],
     firstKey: 1,
@@ -2227,7 +2255,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'zpopmin',
-    handler: (ctx, args) => zpopmin(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = zpopmin(ctx.db, args);
+      if (reply !== EMPTY_ARRAY && reply.kind === 'array') {
+        notify(ctx, EVENT_FLAGS.SORTEDSET, 'zpopmin', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -2,
     flags: ['write', 'fast'],
     firstKey: 1,
@@ -2237,7 +2271,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'zpopmax',
-    handler: (ctx, args) => zpopmax(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = zpopmax(ctx.db, args);
+      if (reply !== EMPTY_ARRAY && reply.kind === 'array') {
+        notify(ctx, EVENT_FLAGS.SORTEDSET, 'zpopmax', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -2,
     flags: ['write', 'fast'],
     firstKey: 1,
@@ -2247,7 +2287,24 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'zmpop',
-    handler: (ctx, args) => zmpop(ctx.db, args, ctx.engine.rng),
+    handler: (ctx, args) => {
+      const reply = zmpop(ctx.db, args, ctx.engine.rng);
+      if (reply.kind === 'array' && reply !== NIL_ARRAY) {
+        const parts = reply.value as Reply[];
+        if (parts[0] && parts[0].kind === 'bulk') {
+          const key = parts[0].value as string;
+          const numkeys = parseInt(args[0] ?? '0', 10);
+          const dirArg = (args[1 + numkeys] ?? '').toUpperCase();
+          notify(
+            ctx,
+            EVENT_FLAGS.SORTEDSET,
+            dirArg === 'MIN' ? 'zpopmin' : 'zpopmax',
+            key
+          );
+        }
+      }
+      return reply;
+    },
     arity: -4,
     flags: ['write', 'movablekeys'],
     firstKey: 0,
@@ -2297,7 +2354,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'zunionstore',
-    handler: (ctx, args) => zunionstore(ctx.db, args, ctx.engine.rng),
+    handler: (ctx, args) => {
+      const reply = zunionstore(ctx.db, args, ctx.engine.rng);
+      if (reply.kind === 'integer') {
+        notify(ctx, EVENT_FLAGS.SORTEDSET, 'zunionstore', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -4,
     flags: ['write', 'denyoom'],
     firstKey: 1,
@@ -2307,7 +2370,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'zinterstore',
-    handler: (ctx, args) => zinterstore(ctx.db, args, ctx.engine.rng),
+    handler: (ctx, args) => {
+      const reply = zinterstore(ctx.db, args, ctx.engine.rng);
+      if (reply.kind === 'integer') {
+        notify(ctx, EVENT_FLAGS.SORTEDSET, 'zinterstore', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -4,
     flags: ['write', 'denyoom'],
     firstKey: 1,
@@ -2317,7 +2386,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'zdiffstore',
-    handler: (ctx, args) => zdiffstore(ctx.db, args, ctx.engine.rng),
+    handler: (ctx, args) => {
+      const reply = zdiffstore(ctx.db, args, ctx.engine.rng);
+      if (reply.kind === 'integer') {
+        notify(ctx, EVENT_FLAGS.SORTEDSET, 'zdiffstore', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -4,
     flags: ['write', 'denyoom'],
     firstKey: 1,

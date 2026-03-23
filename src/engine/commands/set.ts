@@ -23,6 +23,7 @@ import {
   partialShuffle,
 } from '../utils.ts';
 import type { CommandSpec } from '../command-table.ts';
+import { notify, EVENT_FLAGS } from '../notify.ts';
 
 // Default thresholds — match Redis defaults.
 // TODO: read from ConfigStore when config is wired into CommandContext.
@@ -746,7 +747,13 @@ export function sintercard(db: Database, args: string[]): Reply {
 export const specs: CommandSpec[] = [
   {
     name: 'sadd',
-    handler: (ctx, args) => sadd(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = sadd(ctx.db, args);
+      if (reply.kind === 'integer' && (reply.value as number) > 0) {
+        notify(ctx, EVENT_FLAGS.SET, 'sadd', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'denyoom', 'fast'],
     firstKey: 1,
@@ -756,7 +763,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'srem',
-    handler: (ctx, args) => srem(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = srem(ctx.db, args);
+      if (reply.kind === 'integer' && (reply.value as number) > 0) {
+        notify(ctx, EVENT_FLAGS.SET, 'srem', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'fast'],
     firstKey: 1,
@@ -806,7 +819,14 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'smove',
-    handler: (ctx, args) => smove(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = smove(ctx.db, args);
+      if (reply === ONE) {
+        notify(ctx, EVENT_FLAGS.SET, 'srem', args[0] ?? '');
+        notify(ctx, EVENT_FLAGS.SET, 'sadd', args[1] ?? '');
+      }
+      return reply;
+    },
     arity: 4,
     flags: ['write', 'fast'],
     firstKey: 1,
@@ -826,7 +846,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'spop',
-    handler: (ctx, args) => spop(ctx.db, args, ctx.engine.rng),
+    handler: (ctx, args) => {
+      const reply = spop(ctx.db, args, ctx.engine.rng);
+      if (reply !== NIL && reply.kind !== 'error') {
+        notify(ctx, EVENT_FLAGS.SET, 'spop', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -2,
     flags: ['write', 'fast'],
     firstKey: 1,
@@ -876,7 +902,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'sunionstore',
-    handler: (ctx, args) => sunionstore(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = sunionstore(ctx.db, args);
+      if (reply.kind === 'integer') {
+        notify(ctx, EVENT_FLAGS.SET, 'sunionstore', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'denyoom'],
     firstKey: 1,
@@ -886,7 +918,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'sinterstore',
-    handler: (ctx, args) => sinterstore(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = sinterstore(ctx.db, args);
+      if (reply.kind === 'integer') {
+        notify(ctx, EVENT_FLAGS.SET, 'sinterstore', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'denyoom'],
     firstKey: 1,
@@ -896,7 +934,13 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'sdiffstore',
-    handler: (ctx, args) => sdiffstore(ctx.db, args),
+    handler: (ctx, args) => {
+      const reply = sdiffstore(ctx.db, args);
+      if (reply.kind === 'integer') {
+        notify(ctx, EVENT_FLAGS.SET, 'sdiffstore', args[0] ?? '');
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'denyoom'],
     firstKey: 1,

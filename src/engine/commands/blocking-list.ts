@@ -22,6 +22,7 @@ import {
 } from '../types.ts';
 import type { CommandSpec } from '../command-table.ts';
 import { lmove } from './list.ts';
+import { notify, EVENT_FLAGS } from '../notify.ts';
 
 /**
  * Parse a blocking timeout (seconds, may be float).
@@ -265,7 +266,16 @@ export function brpoplpush(ctx: CommandContext, args: string[]): Reply {
 export const specs: CommandSpec[] = [
   {
     name: 'blpop',
-    handler: (ctx, args) => blpop(ctx, args),
+    handler: (ctx, args) => {
+      const reply = blpop(ctx, args);
+      if (reply.kind === 'array' && reply !== NIL_ARRAY) {
+        const parts = reply.value as Reply[];
+        if (parts[0] && parts[0].kind === 'bulk') {
+          notify(ctx, EVENT_FLAGS.LIST, 'lpop', parts[0].value as string);
+        }
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'denyoom', 'blocking'],
     firstKey: 1,
@@ -275,7 +285,16 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'brpop',
-    handler: (ctx, args) => brpop(ctx, args),
+    handler: (ctx, args) => {
+      const reply = brpop(ctx, args);
+      if (reply.kind === 'array' && reply !== NIL_ARRAY) {
+        const parts = reply.value as Reply[];
+        if (parts[0] && parts[0].kind === 'bulk') {
+          notify(ctx, EVENT_FLAGS.LIST, 'rpop', parts[0].value as string);
+        }
+      }
+      return reply;
+    },
     arity: -3,
     flags: ['write', 'denyoom', 'blocking'],
     firstKey: 1,
@@ -285,7 +304,28 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'blmove',
-    handler: (ctx, args) => blmove(ctx, args),
+    handler: (ctx, args) => {
+      const reply = blmove(ctx, args);
+      if (reply.kind === 'bulk' && reply.value !== null) {
+        const source = args[0] ?? '';
+        const destination = args[1] ?? '';
+        const wherefrom = (args[2] ?? '').toUpperCase();
+        const whereto = (args[3] ?? '').toUpperCase();
+        notify(
+          ctx,
+          EVENT_FLAGS.LIST,
+          wherefrom === 'LEFT' ? 'lpop' : 'rpop',
+          source
+        );
+        notify(
+          ctx,
+          EVENT_FLAGS.LIST,
+          whereto === 'LEFT' ? 'lpush' : 'rpush',
+          destination
+        );
+      }
+      return reply;
+    },
     arity: 6,
     flags: ['write', 'denyoom', 'blocking'],
     firstKey: 1,
@@ -295,7 +335,24 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'blmpop',
-    handler: (ctx, args) => blmpop(ctx, args),
+    handler: (ctx, args) => {
+      const reply = blmpop(ctx, args);
+      if (reply.kind === 'array' && reply !== NIL_ARRAY) {
+        const parts = reply.value as Reply[];
+        if (parts[0] && parts[0].kind === 'bulk') {
+          const key = parts[0].value as string;
+          const numkeys = parseInt(args[1] ?? '0', 10);
+          const dirArg = (args[2 + numkeys] ?? '').toUpperCase();
+          notify(
+            ctx,
+            EVENT_FLAGS.LIST,
+            dirArg === 'LEFT' ? 'lpop' : 'rpop',
+            key
+          );
+        }
+      }
+      return reply;
+    },
     arity: -5,
     flags: ['write', 'denyoom', 'blocking', 'movablekeys'],
     firstKey: 0,
@@ -305,7 +362,14 @@ export const specs: CommandSpec[] = [
   },
   {
     name: 'brpoplpush',
-    handler: (ctx, args) => brpoplpush(ctx, args),
+    handler: (ctx, args) => {
+      const reply = brpoplpush(ctx, args);
+      if (reply.kind === 'bulk' && reply.value !== null) {
+        notify(ctx, EVENT_FLAGS.LIST, 'rpop', args[0] ?? '');
+        notify(ctx, EVENT_FLAGS.LIST, 'lpush', args[1] ?? '');
+      }
+      return reply;
+    },
     arity: 4,
     flags: ['write', 'denyoom', 'blocking'],
     firstKey: 1,
