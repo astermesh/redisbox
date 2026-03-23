@@ -34,7 +34,7 @@ export const EVENT_FLAGS = {
   NEW: 1 << 13, // n
 } as const;
 
-/** All type flags combined — the A alias. Includes MODULE, but NOT K, E, m, or n. */
+/** All type flags combined — the A alias (g$lshzxet). Does NOT include K, E, m, d, or n. */
 const ALL_TYPE_FLAGS =
   EVENT_FLAGS.GENERIC |
   EVENT_FLAGS.STRING |
@@ -44,8 +44,7 @@ const ALL_TYPE_FLAGS =
   EVENT_FLAGS.SORTEDSET |
   EVENT_FLAGS.EXPIRED |
   EVENT_FLAGS.EVICTED |
-  EVENT_FLAGS.STREAM |
-  EVENT_FLAGS.MODULE;
+  EVENT_FLAGS.STREAM;
 
 // Character → flag mapping
 const CHAR_TO_FLAG: Record<string, number> = {
@@ -66,10 +65,11 @@ const CHAR_TO_FLAG: Record<string, number> = {
 };
 
 /**
- * Ordered flag→char pairs for serialization.
- * Order matches Redis `keyspaceEventsFlagsToString()`.
+ * Type flags emitted in the else-branch (when not using A).
+ * Includes d (module) and n (new) — these are dropped when A is used,
+ * matching Redis's keyspaceEventsFlagsToString() in notify.c.
  */
-const FLAG_TO_CHAR: [number, string][] = [
+const TYPE_FLAG_CHARS: [number, string][] = [
   [EVENT_FLAGS.GENERIC, 'g'],
   [EVENT_FLAGS.STRING, '$'],
   [EVENT_FLAGS.LIST, 'l'],
@@ -81,6 +81,12 @@ const FLAG_TO_CHAR: [number, string][] = [
   [EVENT_FLAGS.STREAM, 't'],
   [EVENT_FLAGS.MODULE, 'd'],
   [EVENT_FLAGS.NEW, 'n'],
+];
+
+/**
+ * Channel/delivery flags — always emitted regardless of A.
+ */
+const CHANNEL_FLAG_CHARS: [number, string][] = [
   [EVENT_FLAGS.KEYSPACE, 'K'],
   [EVENT_FLAGS.KEYEVENT, 'E'],
   [EVENT_FLAGS.KEY_MISS, 'm'],
@@ -114,25 +120,30 @@ export function parseKeyspaceEventFlags(config: string): number {
 /**
  * Convert a bitmask back to a canonical config string.
  * Mirrors `keyspaceEventsFlagsToString()` from Redis `notify.c`.
- * Collapses all type flags to 'A' when appropriate.
+ *
+ * Structure matches Redis exactly:
+ * - If all A-covered type flags are set → emit 'A' (d and n are dropped)
+ * - Else → emit individual type flags including d and n
+ * - Then always → emit K, E, m
  */
 export function keyspaceEventsFlagsToString(flags: number): string {
   if (flags === 0) return '';
 
   let result = '';
 
-  // Collapse to 'A' if all type flags are set
   if ((flags & ALL_TYPE_FLAGS) === ALL_TYPE_FLAGS) {
+    // Collapse to 'A' — d (module) and n (new) are inside the else branch
+    // in Redis, so they get dropped when A is used. This matches Redis behavior.
     result += 'A';
-    // Emit remaining non-type flags
-    for (const [flag, ch] of FLAG_TO_CHAR) {
-      if (flag & ALL_TYPE_FLAGS) continue; // skip type flags — covered by A
-      if (flags & flag) result += ch;
-    }
   } else {
-    for (const [flag, ch] of FLAG_TO_CHAR) {
+    for (const [flag, ch] of TYPE_FLAG_CHARS) {
       if (flags & flag) result += ch;
     }
+  }
+
+  // K, E, m are always emitted (outside the if/else in Redis)
+  for (const [flag, ch] of CHANNEL_FLAG_CHARS) {
+    if (flags & flag) result += ch;
   }
 
   return result;
