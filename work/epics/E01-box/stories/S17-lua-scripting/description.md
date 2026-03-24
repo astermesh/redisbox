@@ -1,5 +1,7 @@
 # S17: Lua Scripting Engine
 
+**Status:** done
+
 Embed a Lua VM for EVAL/EVALSHA scripting support. Redis uses Lua 5.1 — use wasmoon-lua5.1 (primary) or fengari (fallback). Scripts run atomically and access Redis via redis.call()/redis.pcall().
 
 ## Tasks

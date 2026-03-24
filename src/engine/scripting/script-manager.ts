@@ -1,11 +1,13 @@
 /**
- * ScriptManager — manages Lua script caching and execution for EVAL/EVALSHA.
+ * ScriptManager — manages Lua script caching and execution for EVAL/EVALSHA,
+ * and Redis Functions (FUNCTION LOAD / FCALL).
  *
  * Handles:
  * - Script cache (SHA-1 → script body)
+ * - Function library registry (FUNCTION LOAD/DELETE/LIST/FLUSH)
  * - Lua VM lifecycle (async init, sync execution)
- * - KEYS/ARGV table setup per eval call
- * - Read-only mode enforcement for EVAL_RO/EVALSHA_RO
+ * - KEYS/ARGV table setup per eval/fcall call
+ * - Read-only mode enforcement for EVAL_RO/EVALSHA_RO/FCALL_RO
  *
  * Result conversion uses a Lua-side encode function that converts the script
  * return value to a tagged JS object (same format as the redis bridge), then
@@ -29,6 +31,12 @@ import {
   arrayReply,
 } from '../types.ts';
 import type { CommandTable } from '../command-table.ts';
+import {
+  FunctionRegistry,
+  type FunctionFlags,
+  type FunctionDef,
+  type Library,
+} from './function-registry.ts';
 
 // Tag constants matching the redis bridge encoding.
 const TAG_STATUS = 1;
@@ -38,12 +46,26 @@ const TAG_NIL = 4;
 const TAG_BULK = 5;
 const TAG_ARRAY = 6;
 
+/** Pending function registration collected during FUNCTION LOAD. */
+interface PendingRegistration {
+  name: string;
+  flagsStr: string;
+  description: string;
+}
+
 export class ScriptManager {
   private engine: LuaEngine | null = null;
   private readonly scriptCache = new Map<string, string>();
   private initPromise: Promise<void> | null = null;
   private currentExecutor: CommandExecutor = () =>
     errorReply('ERR', 'Lua engine not initialized');
+
+  /** Function library registry (JS-side metadata). */
+  private readonly fnRegistry = new FunctionRegistry();
+  /** Collects registrations during FUNCTION LOAD. */
+  private pendingRegistrations: PendingRegistration[] = [];
+  /** Whether we're currently inside a loadLibrary call. */
+  private isLoadingLibrary = false;
 
   /**
    * Whether the Lua engine has been initialized and is ready for sync execution.
@@ -111,6 +133,55 @@ export class ScriptManager {
           return result
         end
         return {t = T_NIL}
+      end
+    `);
+
+    // Register function infrastructure: __rb_functions table and
+    // redis.register_function. Must be before sandbox locks _G.
+    this.engine.setGlobal(
+      '__rb_register_fn',
+      (name: unknown, flagsStr: unknown, desc: unknown) => {
+        if (!this.isLoadingLibrary) {
+          throw new Error(
+            'redis.register_function can only be called during FUNCTION LOAD'
+          );
+        }
+        this.pendingRegistrations.push({
+          name: String(name),
+          flagsStr: String(flagsStr ?? ''),
+          description: String(desc ?? ''),
+        });
+      }
+    );
+
+    await this.engine.execute(`
+      __rb_functions = {}
+
+      local rb_register_fn = __rb_register_fn
+      __rb_register_fn = nil
+
+      redis.register_function = function(name_or_table, callback)
+        local name, cb, flags, desc
+        if type(name_or_table) == 'table' then
+          name = name_or_table.function_name
+          cb = name_or_table.callback
+          flags = name_or_table.flags or {}
+          desc = name_or_table.description or ''
+        else
+          name = name_or_table
+          cb = callback
+          flags = {}
+          desc = ''
+        end
+        if type(name) ~= 'string' or name == '' or not name:match('^[a-zA-Z0-9_]+$') then
+          error("Library names can only contain letters, numbers, or underscores(_) and must be at least one character long")
+        end
+        if type(cb) ~= 'function' then
+          error("Invalid function callback")
+        end
+        rawset(__rb_functions, name, cb)
+        local flags_str = table.concat(flags, ',')
+        rb_register_fn(name, flags_str, desc)
       end
     `);
 
@@ -243,6 +314,195 @@ export class ScriptManager {
     this.engine.executeSync(`${keysLua}; ${argvLua}`);
   }
 
+  // ---- Redis Functions (FUNCTION LOAD / FCALL) ----
+
+  /** Access the function registry for FUNCTION LIST/STATS queries. */
+  get registry(): FunctionRegistry {
+    return this.fnRegistry;
+  }
+
+  /**
+   * Load a library from source code containing a shebang and
+   * redis.register_function() calls.
+   */
+  loadLibrary(
+    code: string,
+    replace: boolean,
+    executor: CommandExecutor
+  ): Reply {
+    if (!this.engine || this.engine.closed) {
+      return errorReply('ERR', 'Lua engine not initialized');
+    }
+
+    // Parse shebang: #!lua name=<library_name>
+    const parsed = parseShebang(code);
+    if ('kind' in parsed) return parsed;
+    const { libName, engineName, body } = parsed;
+
+    if (engineName.toLowerCase() !== 'lua') {
+      return errorReply('ERR', `Engine '${engineName}' not found`);
+    }
+
+    // Check library name conflict
+    if (!replace && this.fnRegistry.hasLibrary(libName)) {
+      return errorReply('ERR', `Library '${libName}' already exists`);
+    }
+
+    // Execute library code in a loading context
+    const prevExecutor = this.currentExecutor;
+    this.currentExecutor = executor;
+    this.isLoadingLibrary = true;
+    this.pendingRegistrations = [];
+
+    try {
+      this.engine.executeSync(body);
+    } catch (err: unknown) {
+      this.isLoadingLibrary = false;
+      this.currentExecutor = prevExecutor;
+      const msg = err instanceof Error ? err.message : String(err);
+      return errorReply('ERR', `Error compiling function: ${msg}`);
+    }
+
+    this.isLoadingLibrary = false;
+    this.currentExecutor = prevExecutor;
+
+    if (this.pendingRegistrations.length === 0) {
+      return errorReply('ERR', 'No functions registered');
+    }
+
+    // Check for function name conflicts with other libraries
+    for (const reg of this.pendingRegistrations) {
+      const existing = this.fnRegistry.getFunction(reg.name);
+      if (existing && existing.lib.name !== libName) {
+        // Clean up Lua-side registrations
+        this.removeLuaFunctions(this.pendingRegistrations.map((r) => r.name));
+        return errorReply('ERR', `Function ${reg.name} already exists`);
+      }
+    }
+
+    // If replacing, remove old library's functions that are NOT in the new set
+    if (replace && this.fnRegistry.hasLibrary(libName)) {
+      const oldLib = this.fnRegistry.getLibrary(libName);
+      if (!oldLib) return errorReply('ERR', 'Library not found');
+      const newFuncNames = new Set(
+        this.pendingRegistrations.map((r) => r.name)
+      );
+      const toRemove = [...oldLib.functions.keys()].filter(
+        (n) => !newFuncNames.has(n)
+      );
+      this.removeLuaFunctions(toRemove);
+      this.fnRegistry.deleteLibrary(libName);
+    }
+
+    // Build library definition
+    const functions = new Map<string, FunctionDef>();
+    for (const reg of this.pendingRegistrations) {
+      functions.set(reg.name, {
+        name: reg.name,
+        flags: parseFunctionFlags(reg.flagsStr),
+        description: reg.description,
+      });
+    }
+
+    const library: Library = {
+      name: libName,
+      engine: 'LUA',
+      code,
+      functions,
+    };
+    this.fnRegistry.addLibrary(library);
+
+    return bulkReply(libName);
+  }
+
+  /**
+   * Call a registered function with KEYS and ARGV.
+   */
+  callFunction(
+    funcName: string,
+    keys: string[],
+    argv: string[],
+    readOnly: boolean,
+    commandTable: CommandTable | undefined,
+    executor: CommandExecutor
+  ): Reply {
+    if (!this.engine || this.engine.closed) {
+      return errorReply('ERR', 'Lua engine not initialized');
+    }
+
+    const entry = this.fnRegistry.getFunction(funcName);
+    if (!entry) {
+      return errorReply('ERR', 'Function not found');
+    }
+
+    // For FCALL_RO, the function must declare no-writes
+    if (readOnly && !entry.func.flags.noWrites) {
+      return errorReply(
+        'ERR',
+        'Can not execute a script with write flag using *_ro command.'
+      );
+    }
+
+    const prevExecutor = this.currentExecutor;
+    this.currentExecutor = readOnly
+      ? makeReadOnlyExecutor(executor, commandTable)
+      : executor;
+
+    try {
+      resetPrngState();
+      this.setKeysAndArgv(keys, argv);
+
+      const escapedName = luaStringLiteral(funcName);
+      const callScript = `return __rb_encode(rawget(__rb_functions, ${escapedName})(KEYS, ARGV))`;
+      const result = this.engine.executeSync(callScript);
+      const tagged = result.values.length > 0 ? result.values[0] : null;
+      return taggedToReply(tagged);
+    } catch (err: unknown) {
+      if (err instanceof LuaScriptError) {
+        return errorReply('ERR', err.message);
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      return errorReply('ERR', message);
+    } finally {
+      this.currentExecutor = prevExecutor;
+    }
+  }
+
+  /**
+   * Delete a library and its functions.
+   */
+  deleteLibrary(name: string): Reply {
+    const lib = this.fnRegistry.getLibrary(name);
+    if (!lib) {
+      return errorReply('ERR', 'Library not found');
+    }
+    this.removeLuaFunctions([...lib.functions.keys()]);
+    this.fnRegistry.deleteLibrary(name);
+    return statusReply('OK');
+  }
+
+  /**
+   * Flush all function libraries.
+   */
+  flushFunctions(): void {
+    if (this.engine && !this.engine.closed) {
+      // Clear all Lua-side function callbacks
+      this.engine.executeSync(
+        'for k in pairs(__rb_functions) do rawset(__rb_functions, k, nil) end'
+      );
+    }
+    this.fnRegistry.flush();
+  }
+
+  /** Remove function callbacks from the Lua VM. */
+  private removeLuaFunctions(names: string[]): void {
+    if (!this.engine || this.engine.closed || names.length === 0) return;
+    const stmts = names
+      .map((n) => `rawset(__rb_functions, ${luaStringLiteral(n)}, nil)`)
+      .join('; ');
+    this.engine.executeSync(stmts);
+  }
+
   /**
    * Close the Lua engine and release resources.
    */
@@ -353,4 +613,72 @@ function luaStringLiteral(s: string): string {
   }
   result += '"';
   return result;
+}
+
+/**
+ * Parse the shebang line from library code.
+ * Format: #!<engine> name=<library_name>
+ * Returns the library name, engine name, and body (code without shebang).
+ */
+function parseShebang(
+  code: string
+): { libName: string; engineName: string; body: string } | Reply {
+  const newlineIdx = code.indexOf('\n');
+  const firstLine = newlineIdx === -1 ? code : code.slice(0, newlineIdx);
+  const body = newlineIdx === -1 ? '' : code.slice(newlineIdx + 1);
+
+  if (!firstLine.startsWith('#!')) {
+    return errorReply('ERR', 'Missing library metadata');
+  }
+
+  const shebangContent = firstLine.slice(2).trim();
+  const parts = shebangContent.split(/\s+/);
+  const engineName = parts[0] ?? '';
+
+  if (!engineName) {
+    return errorReply('ERR', 'Missing engine name in shebang');
+  }
+
+  let libName = '';
+  for (let i = 1; i < parts.length; i++) {
+    const part = parts[i] ?? '';
+    if (part.startsWith('name=')) {
+      libName = part.slice(5);
+      break;
+    }
+  }
+
+  if (!libName) {
+    return errorReply('ERR', 'Library name was not given');
+  }
+
+  if (!/^[a-zA-Z0-9_]+$/.test(libName)) {
+    return errorReply(
+      'ERR',
+      'Library names can only contain letters, numbers, or underscores(_) and must be at least one character long'
+    );
+  }
+
+  return { libName, engineName, body };
+}
+
+/**
+ * Parse comma-separated function flag string into FunctionFlags.
+ */
+function parseFunctionFlags(flagsStr: string): FunctionFlags {
+  const flags: FunctionFlags = {
+    noWrites: false,
+    allowOom: false,
+    allowStale: false,
+    noCluster: false,
+  };
+  if (!flagsStr) return flags;
+  for (const flag of flagsStr.split(',')) {
+    const trimmed = flag.trim();
+    if (trimmed === 'no-writes') flags.noWrites = true;
+    else if (trimmed === 'allow-oom') flags.allowOom = true;
+    else if (trimmed === 'allow-stale') flags.allowStale = true;
+    else if (trimmed === 'no-cluster') flags.noCluster = true;
+  }
+  return flags;
 }
