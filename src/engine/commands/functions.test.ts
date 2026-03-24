@@ -145,12 +145,12 @@ describe('FUNCTION LOAD', () => {
       'LOAD',
       'redis.register_function("f", function() end)',
     ]);
-    expect(result).toEqual(expect.objectContaining({ kind: 'error' }));
+    expect(result).toEqual(errorReply('ERR', 'Missing library metadata'));
   });
 
   it('rejects shebang with missing name', () => {
     const result = dispatch(['FUNCTION', 'LOAD', '#!lua\nreturn 1']);
-    expect(result).toEqual(expect.objectContaining({ kind: 'error' }));
+    expect(result).toEqual(errorReply('ERR', 'Library name was not given'));
   });
 
   it('rejects shebang with non-lua engine', () => {
@@ -168,7 +168,7 @@ describe('FUNCTION LOAD', () => {
       'LOAD',
       '#!lua name=emptylib\nlocal x = 1',
     ]);
-    expect(result).toEqual(expect.objectContaining({ kind: 'error' }));
+    expect(result).toEqual(errorReply('ERR', 'No functions registered'));
   });
 
   it('rejects function name that already exists in another library', () => {
@@ -209,6 +209,44 @@ end)
       '#!lua name=badlib\ninvalid lua !!!',
     ]);
     expect(result).toEqual(expect.objectContaining({ kind: 'error' }));
+  });
+
+  it('rejects invalid library name characters', () => {
+    const result = dispatch([
+      'FUNCTION',
+      'LOAD',
+      '#!lua name=my-lib\nredis.register_function("f", function() end)',
+    ]);
+    expect(result).toEqual(
+      errorReply(
+        'ERR',
+        'Library names can only contain letters, numbers, or underscores(_) and must be at least one character long'
+      )
+    );
+  });
+
+  it('accepts library name with underscores', () => {
+    const lib = `#!lua name=my_lib
+redis.register_function('my_func', function(keys, args)
+  return 'ok'
+end)
+`;
+    const result = dispatch(['FUNCTION', 'LOAD', lib]);
+    expect(result).toEqual(bulkReply('my_lib'));
+  });
+
+  it('returns exact error for missing shebang', () => {
+    const result = dispatch([
+      'FUNCTION',
+      'LOAD',
+      'redis.register_function("f", function() end)',
+    ]);
+    expect(result).toEqual(errorReply('ERR', 'Missing library metadata'));
+  });
+
+  it('returns exact error for missing name', () => {
+    const result = dispatch(['FUNCTION', 'LOAD', '#!lua\nreturn 1']);
+    expect(result).toEqual(errorReply('ERR', 'Library name was not given'));
   });
 });
 
@@ -344,7 +382,12 @@ describe('FCALL_RO', () => {
   it('rejects function without no-writes flag', () => {
     dispatch(['FUNCTION', 'LOAD', LIB_SIMPLE]);
     const result = dispatch(['FCALL_RO', 'myfunc', '0']);
-    expect(result).toEqual(expect.objectContaining({ kind: 'error' }));
+    expect(result).toEqual(
+      errorReply(
+        'ERR',
+        'Can not execute a script with write flag using *_ro command.'
+      )
+    );
   });
 
   it('allows read commands in no-writes function', () => {
@@ -461,6 +504,16 @@ describe('FUNCTION LIST', () => {
     expect(lib.value[3]).toEqual(bulkReply('LUA'));
     // Check functions section exists
     expect(lib.value[4]).toEqual(bulkReply('functions'));
+    // Check function description is nil when not provided
+    const functions = lib.value[5];
+    if (functions?.kind === 'array' && functions.value[0]?.kind === 'array') {
+      const func = functions.value[0];
+      const descIdx = func.value.findIndex(
+        (v) => v.kind === 'bulk' && v.value === 'description'
+      );
+      expect(descIdx).toBeGreaterThanOrEqual(0);
+      expect(func.value[descIdx + 1]).toEqual(bulkReply(null));
+    }
   });
 
   it('lists functions with flags', () => {
@@ -651,11 +704,20 @@ describe('FUNCTION STATS', () => {
     const result = dispatch(['FUNCTION', 'STATS']);
     expect(result.kind).toBe('array');
     if (result.kind === 'array') {
-      // running_script field
+      // running_script field — nil when idle (matches Redis)
       expect(result.value[0]).toEqual(bulkReply('running_script'));
-      expect(result.value[1]).toEqual(integerReply(0));
+      expect(result.value[1]).toEqual(bulkReply(null));
       // engines field
       expect(result.value[2]).toEqual(bulkReply('engines'));
+    }
+  });
+
+  it('returns nil for running_script when idle', () => {
+    const result = dispatch(['FUNCTION', 'STATS']);
+    expect(result.kind).toBe('array');
+    if (result.kind === 'array') {
+      expect(result.value[0]).toEqual(bulkReply('running_script'));
+      expect(result.value[1]).toEqual(bulkReply(null));
     }
   });
 

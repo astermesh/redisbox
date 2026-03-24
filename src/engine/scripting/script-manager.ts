@@ -173,8 +173,8 @@ export class ScriptManager {
           flags = {}
           desc = ''
         end
-        if type(name) ~= 'string' or name == '' then
-          error("Function names can only contain letters and numbers and must be at least one character long")
+        if type(name) ~= 'string' or name == '' or not name:match('^[a-zA-Z0-9_]+$') then
+          error("Library names can only contain letters, numbers, or underscores(_) and must be at least one character long")
         end
         if type(cb) ~= 'function' then
           error("Invalid function callback")
@@ -367,10 +367,7 @@ export class ScriptManager {
     this.currentExecutor = prevExecutor;
 
     if (this.pendingRegistrations.length === 0) {
-      return errorReply(
-        'ERR',
-        'No functions registered during library loading'
-      );
+      return errorReply('ERR', 'No functions registered');
     }
 
     // Check for function name conflicts with other libraries
@@ -379,10 +376,7 @@ export class ScriptManager {
       if (existing && existing.lib.name !== libName) {
         // Clean up Lua-side registrations
         this.removeLuaFunctions(this.pendingRegistrations.map((r) => r.name));
-        return errorReply(
-          'ERR',
-          `Function '${reg.name}' already exists in library '${existing.lib.name}'`
-        );
+        return errorReply('ERR', `Function ${reg.name} already exists`);
       }
     }
 
@@ -445,7 +439,7 @@ export class ScriptManager {
     if (readOnly && !entry.func.flags.noWrites) {
       return errorReply(
         'ERR',
-        'Can not execute a function with write flag using *_ro command'
+        'Can not execute a script with write flag using *_ro command.'
       );
     }
 
@@ -634,10 +628,7 @@ function parseShebang(
   const body = newlineIdx === -1 ? '' : code.slice(newlineIdx + 1);
 
   if (!firstLine.startsWith('#!')) {
-    return errorReply(
-      'ERR',
-      'Missing library metadata. Expected format: #!<engine> name=<library_name>'
-    );
+    return errorReply('ERR', 'Missing library metadata');
   }
 
   const shebangContent = firstLine.slice(2).trim();
@@ -658,9 +649,13 @@ function parseShebang(
   }
 
   if (!libName) {
+    return errorReply('ERR', 'Library name was not given');
+  }
+
+  if (!/^[a-zA-Z0-9_]+$/.test(libName)) {
     return errorReply(
       'ERR',
-      'Library name was not given (name=<name> is missing)'
+      'Library names can only contain letters, numbers, or underscores(_) and must be at least one character long'
     );
   }
 

@@ -230,7 +230,7 @@ function functionList(ctx: CommandContext, args: string[]): Reply {
         bulkReply('name'),
         bulkReply(func.name),
         bulkReply('description'),
-        bulkReply(func.description),
+        bulkReply(func.description || null),
         bulkReply('flags'),
         arrayReply(flagsToReply(func.flags)),
       ];
@@ -303,7 +303,7 @@ function functionStats(ctx: CommandContext): Reply {
 
   return arrayReply([
     bulkReply('running_script'),
-    integerReply(0),
+    bulkReply(null),
     bulkReply('engines'),
     arrayReply([
       bulkReply('LUA'),
