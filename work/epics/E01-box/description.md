@@ -1,5 +1,7 @@
 # E01: RedisBox Engine
 
+**Status:** done
+
 Full implementation of an in-memory Redis emulator in TypeScript. RedisBox is a pure JS engine that speaks RESP protocol over TCP, supporting all core Redis commands with exact behavioral parity to real Redis.
 
 ## Scope

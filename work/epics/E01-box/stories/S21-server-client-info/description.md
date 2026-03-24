@@ -1,5 +1,7 @@
 # S21: Server, Client, and Info Commands
 
+**Status:** done
+
 Implement server management and introspection commands: INFO, SLOWLOG, DEBUG, TIME, MONITOR, LATENCY, MEMORY, and persistence stubs (BGSAVE, LASTSAVE, etc.).
 
 ## Tasks
