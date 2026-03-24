@@ -5,3 +5,9 @@ export type { CommandExecutor } from './redis-bridge.ts';
 export { replyToLua, luaToReply, registerRedisBridge } from './redis-bridge.ts';
 export { ScriptManager } from './script-manager.ts';
 export { applySandbox, resetPrngState } from './sandbox/index.ts';
+export { FunctionRegistry } from './function-registry.ts';
+export type {
+  FunctionDef,
+  FunctionFlags,
+  Library,
+} from './function-registry.ts';

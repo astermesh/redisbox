@@ -31,6 +31,7 @@ import { specs as slowlogSpecs } from './commands/slowlog.ts';
 import { specs as latencySpecs } from './commands/latency.ts';
 import { specs as persistenceSpecs } from './commands/persistence.ts';
 import { specs as scriptingSpecs } from './commands/scripting.ts';
+import { specs as functionsSpecs } from './commands/functions.ts';
 import { specs as serverSpecs } from './commands/server.ts';
 
 const allSpecs: CommandSpec[] = [
@@ -65,6 +66,7 @@ const allSpecs: CommandSpec[] = [
   ...latencySpecs,
   ...persistenceSpecs,
   ...scriptingSpecs,
+  ...functionsSpecs,
   ...serverSpecs,
 ];
 

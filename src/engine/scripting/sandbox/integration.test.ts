@@ -85,7 +85,7 @@ describe('sandbox integration with redis.call', () => {
       ['json-key'],
       []
     );
-    const json = (result as { type: string; value: string }).value;
+    const json = (result as unknown as { type: string; value: string }).value;
     const parsed = JSON.parse(json);
     expect(parsed).toEqual({ a: 1, b: 2 });
   });
