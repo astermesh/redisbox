@@ -125,4 +125,131 @@ describe('PRNG (redisLrand48)', () => {
     // Same as seed=0 — matches Redis EVAL behavior
     expect(result.values[0]).toBe('170829,749902,96372');
   });
+
+  // ---- argument validation ----
+
+  describe('argument validation', () => {
+    it('math.random(1) always returns 1', async () => {
+      const result = await engine.execute(`
+        local ok = true
+        for i = 1, 50 do
+          if math.random(1) ~= 1 then ok = false end
+        end
+        return ok
+      `);
+      expect(result.values).toEqual([true]);
+    });
+
+    it('math.random(n,n) always returns n', async () => {
+      const result = await engine.execute(`
+        local ok = true
+        for i = 1, 50 do
+          if math.random(7, 7) ~= 7 then ok = false end
+        end
+        return ok
+      `);
+      expect(result.values).toEqual([true]);
+    });
+
+    it('math.random(0) errors', async () => {
+      await expect(engine.execute('return math.random(0)')).rejects.toThrow(
+        /invalid argument/
+      );
+    });
+
+    it('math.random(-1) errors', async () => {
+      await expect(engine.execute('return math.random(-1)')).rejects.toThrow(
+        /invalid argument/
+      );
+    });
+
+    it('math.random(m,n) with m > n errors', async () => {
+      await expect(engine.execute('return math.random(10, 5)')).rejects.toThrow(
+        /invalid argument/
+      );
+    });
+  });
+
+  // ---- seed edge cases ----
+
+  describe('seed edge cases', () => {
+    it('different seeds produce different sequences', async () => {
+      const result = await engine.execute(`
+        math.randomseed(1)
+        local a = math.random(1000000)
+        math.randomseed(2)
+        local b = math.random(1000000)
+        return a ~= b
+      `);
+      expect(result.values).toEqual([true]);
+    });
+
+    it('negative seed is accepted', async () => {
+      const result = await engine.execute(`
+        math.randomseed(-1)
+        local a = math.random(1000000)
+        math.randomseed(-1)
+        local b = math.random(1000000)
+        return a == b
+      `);
+      expect(result.values).toEqual([true]);
+    });
+
+    it('large seed is accepted', async () => {
+      const result = await engine.execute(`
+        math.randomseed(2147483647)
+        local a = math.random(1000000)
+        math.randomseed(2147483647)
+        local b = math.random(1000000)
+        return a == b
+      `);
+      expect(result.values).toEqual([true]);
+    });
+
+    it('seed 42 produces deterministic sequence', async () => {
+      const result = await engine.execute(`
+        math.randomseed(42)
+        local vals = {}
+        for i = 1, 5 do vals[i] = math.random(1000000) end
+        return vals[1] .. "," .. vals[2] .. "," .. vals[3] .. "," .. vals[4] .. "," .. vals[5]
+      `);
+      // Run twice to verify determinism
+      const result2 = await engine.execute(`
+        math.randomseed(42)
+        local vals = {}
+        for i = 1, 5 do vals[i] = math.random(1000000) end
+        return vals[1] .. "," .. vals[2] .. "," .. vals[3] .. "," .. vals[4] .. "," .. vals[5]
+      `);
+      expect(result.values).toEqual(result2.values);
+    });
+  });
+
+  // ---- math.random range coverage ----
+
+  describe('range coverage', () => {
+    it('math.random(2) produces both 1 and 2 over many calls', async () => {
+      const result = await engine.execute(`
+        local seen1, seen2 = false, false
+        for i = 1, 200 do
+          local v = math.random(2)
+          if v == 1 then seen1 = true end
+          if v == 2 then seen2 = true end
+        end
+        return seen1 and seen2
+      `);
+      expect(result.values).toEqual([true]);
+    });
+
+    it('math.random() returns integers for math.random(n)', async () => {
+      const result = await engine.execute(`
+        local ok = true
+        for i = 1, 100 do
+          local v = math.random(100)
+          if v ~= math.floor(v) then ok = false end
+        end
+        return ok
+      `);
+      expect(result.values).toEqual([true]);
+    });
+  });
 });

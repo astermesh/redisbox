@@ -112,4 +112,189 @@ describe('bit library', () => {
     const result = await engine.execute('return bit.bswap(0x01020304)');
     expect(result.values).toEqual([0x04030201]);
   });
+
+  // ---- tobit edge cases ----
+
+  describe('tobit edge cases', () => {
+    it('tobit(-1) returns -1', async () => {
+      const result = await engine.execute('return bit.tobit(-1)');
+      expect(result.values).toEqual([-1]);
+    });
+
+    it('tobit(0) returns 0', async () => {
+      const result = await engine.execute('return bit.tobit(0)');
+      expect(result.values).toEqual([0]);
+    });
+
+    it('tobit(2147483647) returns INT32_MAX', async () => {
+      const result = await engine.execute('return bit.tobit(2147483647)');
+      expect(result.values).toEqual([2147483647]);
+    });
+
+    it('tobit(2147483648) returns INT32_MIN', async () => {
+      const result = await engine.execute('return bit.tobit(2147483648)');
+      expect(result.values).toEqual([-2147483648]);
+    });
+  });
+
+  // ---- identity and algebraic properties ----
+
+  describe('algebraic properties', () => {
+    it('bnot(bnot(x)) == x', async () => {
+      const result = await engine.execute(
+        'return bit.bnot(bit.bnot(42)) == 42'
+      );
+      expect(result.values).toEqual([true]);
+    });
+
+    it('bnot(-1) returns 0', async () => {
+      const result = await engine.execute('return bit.bnot(-1)');
+      expect(result.values).toEqual([0]);
+    });
+
+    it('band(x, 0) returns 0', async () => {
+      const result = await engine.execute('return bit.band(0xdeadbeef, 0)');
+      expect(result.values).toEqual([0]);
+    });
+
+    it('band(x, -1) returns x (identity)', async () => {
+      const result = await engine.execute('return bit.band(42, -1)');
+      expect(result.values).toEqual([42]);
+    });
+
+    it('band(x, x) returns x', async () => {
+      const result = await engine.execute('return bit.band(42, 42)');
+      expect(result.values).toEqual([42]);
+    });
+
+    it('bor(x, 0) returns x (identity)', async () => {
+      const result = await engine.execute('return bit.bor(42, 0)');
+      expect(result.values).toEqual([42]);
+    });
+
+    it('bor(x, -1) returns -1 (all bits set)', async () => {
+      const result = await engine.execute('return bit.bor(42, -1)');
+      expect(result.values).toEqual([-1]);
+    });
+
+    it('bxor(x, x) returns 0', async () => {
+      const result = await engine.execute('return bit.bxor(42, 42)');
+      expect(result.values).toEqual([0]);
+    });
+
+    it('bxor(x, 0) returns x (identity)', async () => {
+      const result = await engine.execute('return bit.bxor(42, 0)');
+      expect(result.values).toEqual([42]);
+    });
+  });
+
+  // ---- shift edge cases ----
+
+  describe('shift edge cases', () => {
+    it('lshift by 0 is identity', async () => {
+      const result = await engine.execute('return bit.lshift(42, 0)');
+      expect(result.values).toEqual([42]);
+    });
+
+    it('rshift by 0 is identity', async () => {
+      const result = await engine.execute('return bit.rshift(42, 0)');
+      expect(result.values).toEqual([42]);
+    });
+
+    it('arshift by 0 is identity', async () => {
+      const result = await engine.execute('return bit.arshift(-42, 0)');
+      expect(result.values).toEqual([-42]);
+    });
+
+    it('lshift by 31', async () => {
+      const result = await engine.execute('return bit.lshift(1, 31)');
+      expect(result.values).toEqual([-2147483648]); // 0x80000000 as signed
+    });
+
+    it('rshift by 31', async () => {
+      const result = await engine.execute('return bit.rshift(-1, 31)');
+      expect(result.values).toEqual([1]);
+    });
+
+    it('arshift by 31 on negative preserves sign', async () => {
+      const result = await engine.execute('return bit.arshift(-1, 31)');
+      expect(result.values).toEqual([-1]);
+    });
+
+    it('arshift by 31 on positive returns 0', async () => {
+      const result = await engine.execute('return bit.arshift(1, 31)');
+      expect(result.values).toEqual([0]);
+    });
+  });
+
+  // ---- rotate edge cases ----
+
+  describe('rotate edge cases', () => {
+    it('rol by 0 is identity', async () => {
+      const result = await engine.execute('return bit.rol(42, 0)');
+      expect(result.values).toEqual([42]);
+    });
+
+    it('ror by 0 is identity', async () => {
+      const result = await engine.execute('return bit.ror(42, 0)');
+      expect(result.values).toEqual([42]);
+    });
+
+    it('rol by 32 is identity', async () => {
+      const result = await engine.execute('return bit.rol(42, 32)');
+      expect(result.values).toEqual([42]);
+    });
+
+    it('ror by 32 is identity', async () => {
+      const result = await engine.execute('return bit.ror(42, 32)');
+      expect(result.values).toEqual([42]);
+    });
+
+    it('rol(x, n) == ror(x, 32-n)', async () => {
+      const result = await engine.execute(
+        'return bit.rol(0x12345678, 5) == bit.ror(0x12345678, 27)'
+      );
+      expect(result.values).toEqual([true]);
+    });
+  });
+
+  // ---- bswap edge cases ----
+
+  describe('bswap edge cases', () => {
+    it('bswap(0) returns 0', async () => {
+      const result = await engine.execute('return bit.bswap(0)');
+      expect(result.values).toEqual([0]);
+    });
+
+    it('bswap(-1) returns -1 (all bytes 0xFF)', async () => {
+      const result = await engine.execute('return bit.bswap(-1)');
+      expect(result.values).toEqual([-1]);
+    });
+
+    it('bswap(bswap(x)) == x', async () => {
+      const result = await engine.execute(
+        'return bit.bswap(bit.bswap(0x12345678)) == 0x12345678'
+      );
+      expect(result.values).toEqual([true]);
+    });
+  });
+
+  // ---- tohex edge cases ----
+
+  describe('tohex edge cases', () => {
+    it('tohex(0) returns "00000000"', async () => {
+      const result = await engine.execute('return bit.tohex(0)');
+      expect(result.values).toEqual(['00000000']);
+    });
+
+    it('tohex(-1) returns "ffffffff"', async () => {
+      const result = await engine.execute('return bit.tohex(-1)');
+      expect(result.values).toEqual(['ffffffff']);
+    });
+
+    it('tohex with 1 digit', async () => {
+      const result = await engine.execute('return bit.tohex(15, 1)');
+      expect(result.values).toEqual(['f']);
+    });
+  });
 });

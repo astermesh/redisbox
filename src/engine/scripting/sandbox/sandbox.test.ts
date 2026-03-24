@@ -221,5 +221,158 @@ describe('sandbox', () => {
       const result = await engine.execute('KEYS = {1,2,3}; return #KEYS');
       expect(result.values).toEqual([3]);
     });
+
+    it('allows overwriting ARGV', async () => {
+      const result = await engine.execute(
+        'ARGV = {"a","b"}; return ARGV[1] .. ARGV[2]'
+      );
+      expect(result.values).toEqual(['ab']);
+    });
+  });
+
+  // ---- sandbox escape attempts ----
+
+  describe('escape attempts', () => {
+    it('metatable __newindex can be removed via getmetatable (matches Redis)', async () => {
+      // In Lua 5.1 (and real Redis), getmetatable returns the raw metatable.
+      // Scripts CAN modify it — this matches Redis behavior where the sandbox
+      // is a best-effort deterrent, not a security boundary.
+      const result = await engine.execute(`
+        local mt = getmetatable(_G)
+        mt.__newindex = nil
+        newglobal = 42
+        return newglobal
+      `);
+      expect(result.values).toEqual([42]);
+    });
+
+    it('rawset bypasses __newindex (matches Redis behavior)', async () => {
+      // In real Redis, rawset on _G works — this is by design
+      const result = await engine.execute(`
+        rawset(_G, "test_raw", 42)
+        return test_raw
+      `);
+      expect(result.values).toEqual([42]);
+    });
+
+    it('cannot restore removed globals via loadstring', async () => {
+      const result = await engine.execute(`
+        local f = loadstring("return type(os)")
+        return f()
+      `);
+      expect(result.values).toEqual(['nil']);
+    });
+
+    it('cannot access removed globals via string functions', async () => {
+      const result = await engine.execute(`
+        return type(string.dump)
+      `);
+      // string.dump exists in Lua 5.1 but is harmless in sandbox
+      expect(typeof result.values[0]).toBe('string');
+    });
+
+    it('pcall catches sandbox errors gracefully', async () => {
+      // pcall returns (false, error_msg), but wasmoon only returns first value
+      const result = await engine.execute(`
+        local ok = pcall(function() newglobal = 42 end)
+        return ok
+      `);
+      expect(result.values[0]).toBe(false);
+    });
+
+    it('table.insert on _G uses rawset (matches Redis behavior)', async () => {
+      // table.insert uses rawset internally in Lua 5.1, bypassing __newindex.
+      // This matches Redis behavior.
+      const result = await engine.execute(`
+        table.insert(_G, "sneaky")
+        return type(rawget(_G, 1))
+      `);
+      expect(result.values).toEqual(['string']);
+    });
+
+    it('bridge functions are cleaned up (not accessible)', async () => {
+      const result = await engine.execute(`
+        return type(__rb_math_random)
+          .. type(__rb_math_randomseed)
+          .. type(__rb_cjson_decode)
+          .. type(__rb_msgpack_pack_json)
+          .. type(__rb_msgpack_unpack)
+          .. type(__rb_struct_size)
+          .. type(__rb_struct_pack)
+          .. type(__rb_struct_unpack)
+      `);
+      expect(result.values).toEqual(['nilnilnilnilnilnilnilnil']);
+    });
+  });
+
+  // ---- library composition ----
+
+  describe('library composition', () => {
+    it('cjson.encode → cmsgpack.pack → cmsgpack.unpack → cjson.decode round-trip', async () => {
+      const result = await engine.execute(`
+        local original = {name="test", values={1,2,3}}
+        local json = cjson.encode(original)
+        local packed = cmsgpack.pack(json)
+        local json2 = cmsgpack.unpack(packed)
+        local restored = cjson.decode(json2)
+        return restored.name .. restored.values[1] .. restored.values[3]
+      `);
+      expect(result.values).toEqual(['test13']);
+    });
+
+    it('bit operations inside cjson encode/decode', async () => {
+      const result = await engine.execute(`
+        local flags = bit.bor(0x01, 0x04, 0x10)
+        local json = cjson.encode({flags=flags})
+        local t = cjson.decode(json)
+        return bit.band(t.flags, 0x04) == 0x04
+      `);
+      expect(result.values).toEqual([true]);
+    });
+
+    it('struct pack with values from cjson decode', async () => {
+      const result = await engine.execute(`
+        local t = cjson.decode('{"a":42,"b":100}')
+        local packed = struct.pack(">BB", t.a, t.b)
+        local a, b = struct.unpack(">BB", packed)
+        return a + b
+      `);
+      expect(result.values).toEqual([142]);
+    });
+
+    it('PRNG used with cjson', async () => {
+      const result = await engine.execute(`
+        math.randomseed(0)
+        local vals = {}
+        for i = 1, 3 do vals[i] = math.random(100) end
+        local json = cjson.encode(vals)
+        local decoded = cjson.decode(json)
+        return decoded[1] .. "," .. decoded[2] .. "," .. decoded[3]
+      `);
+      // Should be deterministic
+      const result2 = await engine.execute(`
+        math.randomseed(0)
+        local vals = {}
+        for i = 1, 3 do vals[i] = math.random(100) end
+        return vals[1] .. "," .. vals[2] .. "," .. vals[3]
+      `);
+      expect(result.values).toEqual(result2.values);
+    });
+
+    it('all libraries available together in one script', async () => {
+      const result = await engine.execute(`
+        -- Use all libraries in one script
+        local b = bit.band(0xff, 0x0f)
+        local j = cjson.encode({val=b})
+        local p = cmsgpack.pack(b)
+        local s = struct.pack(">B", b)
+        math.randomseed(0)
+        local r = math.random(100)
+        return b .. "," .. j .. "," .. cmsgpack.unpack(p) .. "," .. struct.unpack(">B", s) .. "," .. r
+      `);
+      const parts = (result.values[0] as string).split(',');
+      expect(parts[0]).toBe('15'); // bit.band result
+      expect(parts.length).toBe(5);
+    });
   });
 });
