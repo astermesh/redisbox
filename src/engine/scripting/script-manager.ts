@@ -18,7 +18,7 @@ import { LuaScriptError } from './lua-engine.ts';
 import type { CommandExecutor } from './redis-bridge.ts';
 import { registerRedisBridge } from './redis-bridge.ts';
 import { WasmoonEngine } from './wasmoon-engine.ts';
-import { applySandbox, resetPrngState } from './sandbox.ts';
+import { applySandbox, resetPrngState } from './sandbox/index.ts';
 import { sha1 } from '../sha1.ts';
 import type { Reply } from '../types.ts';
 import {
