@@ -41,8 +41,10 @@ git clone \
 
 cd "$TARGET_DIR"
 
-# Enable sparse checkout for only what we need
-git sparse-checkout set tests/ src/help.h runtest
+# Enable sparse checkout for only what we need.
+# Use --no-cone because `runtest` is a file, not a directory —
+# cone mode (default since git 2.37) rejects non-directory patterns.
+git sparse-checkout set --no-cone /tests/ /src/help.h /runtest
 
 cd "$PROJECT_DIR"
 

@@ -46,7 +46,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .redis-tests
-          key: redis-tests-7.4.4
+          key: redis-tests-7.4.4-v2
 
       - name: Setup Redis test suite
         if: steps.cache-redis-tests.outputs.cache-hit != 'true'
